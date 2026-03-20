@@ -22,4 +22,8 @@ void keyboard_poll(void);
 // Human-readable name for special keycodes.
 const char *keycode_name(u8 keycode, u8 extended);
 
+// additional output from keyboard ISR
+extern volatile u32 keyboard_irq_count;
+extern volatile u32 keyboard_overflow_count;
+
 #endif

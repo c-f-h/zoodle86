@@ -29,3 +29,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 The boot sector loads a flat stage-2 image at `0x8000`. `kernel.c` initializes
 the text console, enables interrupts through the assembly IRQ layer, and
 updates screen state from keyboard interrupt data.
+
+## Style Guidelines
+
+- When adding or modifying a C header file, all functions should have, at the least, a one-line comment explaining their function.
