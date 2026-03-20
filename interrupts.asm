@@ -4,10 +4,12 @@ section .text
 ; entry point to initialize the interrupt handler
 global interrupts_init
 
-; keyboard interrupt output: count, last scancode, whether a keypress is pending
+; keyboard interrupt output: total IRQ count plus a raw scancode ring buffer
 global keyboard_irq_count
-global keyboard_last_scancode
-global keyboard_event_pending
+global keyboard_scancode_buffer
+global keyboard_scancode_head
+global keyboard_scancode_tail
+global keyboard_overflow_count
 
 ; port numbers for master and slave PIC
 PIC1_COMMAND    equ 0x20
@@ -23,6 +25,8 @@ PIC_READ_ISR    equ 0x0b    ; OCW3 irq service next CMD read
 
 KEYBOARD_VECTOR equ 0x21    ; interrupt vector to which IRQ1 will be remapped
 NUM_IDT_ENTRIES equ KEYBOARD_VECTOR + 1
+KEYBOARD_BUFFER_SIZE equ 16
+KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
 
 interrupts_init:
     ; Build the IDT first so protected mode has a valid destination for IRQ1
@@ -151,9 +155,22 @@ keyboard_isr:
     ; Reading port 0x60 both acknowledges the keyboard controller and fetches the raw
     ; scancode byte that triggered IRQ1.
     in al, 0x60
-    mov [keyboard_last_scancode], al
     inc dword [keyboard_irq_count]
-    mov byte [keyboard_event_pending], 1
+
+    mov dl, [keyboard_scancode_head]
+    mov bl, dl
+    inc bl
+    and bl, KEYBOARD_BUFFER_MASK        ; (head + 1) % buffer_size
+    cmp bl, [keyboard_scancode_tail]
+    je .buffer_full
+
+    movzx edi, dl
+    mov [keyboard_scancode_buffer + edi], al
+    mov [keyboard_scancode_head], bl
+    jmp .send_eoi
+
+.buffer_full:
+    inc dword [keyboard_overflow_count]
 
 .send_eoi:
     mov al, PIC_EOI
@@ -168,8 +185,10 @@ align 8
 idt: resq NUM_IDT_ENTRIES
 
 keyboard_irq_count: resd 1
-keyboard_last_scancode: resb 1
-keyboard_event_pending: resb 1
+keyboard_overflow_count: resd 1
+keyboard_scancode_head: resb 1
+keyboard_scancode_tail: resb 1
+keyboard_scancode_buffer: resb KEYBOARD_BUFFER_SIZE
 
 section .data
 idt_descriptor:

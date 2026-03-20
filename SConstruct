@@ -20,6 +20,7 @@ BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 KERNEL_C_SOURCES = [
     ROOT / "console.c",
+    ROOT / "keyboard.c",
     ROOT / "kernel.c",
     ROOT / "vgatext.c",
 ]
