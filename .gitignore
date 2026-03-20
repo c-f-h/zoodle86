@@ -1,5 +1,2 @@
-*.bin
-*.exe
-*.o
-*.img
-bochs*.txt
+build/
+.sconsign.dblite
