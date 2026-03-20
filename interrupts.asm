@@ -138,7 +138,7 @@ keyboard_isr:
     ; scancode byte that triggered IRQ1.
     in al, 0x60
     mov [keyboard_raw_scancode], al
-    inc byte [keyboard_irq_count]
+    inc dword [keyboard_irq_count]
 
     ; Break codes have bit 7 set. For the foreground demo we only queue make
     ; codes so each key press generates one event.
@@ -159,7 +159,7 @@ section .bss
 align 8
 idt: resq KEYBOARD_VECTOR + 1
 
-keyboard_irq_count: resb 1
+keyboard_irq_count: resd 1
 keyboard_last_scancode: resb 1
 keyboard_raw_scancode: resb 1
 keyboard_event_pending: resb 1

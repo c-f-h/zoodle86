@@ -19,7 +19,9 @@ BOCHS_DIR = BOCHS_EXE.parent
 BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 KERNEL_C_SOURCES = [
+    ROOT / "console.c",
     ROOT / "kernel.c",
+    ROOT / "vgatext.c",
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
@@ -235,7 +237,12 @@ def run_bochs(target, source, env):
     print(f"NASM : {NASM_EXE}")
     print(f"TCC  : {TCC32_EXE}")
     print(f"Bochs: {BOCHS_EXE}")
-    run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH)])
+    completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH)], cwd=ROOT)
+    if completed.returncode not in (0, 1):
+        raise RuntimeError(
+            f"Command failed with exit code {completed.returncode}: "
+            f"{' '.join(map(str, [BOCHS_EXE, '-q', '-f', BOCHSRC_PATH]))}"
+        )
     return None
 
 
