@@ -82,14 +82,21 @@ enable_a20:
     ret
 
 gdt_start:
+    ; --- Descriptor 0x00: null descriptor (required by spec) ---
     dq 0x0000000000000000
+
+    ; --- Descriptor 0x08: kernel code segment ---
+    ;   base=0, limit=0xFFFFF (× 4KB = 4 GB), ring 0, 32-bit, executable
     dq 0x00CF9A000000FFFF
+
+    ; --- Descriptor 0x10: kernel data segment ---
+    ;   base=0, limit=0xFFFFF (× 4KB = 4 GB), ring 0, 32-bit, read/write
     dq 0x00CF92000000FFFF
 gdt_end:
 
 gdt_descriptor:
-    dw gdt_end - gdt_start - 1
-    dd gdt_start
+    dw gdt_end - gdt_start - 1      ; GDT num bytes minus 1
+    dd gdt_start                    ; GDT address
 
 [bits 32]
 protected_mode_entry:

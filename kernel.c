@@ -4,7 +4,6 @@ static const u8 VGA_ATTR = 0x07;
 
 extern volatile u32 keyboard_irq_count;
 extern volatile u8 keyboard_last_scancode;
-extern volatile u8 keyboard_raw_scancode;
 extern volatile u8 keyboard_event_pending;
 
 extern void interrupts_init(void);
@@ -33,12 +32,6 @@ void _start(void) {
             console_puts("Scancode:  0x");
             console_set_attr(0x0f);
             console_put_hex_u8(keyboard_last_scancode);
-            console_set_attr(VGA_ATTR);
-            console_newline();
-
-            console_puts("Raw IRQ:   0x");
-            console_set_attr(0x0f);
-            console_put_hex_u8(keyboard_raw_scancode);
             console_set_attr(VGA_ATTR);
             console_newline();
 
