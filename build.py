@@ -45,7 +45,7 @@ def write_bochsrc() -> None:
                 "boot: floppy",
                 'floppya: 1_44="floppy.img", status=inserted',
                 "log: bochsout.txt",
-                "display_library: win32",
+                'display_library: win32, options="autoscale"',
                 "panic: action=ask",
                 "error: action=report",
                 "info: action=report",
