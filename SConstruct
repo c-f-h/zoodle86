@@ -29,7 +29,6 @@ ZIG_SOURCES = [
 ]
 KERNEL_C_SOURCES = [
     ROOT / "console.c",
-    ROOT / "keyboard.c",
     ROOT / "kernel.c",
     ROOT / "vgatext.c",
     ####################

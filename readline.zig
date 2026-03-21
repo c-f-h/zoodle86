@@ -1,7 +1,7 @@
 const c = @cImport({
     @cInclude("app.h");
-    @cInclude("keyboard.h");
 });
+const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
 const vga = @import("vgatext.zig");
 
@@ -49,12 +49,12 @@ pub export fn app_launcher_keyhandler(event: [*c]const c.struct_key_event) callc
     if (ev.pressed == 0) return 0;
 
     var redraw_all = false;
-    const non_shift_mods: u8 = ev.modifiers & ~@as(u8, c.MOD_SHIFT);
+    const non_shift_mods: u8 = ev.modifiers & ~@as(u8, keyboard.MOD_SHIFT);
 
     if (non_shift_mods != 0) {
         // If any modifier except shift is pressed, we do not insert a char.
         // However, only some combinations with Ctrl actually have an effect.
-        if (ev.modifiers == c.MOD_CTRL) {
+        if (ev.modifiers == keyboard.MOD_CTRL) {
             switch (ev.keycode) {
                 0x1E => readline.cursor = 0, // Ctrl+A
                 0x20 => readline.deleteChar(), // Ctrl+D
@@ -103,26 +103,26 @@ pub export fn app_launcher_keyhandler(event: [*c]const c.struct_key_event) callc
         }
     } else if (ev.extended != 0) {
         switch (ev.keycode) {
-            c.ESC_HOME => readline.cursor = 0,
-            c.ESC_END => readline.cursor = readline.len,
-            c.ESC_LEFT => {
+            keyboard.ESC_HOME => readline.cursor = 0,
+            keyboard.ESC_END => readline.cursor = readline.len,
+            keyboard.ESC_LEFT => {
                 if (readline.cursor > 0) {
                     readline.cursor -= 1;
                 }
             },
-            c.ESC_RIGHT => {
+            keyboard.ESC_RIGHT => {
                 // NB: the cursor is allowed to go one past the current buffer
                 // length, but only if there is more space to append another char
                 if (readline.cursor < readline.len and readline.cursor < READLINE_BUF_MAX_LEN - 1) {
                     readline.cursor += 1;
                 }
             },
-            c.ESC_DELETE => readline.deleteChar(),
+            keyboard.ESC_DELETE => readline.deleteChar(),
             else => {},
         }
     } else {
         switch (ev.keycode) {
-            c.SC_BACKSPACE => {
+            keyboard.SC_BACKSPACE => {
                 if (readline.cursor > 0) {
                     readline.cursor -= 1;
                     readline.deleteChar();
