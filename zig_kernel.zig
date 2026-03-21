@@ -1,4 +1,4 @@
-const console = @import("console_zig.zig");
+const console = @import("console.zig");
 const readline = @import("readline.zig");
 
 comptime {

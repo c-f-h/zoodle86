@@ -2,7 +2,7 @@ const c = @cImport({
     @cInclude("app.h");
     @cInclude("keyboard.h");
 });
-const console = @import("console_zig.zig");
+const console = @import("console.zig");
 const vga = @import("vgatext.zig");
 
 const VGA_ATTR: u8 = 0x07;
