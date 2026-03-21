@@ -37,15 +37,6 @@ static void console_advance_line(void) {
     console_scroll_if_needed();
 }
 
-void console_init(u8 attr) {
-    console_attr = attr;
-    console_row = 0;
-    console_col = 0;
-    vga_enable_cursor();
-    vga_clear(console_attr);
-    console_sync_cursor();
-}
-
 void console_clear(void) {
     vga_clear(console_attr);
     console_row = 0;

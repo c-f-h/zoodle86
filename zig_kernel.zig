@@ -1,0 +1,16 @@
+const console = @import("console_zig.zig");
+const readline = @import("readline.zig");
+
+comptime {
+    // Force semantic analysis of imported modules so their `pub export fn`
+    // declarations are emitted into this translation unit.
+    _ = console;
+    _ = readline;
+}
+
+pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
+    _ = message;
+    _ = trace;
+    _ = return_address;
+    while (true) {}
+}

@@ -1,9 +1,9 @@
 const c = @cImport({
     @cInclude("app.h");
-    @cInclude("console.h");
     @cInclude("keyboard.h");
     @cInclude("vgatext.h");
 });
+const console = @import("console_zig.zig");
 
 const VGA_ATTR: u8 = 0x07;
 const READLINE_BUF_MAX_LEN: usize = 80;
@@ -147,7 +147,7 @@ pub export fn app_launcher_keyhandler(event: [*c]const c.struct_key_event) callc
         }
     }
 
-    c.console_set_cursor(readline_row, readline.cursor);
+    console.setCursor(readline_row, readline.cursor);
     return 0;
 }
 
@@ -165,7 +165,7 @@ pub export fn app_launcher_init(app: [*c]c.struct_app_context, row: u32) callcon
     readline.len = 0;
     @memset(&readline.buf, 0);
 
-    c.console_set_cursor(readline_row, 0);
+    console.setCursor(readline_row, 0);
 
     // clear display row
     var i: u32 = 0;
@@ -174,11 +174,4 @@ pub export fn app_launcher_init(app: [*c]c.struct_app_context, row: u32) callcon
     }
 
     return 0;
-}
-
-pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
-    _ = message;
-    _ = trace;
-    _ = return_address;
-    while (true) {}
 }

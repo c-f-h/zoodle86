@@ -25,7 +25,7 @@ BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 ZIG_SOURCES = [
-    ROOT / "readline.zig",
+    ROOT / "zig_kernel.zig",
 ]
 KERNEL_C_SOURCES = [
     ROOT / "console.c",
@@ -339,7 +339,8 @@ kernel_objs = [
     for source_path, obj_path in zip(KERNEL_C_SOURCES, KERNEL_OBJS)
 ]
 zig_objs = [
-    env.Command(str(obj_path), str(source_path), Action(compile_zig, "Compiling $TARGET"))
+    # build always because zig imports are not correctly tracked by scons - let zig figure it out
+    AlwaysBuild(env.Command(str(obj_path), str(source_path), Action(compile_zig, "Compiling $TARGET")))
     for source_path, obj_path in zip(ZIG_SOURCES, ZIG_OBJS)
 ]
 stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, *kernel_objs, *zig_objs], Action(link_stage2, "Linking $TARGET"))
