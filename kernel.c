@@ -29,7 +29,7 @@ void* memset(void* ptr, i32 value, size_t sz) {
 }
 
 // imported from readline.zig
-extern u32 app_launcher_init(struct app_context* app, int row);
+extern u32 app_launcher_init(struct app_context* app, u32 row);
 
 void _start(void) {
     console_init(VGA_ATTR);
