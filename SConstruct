@@ -9,13 +9,11 @@ ROOT = pathlib.Path(Dir("#").abspath)
 BUILD_DIR = ROOT / "build"
 
 DEFAULT_NASM = pathlib.Path(r"C:\Program Files\nasm-3.01\nasm.exe")
-DEFAULT_TCC32 = pathlib.Path(r"C:\Program Files (x86)\tcc-0.9.27\i386-win32-tcc.exe")
 DEFAULT_ZIG = "zig"
 DEFAULT_BOCHS = pathlib.Path(r"C:\Program Files\Bochs-3.0\bochs.exe")
 DEFAULT_QEMU = pathlib.Path(r"C:\Program Files\qemu\qemu-system-i386.exe")
 
 NASM_EXE = pathlib.Path(os.environ.get("NASM_EXE", DEFAULT_NASM))
-TCC32_EXE = pathlib.Path(os.environ.get("TCC32_EXE", DEFAULT_TCC32))
 ZIG_EXE = os.environ.get("ZIG_EXE") or shutil.which(DEFAULT_ZIG) or DEFAULT_ZIG
 BOCHS_EXE = pathlib.Path(os.environ.get("BOCHS_EXE", DEFAULT_BOCHS))
 QEMU_EXE = pathlib.Path(os.environ.get("QEMU_EXE", DEFAULT_QEMU))
@@ -26,11 +24,6 @@ INTERRUPTS_ASM = ROOT / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 ZIG_SOURCES = [
     ROOT / "zig_kernel.zig",
-]
-KERNEL_C_SOURCES = [
-    ROOT / "console.c",
-    ROOT / "kernel.c",
-    ROOT / "vgatext.c",
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
@@ -66,7 +59,6 @@ STAGE2_META = build_artifact(STAGE2_EXE, ".meta")
 FLOPPY_IMG = BUILD_DIR / "floppy.img"
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
-KERNEL_OBJS = [build_artifact(source, ".o") for source in KERNEL_C_SOURCES]
 ZIG_OBJS = [build_artifact(source, ".o") for source in ZIG_SOURCES]
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
@@ -157,18 +149,6 @@ def assemble_interrupts(target, source, env):
     return None
 
 
-def compile_kernel(target, source, env):
-    output_path = pathlib.Path(str(target[0]))
-    source_path = pathlib.Path(str(source[0]))
-    ensure_parent(output_path)
-    if output_path.exists():
-        output_path.unlink()
-    run([str(TCC32_EXE), "-c", str(source_path), "-o", str(output_path)])
-    if not output_path.exists():
-        raise RuntimeError(f"TCC did not produce {output_path.name}.")
-    return None
-
-
 COMMON_ZIG_OPTS = [
     "--cache-dir", str(ZIG_CACHE_DIR),
     "--global-cache-dir", str(ZIG_GLOBAL_CACHE_DIR),
@@ -219,7 +199,6 @@ def link_stage2(target, source, env):
             str(STAGE2_LINKER_SCRIPT),
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
-            *[str(path) for path in KERNEL_OBJS],
             *[str(path) for path in ZIG_OBJS],
         ]
     )
@@ -292,7 +271,6 @@ def build_floppy(target, source, env):
 
 def run_bochs(target, source, env):
     print(f"NASM : {NASM_EXE}")
-    print(f"TCC  : {TCC32_EXE}")
     print(f"Bochs: {BOCHS_EXE}")
     completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH)], cwd=ROOT)
     if completed.returncode not in (0, 1):
@@ -305,7 +283,6 @@ def run_bochs(target, source, env):
 
 def run_qemu(target, source, env):
     print(f"NASM : {NASM_EXE}")
-    print(f"TCC  : {TCC32_EXE}")
     print(f"QEMU : {QEMU_EXE}")
     completed = subprocess.run(
         [
@@ -331,16 +308,12 @@ env = Environment(ENV=os.environ)
 
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
 interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
-kernel_objs = [
-    env.Command(str(obj_path), str(source_path), Action(compile_kernel, "Compiling $TARGET"))
-    for source_path, obj_path in zip(KERNEL_C_SOURCES, KERNEL_OBJS)
-]
 zig_objs = [
     # build always because zig imports are not correctly tracked by scons - let zig figure it out
     AlwaysBuild(env.Command(str(obj_path), str(source_path), Action(compile_zig, "Compiling $TARGET")))
     for source_path, obj_path in zip(ZIG_SOURCES, ZIG_OBJS)
 ]
-stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, *kernel_objs, *zig_objs], Action(link_stage2, "Linking $TARGET"))
+stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, *zig_objs], Action(link_stage2, "Linking $TARGET"))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,
