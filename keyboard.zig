@@ -1,9 +1,9 @@
 const std = @import("std");
 
 // Modifier flags
-pub const MOD_SHIFT = 0x01;
-pub const MOD_ALT = 0x02;
-pub const MOD_CTRL = 0x04;
+pub const MOD_SHIFT: u8 = 0x01;
+pub const MOD_ALT: u8 = 0x02;
+pub const MOD_CTRL: u8 = 0x04;
 
 // Virtual keycode prefix for extended keys
 pub const VK_EXTENDED = 0xE000;
@@ -204,7 +204,7 @@ fn decodeScancode(scancode: u8, event: *KeyEvent) u8 {
         if (pressed) {
             keyboard_modifiers |= MOD_SHIFT;
         } else {
-            keyboard_modifiers &= ~@as(u8, MOD_SHIFT);
+            keyboard_modifiers &= ~MOD_SHIFT;
         }
     }
 
@@ -213,7 +213,7 @@ fn decodeScancode(scancode: u8, event: *KeyEvent) u8 {
         if (pressed) {
             keyboard_modifiers |= MOD_ALT;
         } else {
-            keyboard_modifiers &= ~@as(u8, MOD_ALT);
+            keyboard_modifiers &= ~MOD_ALT;
         }
     }
 
@@ -222,7 +222,7 @@ fn decodeScancode(scancode: u8, event: *KeyEvent) u8 {
         if (pressed) {
             keyboard_modifiers |= MOD_CTRL;
         } else {
-            keyboard_modifiers &= ~@as(u8, MOD_CTRL);
+            keyboard_modifiers &= ~MOD_CTRL;
         }
     }
 
