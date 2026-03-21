@@ -1,33 +1,31 @@
-﻿const c = @cImport({
-    @cInclude("vgatext.h");
-});
+﻿const vga = @import("vgatext.zig");
 
 var console_row: u32 = 0;
 var console_col: u32 = 0;
 var console_attr: u8 = 0x07;
 
 fn syncCursor() void {
-    c.vga_set_cursor_pos(console_row, console_col);
+    vga.setCursorPos(console_row, console_col);
 }
 
 fn scrollIfNeeded() void {
-    if (console_row < c.VGA_TEXT_HEIGHT) return;
+    if (console_row < vga.TEXT_HEIGHT) return;
 
     var row: u32 = 1;
-    while (row < c.VGA_TEXT_HEIGHT) : (row += 1) {
+    while (row < vga.TEXT_HEIGHT) : (row += 1) {
         var col: u32 = 0;
-        while (col < c.VGA_TEXT_WIDTH) : (col += 1) {
-            const cell: u16 = c.vga_read_cell(row, col);
-            c.vga_put_char_at(row - 1, col, @truncate(cell & 0x00FF), @truncate(cell >> 8));
+        while (col < vga.TEXT_WIDTH) : (col += 1) {
+            const cell: u16 = vga.readCell(row, col);
+            vga.putCharAt(row - 1, col, @truncate(cell & 0x00FF), @truncate(cell >> 8));
         }
     }
 
     var col: u32 = 0;
-    while (col < c.VGA_TEXT_WIDTH) : (col += 1) {
-        c.vga_put_char_at(c.VGA_TEXT_HEIGHT - 1, col, ' ', console_attr);
+    while (col < vga.TEXT_WIDTH) : (col += 1) {
+        vga.putCharAt(vga.TEXT_HEIGHT - 1, col, ' ', console_attr);
     }
 
-    console_row = c.VGA_TEXT_HEIGHT - 1;
+    console_row = vga.TEXT_HEIGHT - 1;
 }
 
 fn advanceLine() void {
@@ -40,21 +38,21 @@ pub export fn console_init(attr: u8) callconv(.c) void {
     console_attr = attr;
     console_row = 0;
     console_col = 0;
-    c.vga_enable_cursor();
-    c.vga_clear(console_attr);
+    vga.enableCursor();
+    vga.clear(console_attr);
     syncCursor();
 }
 
 pub fn clear() void {
-    c.vga_clear(console_attr);
+    vga.clear(console_attr);
     console_row = 0;
     console_col = 0;
     syncCursor();
 }
 
 pub fn setCursor(row: u32, col: u32) void {
-    console_row = if (row >= c.VGA_TEXT_HEIGHT) c.VGA_TEXT_HEIGHT - 1 else row;
-    console_col = if (col >= c.VGA_TEXT_WIDTH) c.VGA_TEXT_WIDTH - 1 else col;
+    console_row = if (row >= vga.TEXT_HEIGHT) vga.TEXT_HEIGHT - 1 else row;
+    console_col = if (col >= vga.TEXT_WIDTH) vga.TEXT_WIDTH - 1 else col;
     syncCursor();
 }
 
@@ -81,9 +79,9 @@ pub fn putch(ch: u8) void {
         else => {},
     }
 
-    c.vga_put_char_at(console_row, console_col, ch, console_attr);
+    vga.putCharAt(console_row, console_col, ch, console_attr);
     console_col += 1;
-    if (console_col >= c.VGA_TEXT_WIDTH) {
+    if (console_col >= vga.TEXT_WIDTH) {
         advanceLine();
     }
     syncCursor();

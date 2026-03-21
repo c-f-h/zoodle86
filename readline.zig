@@ -1,9 +1,9 @@
 const c = @cImport({
     @cInclude("app.h");
     @cInclude("keyboard.h");
-    @cInclude("vgatext.h");
 });
 const console = @import("console_zig.zig");
+const vga = @import("vgatext.zig");
 
 const VGA_ATTR: u8 = 0x07;
 const READLINE_BUF_MAX_LEN: usize = 80;
@@ -134,16 +134,16 @@ pub export fn app_launcher_keyhandler(event: [*c]const c.struct_key_event) callc
 
     var i: u32 = 0;
     while (i < readline.len) : (i += 1) {
-        c.vga_put_char_at(readline_row, i, readline.buf[i], VGA_ATTR);
+        vga.putCharAt(readline_row, i, readline.buf[i], VGA_ATTR);
     }
     // it's usually sufficient to blank out one char past the end of the buffer
     if (readline.len < READLINE_BUF_MAX_LEN) {
-        c.vga_put_char_at(readline_row, i, ' ', VGA_ATTR);
+        vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
     }
     // only if we killed a longer portion of the buffer
     if (redraw_all) {
         while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-            c.vga_put_char_at(readline_row, i, ' ', VGA_ATTR);
+            vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
         }
     }
 
@@ -170,7 +170,7 @@ pub export fn app_launcher_init(app: [*c]c.struct_app_context, row: u32) callcon
     // clear display row
     var i: u32 = 0;
     while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-        c.vga_put_char_at(readline_row, i, ' ', VGA_ATTR);
+        vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
     }
 
     return 0;
