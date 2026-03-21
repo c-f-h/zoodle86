@@ -31,8 +31,6 @@ KERNEL_C_SOURCES = [
     ROOT / "console.c",
     ROOT / "kernel.c",
     ROOT / "vgatext.c",
-    ####################
-    ROOT / "app_keylog.c",
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"

@@ -37,8 +37,8 @@ void _start(void) {
     console_puts("Press a key.\n\n");
     interrupts_init();
 
-    //app_keylog_init(&cur_app);
-    app_launcher_init(&cur_app, 3);
+    app_keylog_init(&cur_app);
+    //app_launcher_init(&cur_app, 3);
 
     while (1) {
         keyboard_poll();
