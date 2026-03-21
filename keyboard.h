@@ -16,6 +16,20 @@ struct key_event {
     char ascii;
 };
 
+// Scancodes
+#define SC_ENTER        0x1C        // Enter
+#define SC_BACKSPACE    0x0E        // Backspace
+
+// Extended Scancodes
+#define ESC_HOME        0x47        // Home
+#define ESC_LEFT        0x4B        // Left arrow key
+#define ESC_UP          0x48        // Up arrow key
+#define ESC_END         0x4F        // End
+#define ESC_RIGHT       0x4D        // Right arrow key
+#define ESC_DOWN        0x50        // Down arrow key
+#define ESC_DELETE      0x53        // Delete
+
+
 // Poll the ringbuffer of scancodes filled by the keyboard ISR, decode key_events, and send them to the event sink.
 void keyboard_poll(void);
 
