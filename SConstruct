@@ -23,7 +23,7 @@ BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 ZIG_SOURCES = [
-    ROOT / "zig_kernel.zig",
+    ROOT / "kernel.zig",
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"

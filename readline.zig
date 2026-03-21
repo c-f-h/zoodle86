@@ -1,6 +1,4 @@
-const c = @cImport({
-    @cInclude("app.h");
-});
+const app = @import("app.zig");
 const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
 const vga = @import("vgatext.zig");
@@ -43,9 +41,9 @@ const ReadlineBuf = struct {
 var readline: ReadlineBuf = .{};
 var readline_row: u32 = 0; // in which row to draw the readline buffer
 
-pub export fn app_launcher_keyhandler(event: [*c]const c.struct_key_event) callconv(.c) u32 {
+pub export fn app_launcher_keyhandler(event: ?*const anyopaque) callconv(.c) u32 {
     if (event == null) return 0;
-    const ev = event[0];
+    const ev = @as([*c]const keyboard.KeyEvent, @ptrCast(event))[0];
     if (ev.pressed == 0) return 0;
 
     var redraw_all = false;
@@ -151,9 +149,9 @@ pub export fn app_launcher_keyhandler(event: [*c]const c.struct_key_event) callc
     return 0;
 }
 
-pub export fn app_launcher_init(app: [*c]c.struct_app_context, row: u32) callconv(.c) u32 {
-    if (app == null) return 1;
-    const app_ptr = &app[0];
+pub export fn app_launcher_init(app_ctx: [*c]app.AppContext, row: u32) callconv(.c) u32 {
+    if (app_ctx == null) return 1;
+    const app_ptr = &app_ctx[0];
 
     app_ptr.* = .{
         .name = "launcher",

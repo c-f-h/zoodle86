@@ -1,14 +1,12 @@
 const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
-const c = @cImport({
-    @cInclude("app.h");
-});
+const app = @import("app.zig");
 
 const VGA_ATTR: u8 = 0x07;
 
 /// Handle keyboard events and log them to console
-fn appKeylogKeyhandler(event: [*c]const c.struct_key_event) callconv(.c) u32 {
-    const ev = event[0];
+fn appKeylogKeyhandler(event: ?*const anyopaque) callconv(.c) u32 {
+    const ev = @as([*c]const keyboard.KeyEvent, @ptrCast(event))[0];
 
     // Print press/release status
     console.puts(if (ev.pressed != 0) "Down: " else "Up:   ");
@@ -90,10 +88,10 @@ fn appKeylogKeyhandler(event: [*c]const c.struct_key_event) callconv(.c) u32 {
 }
 
 /// Initialize the keylog app
-pub export fn app_keylog_init(app: [*c]c.struct_app_context) callconv(.c) u32 {
-    if (app == null) return 1;
+pub export fn app_keylog_init(app_ctx: [*c]app.AppContext) callconv(.c) u32 {
+    if (app_ctx == null) return 1;
 
-    const app_ptr = &app[0];
+    const app_ptr = &app_ctx[0];
     app_ptr.* = .{
         .name = "keylog",
         .key_event_handler = appKeylogKeyhandler,
