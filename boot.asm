@@ -3,6 +3,8 @@
 
 STAGE2_LOAD_SEGMENT equ 0x0000
 STAGE2_LOAD_OFFSET  equ 0x8000
+FLOPPY_SECTORS_PER_TRACK equ 18
+FLOPPY_HEADS_PER_CYLINDER equ 2
 
 ; should be set by build script
 ;%define STAGE2_SECTORS 4
@@ -31,14 +33,12 @@ start:
     mov si, loading_message
     call print_string
 
-    mov ah, 0x02                ; READ SECTORS
-    mov al, STAGE2_SECTORS      ; number of sectors to read
-    mov ch, 0x00                ; low 8 bits of cylinder
-    mov cl, 0x02                ; sector number
-    mov dh, 0x00                ; head
-    mov dl, [boot_drive]        ; drive
     mov bx, STAGE2_LOAD_OFFSET  ; es:bx = buffer
-    int 0x13
+    mov cx, STAGE2_SECTORS
+    mov byte [disk_sector], 2
+    mov byte [disk_head], 0
+    mov byte [disk_cylinder], 0
+    call load_stage2
     jc disk_error
 
     ; Do not carry real-mode interrupt state into protected mode. Until stage 2
@@ -81,6 +81,51 @@ enable_a20:
     out 0x92, al
     ret
 
+load_stage2:
+.next_sector:
+    test cx, cx
+    jz .done
+
+    mov ah, 0x02
+    mov al, 0x01
+    mov ch, [disk_cylinder]
+    mov cl, [disk_sector]
+    mov dh, [disk_head]
+    mov dl, [boot_drive]
+    int 0x13
+    jc .error
+
+    add bx, 512
+    jnc .advance_disk
+    mov ax, es
+    add ax, 0x1000
+    mov es, ax
+
+.advance_disk:
+    inc byte [disk_sector]
+    cmp byte [disk_sector], FLOPPY_SECTORS_PER_TRACK + 1
+    jne .continue
+
+    mov byte [disk_sector], 1
+    inc byte [disk_head]
+    cmp byte [disk_head], FLOPPY_HEADS_PER_CYLINDER
+    jb .continue
+
+    mov byte [disk_head], 0
+    inc byte [disk_cylinder]
+
+.continue:
+    dec cx
+    jmp .next_sector
+
+.done:
+    clc
+    ret
+
+.error:
+    stc
+    ret
+
 gdt_start:
     ; --- Descriptor 0x00: null descriptor (required by spec) ---
     dq 0x0000000000000000
@@ -114,6 +159,9 @@ protected_mode_entry:
 [bits 16]
 
 boot_drive db 0
+disk_sector db 0
+disk_head db 0
+disk_cylinder db 0
 loading_message db 'Loading stage 2...', 0
 disk_error_message db 13, 10, 'Disk read failed.', 0
 

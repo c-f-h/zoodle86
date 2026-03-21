@@ -186,9 +186,10 @@ def build_stage2_payload(target, source, env):
     stage2_sectors = math.ceil(len(stage2_bytes) / 512.0)
     if stage2_sectors < 1:
         raise RuntimeError("Computed invalid stage2 sector count.")
-    if stage2_sectors > 18:
+    max_stage2_sectors = (FLOPPY_SIZE // 512) - 1
+    if stage2_sectors > max_stage2_sectors:
         raise RuntimeError(
-            f"stage2.bin requires {stage2_sectors} sectors, which does not fit in one floppy track with the current CHS loader."
+            f"stage2.bin requires {stage2_sectors} sectors, but only {max_stage2_sectors} sectors fit after the boot sector."
         )
 
     meta_path.write_text(f"{entry_rva}\n{stage2_sectors}\n", encoding="ascii")
@@ -229,6 +230,8 @@ def build_floppy(target, source, env):
     ensure_parent(target_path)
     boot_bytes = pathlib.Path(str(source[0])).read_bytes()
     stage2_bytes = pathlib.Path(str(source[1])).read_bytes()
+    if 512 + len(stage2_bytes) > FLOPPY_SIZE:
+        raise RuntimeError("stage2.bin does not fit in the floppy image.")
     image_bytes = bytearray(FLOPPY_SIZE)
     image_bytes[0 : len(boot_bytes)] = boot_bytes
     image_bytes[512 : 512 + len(stage2_bytes)] = stage2_bytes
