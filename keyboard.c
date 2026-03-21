@@ -38,7 +38,7 @@ static char keycode_to_ascii(u8 keycode, u8 modifiers) {
     case 0x19: return (modifiers & MOD_SHIFT) ? 'P' : 'p';
     case 0x1A: return (modifiers & MOD_SHIFT) ? '{' : '[';
     case 0x1B: return (modifiers & MOD_SHIFT) ? '}' : ']';
-    case 0x1C: return '\n';
+    //case 0x1C: return '\n';           // return: not a printable char
     case 0x1E: return (modifiers & MOD_SHIFT) ? 'A' : 'a';
     case 0x1F: return (modifiers & MOD_SHIFT) ? 'S' : 's';
     case 0x20: return (modifiers & MOD_SHIFT) ? 'D' : 'd';
