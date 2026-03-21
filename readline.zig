@@ -11,6 +11,48 @@ const ReadlineBuf = struct {
     len: u32 = 0,
     cursor: u32 = 0,
 
+    /// Determine if a character is part of a word (alphanumeric or underscore).
+    fn isWordChar(ch: u8) bool {
+        return (ch >= 'a' and ch <= 'z') or
+            (ch >= 'A' and ch <= 'Z') or
+            (ch >= '0' and ch <= '9') or
+            ch == '_';
+    }
+
+    /// Move cursor left by one word. Moves to the start of the current or previous word.
+    fn moveWordLeft(this: *ReadlineBuf) void {
+        if (this.cursor == 0) return;
+
+        this.cursor -= 1;
+
+        // Skip any non-word characters to the left
+        while (this.cursor > 0 and !isWordChar(this.buf[this.cursor])) {
+            this.cursor -= 1;
+        }
+
+        // Skip word characters to the left until we find a non-word character
+        while (this.cursor > 0 and isWordChar(this.buf[this.cursor - 1])) {
+            this.cursor -= 1;
+        }
+    }
+
+    /// Move cursor right by one word. Moves to the start of the next word.
+    fn moveWordRight(this: *ReadlineBuf) void {
+        if (this.cursor >= this.len) return;
+
+        const last_allowed = @min(this.len, READLINE_BUF_MAX_LEN - 1);
+
+        // Skip any word characters to the right
+        while (this.cursor < last_allowed and isWordChar(this.buf[this.cursor])) {
+            this.cursor += 1;
+        }
+
+        // Skip non-word characters to the right until we find a word character
+        while (this.cursor < last_allowed and !isWordChar(this.buf[this.cursor])) {
+            this.cursor += 1;
+        }
+    }
+
     fn deleteChar(this: *ReadlineBuf) void {
         // shift all later chars forward by one
         if (this.cursor < this.len) {
@@ -81,6 +123,8 @@ pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c)
                         redraw_all = true;
                     }
                 },
+                keyboard.VK_LEFT => readline.moveWordLeft(), // Ctrl+Left (move word left)
+                keyboard.VK_RIGHT => readline.moveWordRight(), // Ctrl+Right (move word right)
                 else => {},
             }
         }
