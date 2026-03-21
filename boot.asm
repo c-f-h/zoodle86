@@ -86,19 +86,21 @@ load_stage2:
     test cx, cx
     jz .done
 
-    mov ah, 0x02
-    mov al, 0x01
-    mov ch, [disk_cylinder]
-    mov cl, [disk_sector]
-    mov dh, [disk_head]
-    mov dl, [boot_drive]
-    int 0x13
+    push cx             ; preserve number of sectors left to read
+    mov ah, 0x02            ; cmd: read sectors
+    mov al, 0x01            ; number of sectors = 1
+    mov ch, [disk_cylinder] ; low 8 bits of cylinder number
+    mov cl, [disk_sector]   ; sector number (1-based)
+    mov dh, [disk_head]     ; disk head
+    mov dl, [boot_drive]    ; drive number
+    int 0x13                ; read 0x200 bytes into es:bx
     jc .error
+    pop cx
 
-    add bx, 512
+    add bx, 0x200
     jnc .advance_disk
-    mov ax, es
-    add ax, 0x1000
+    mov ax, es              ; bx carried over to 0, meaning we read 0x10000 bytes
+    add ax, 0x1000          ; so we add 0x1000 to the segment to advance 0x10000 bytes
     mov es, ax
 
 .advance_disk:
@@ -123,6 +125,7 @@ load_stage2:
     ret
 
 .error:
+    pop cx
     stc
     ret
 
