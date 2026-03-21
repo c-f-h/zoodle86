@@ -1,7 +1,5 @@
 #include "keyboard.h"
 
-#include "console.h"
-
 extern volatile u8 keyboard_scancode_buffer[16];
 extern volatile u8 keyboard_scancode_head;
 extern volatile u8 keyboard_scancode_tail;
