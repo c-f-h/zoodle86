@@ -99,6 +99,16 @@ pub fn putHexU8(value: u8) void {
     putch(hex[value & 0x0F]);
 }
 
+pub fn putHexU16(value: u16) void {
+    const hex = "0123456789ABCDEF";
+    var shift: u4 = 12;
+    while (true) {
+        putch(hex[(value >> shift) & 0x0F]);
+        if (shift == 0) break;
+        shift -= 4;
+    }
+}
+
 pub fn putHexU32(value: u32) void {
     const hex = "0123456789ABCDEF";
     var shift: i6 = 28;

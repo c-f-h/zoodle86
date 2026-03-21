@@ -21,7 +21,7 @@ fn appKeylogKeyhandler(ev: *const keyboard.KeyEvent) callconv(.c) u32 {
         }
         console.setAttr(VGA_ATTR);
         console.putch('\'');
-    } else if (keyboard.keycodeName(ev.keycode, ev.extended)) |name| {
+    } else if (keyboard.keycodeName(ev.keycode)) |name| {
         // Print key name if available
         console.setAttr(0x0f);
         // Output each character of the name until null terminator
@@ -34,14 +34,14 @@ fn appKeylogKeyhandler(ev: *const keyboard.KeyEvent) callconv(.c) u32 {
         // Print hex keycode
         console.puts("keycode 0x");
         console.setAttr(0x0f);
-        console.putHexU8(ev.keycode);
+        console.putHexU16(ev.keycode);
         console.setAttr(VGA_ATTR);
     }
     console.newline();
 
     // Print raw scancode
     console.puts("Raw:     ");
-    if (ev.extended != 0) {
+    if ((ev.keycode & keyboard.VK_EXTENDED) != 0) {
         console.puts("0xE0 ");
     }
     console.puts("0x");

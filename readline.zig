@@ -51,25 +51,25 @@ pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c)
         // If any modifier except shift is pressed, we do not insert a char.
         // However, only some combinations with Ctrl actually have an effect.
         if (ev.modifiers == keyboard.MOD_CTRL) {
-            switch (ev.keycode) {
-                0x1E => readline.cursor = 0, // Ctrl+A
-                0x20 => readline.deleteChar(), // Ctrl+D
-                0x30 => { // Ctrl+B
+            switch (ev.ascii) {
+                'a' => readline.cursor = 0, // Ctrl+A
+                'd' => readline.deleteChar(), // Ctrl+D
+                'b' => { // Ctrl+B
                     if (readline.cursor > 0) {
                         readline.cursor -= 1;
                     }
                 },
-                0x12 => readline.cursor = readline.len, // Ctrl+E
-                0x21 => { // Ctrl+F
+                'e' => readline.cursor = readline.len, // Ctrl+E
+                'f' => { // Ctrl+F
                     if (readline.cursor < readline.len) {
                         readline.cursor += 1;
                     }
                 },
-                0x25 => { // Ctrl+K
+                'k' => { // Ctrl+K
                     readline.len = readline.cursor;
                     redraw_all = true;
                 },
-                0x16 => { // Ctrl+U
+                'u' => { // Ctrl+U
                     if (readline.cursor > 0) {
                         const remaining = readline.len - readline.cursor;
                         var i: u32 = 0;
@@ -97,28 +97,24 @@ pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c)
                 readline.len = readline.cursor;
             }
         }
-    } else if (ev.extended != 0) {
+    } else {
         switch (ev.keycode) {
-            keyboard.ESC_HOME => readline.cursor = 0,
-            keyboard.ESC_END => readline.cursor = readline.len,
-            keyboard.ESC_LEFT => {
+            keyboard.VK_HOME => readline.cursor = 0,
+            keyboard.VK_END => readline.cursor = readline.len,
+            keyboard.VK_LEFT => {
                 if (readline.cursor > 0) {
                     readline.cursor -= 1;
                 }
             },
-            keyboard.ESC_RIGHT => {
+            keyboard.VK_RIGHT => {
                 // NB: the cursor is allowed to go one past the current buffer
                 // length, but only if there is more space to append another char
                 if (readline.cursor < readline.len and readline.cursor < READLINE_BUF_MAX_LEN - 1) {
                     readline.cursor += 1;
                 }
             },
-            keyboard.ESC_DELETE => readline.deleteChar(),
-            else => {},
-        }
-    } else {
-        switch (ev.keycode) {
-            keyboard.SC_BACKSPACE => {
+            keyboard.VK_DELETE => readline.deleteChar(),
+            keyboard.VK_BACKSPACE => {
                 if (readline.cursor > 0) {
                     readline.cursor -= 1;
                     readline.deleteChar();
