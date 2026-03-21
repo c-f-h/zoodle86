@@ -51,25 +51,25 @@ pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c)
         // If any modifier except shift is pressed, we do not insert a char.
         // However, only some combinations with Ctrl actually have an effect.
         if (ev.modifiers == keyboard.MOD_CTRL) {
-            switch (ev.ascii) {
-                'a' => readline.cursor = 0, // Ctrl+A
-                'd' => readline.deleteChar(), // Ctrl+D
-                'b' => { // Ctrl+B
+            switch (ev.keycode) {
+                keyboard.VK_A => readline.cursor = 0, // Ctrl+A
+                keyboard.VK_D => readline.deleteChar(), // Ctrl+D
+                keyboard.VK_B => { // Ctrl+B
                     if (readline.cursor > 0) {
                         readline.cursor -= 1;
                     }
                 },
-                'e' => readline.cursor = readline.len, // Ctrl+E
-                'f' => { // Ctrl+F
+                keyboard.VK_E => readline.cursor = readline.len, // Ctrl+E
+                keyboard.VK_F => { // Ctrl+F
                     if (readline.cursor < readline.len) {
                         readline.cursor += 1;
                     }
                 },
-                'k' => { // Ctrl+K
+                keyboard.VK_K => { // Ctrl+K
                     readline.len = readline.cursor;
                     redraw_all = true;
                 },
-                'u' => { // Ctrl+U
+                keyboard.VK_U => { // Ctrl+U
                     if (readline.cursor > 0) {
                         const remaining = readline.len - readline.cursor;
                         var i: u32 = 0;

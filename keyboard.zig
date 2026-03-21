@@ -19,6 +19,34 @@ pub const VK_RSHIFT = 0x36;
 pub const VK_LALT = 0x38;
 pub const VK_SPACE = 0x39;
 
+// Letter keycodes
+pub const VK_A = 0x1E;
+pub const VK_B = 0x30;
+pub const VK_C = 0x2E;
+pub const VK_D = 0x20;
+pub const VK_E = 0x12;
+pub const VK_F = 0x21;
+pub const VK_G = 0x22;
+pub const VK_H = 0x23;
+pub const VK_I = 0x17;
+pub const VK_J = 0x24;
+pub const VK_K = 0x25;
+pub const VK_L = 0x26;
+pub const VK_M = 0x32;
+pub const VK_N = 0x31;
+pub const VK_O = 0x18;
+pub const VK_P = 0x19;
+pub const VK_Q = 0x10;
+pub const VK_R = 0x13;
+pub const VK_S = 0x1F;
+pub const VK_T = 0x14;
+pub const VK_U = 0x16;
+pub const VK_V = 0x2F;
+pub const VK_W = 0x11;
+pub const VK_X = 0x2D;
+pub const VK_Y = 0x15;
+pub const VK_Z = 0x2C;
+
 // Extended virtual keycodes
 pub const VK_KEYPAD_ENTER = VK_EXTENDED | 0x1C;
 pub const VK_RCTRL = VK_EXTENDED | 0x1D;
