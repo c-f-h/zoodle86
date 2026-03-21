@@ -1,8 +1,9 @@
-# Project Overview
+# `zoodle86` - Project Overview
 
 This is a tiny x86 boot loader/OS kernel (32 bit protected mode) toy project in Zig.
 
 ## Project Structure & Module Organization
+
 This repository builds a bootable x86 floppy image with a tiny freestanding kernel.
 
 - `boot.asm`: boot sector and stage-2 loader.
@@ -12,6 +13,7 @@ This repository builds a bootable x86 floppy image with a tiny freestanding kern
 - `build/`: generated objects, binaries, Bochs config, and `floppy.img`.
 
 ## Build, Test, and Development Commands
+
 - `scons`: build the boot sector, stage-2 binary, and `build/floppy.img`.
 - `scons run`: build and run Bochs directly through SCons.
 
