@@ -25,7 +25,7 @@ BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 ZIG_SOURCES = [
-    ROOT / "zigdemo.zig",
+    ROOT / "readline.zig",
 ]
 KERNEL_C_SOURCES = [
     ROOT / "console.c",
@@ -175,6 +175,7 @@ def compile_kernel(target, source, env):
 COMMON_ZIG_OPTS = [
     "--cache-dir", str(ZIG_CACHE_DIR),
     "--global-cache-dir", str(ZIG_GLOBAL_CACHE_DIR),
+    "-I", str(ROOT),
     "-target", "x86-freestanding-none",
     "-O",
     "ReleaseSmall",
