@@ -10,10 +10,12 @@ BUILD_DIR = ROOT / "build"
 DEFAULT_NASM = pathlib.Path(r"C:\Program Files\nasm-3.01\nasm.exe")
 DEFAULT_TCC32 = pathlib.Path(r"C:\Program Files (x86)\tcc-0.9.27\i386-win32-tcc.exe")
 DEFAULT_BOCHS = pathlib.Path(r"C:\Program Files\Bochs-3.0\bochs.exe")
+DEFAULT_QEMU = pathlib.Path(r"C:\Program Files\qemu\qemu-system-i386.exe")
 
 NASM_EXE = pathlib.Path(os.environ.get("NASM_EXE", DEFAULT_NASM))
 TCC32_EXE = pathlib.Path(os.environ.get("TCC32_EXE", DEFAULT_TCC32))
 BOCHS_EXE = pathlib.Path(os.environ.get("BOCHS_EXE", DEFAULT_BOCHS))
+QEMU_EXE = pathlib.Path(os.environ.get("QEMU_EXE", DEFAULT_QEMU))
 BOCHS_DIR = BOCHS_EXE.parent
 
 BOOT_ASM = ROOT / "boot.asm"
@@ -252,6 +254,30 @@ def run_bochs(target, source, env):
     return None
 
 
+def run_qemu(target, source, env):
+    print(f"NASM : {NASM_EXE}")
+    print(f"TCC  : {TCC32_EXE}")
+    print(f"QEMU : {QEMU_EXE}")
+    completed = subprocess.run(
+        [
+            str(QEMU_EXE),
+            "-m",
+            "32",
+            "-boot",
+            "a",
+            "-drive",
+            f"file={FLOPPY_IMG},if=floppy,format=raw",
+        ],
+        cwd=ROOT,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Command failed with exit code {completed.returncode}: "
+            f"{' '.join(map(str, [QEMU_EXE, '-m', '32', '-boot', 'a', '-drive', f'file={FLOPPY_IMG},if=floppy,format=raw']))}"
+        )
+    return None
+
+
 env = Environment(ENV=os.environ)
 
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
@@ -271,3 +297,4 @@ floppy_img = env.Command(str(FLOPPY_IMG), [boot_bin, stage2_payload[0]], Action(
 
 Default(floppy_img)
 AlwaysBuild(env.Alias("run", [floppy_img, bochsrc], Action(run_bochs, "Running Bochs")))
+AlwaysBuild(env.Alias("qemu", [floppy_img], Action(run_qemu, "Running QEMU")))
