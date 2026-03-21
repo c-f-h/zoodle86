@@ -1,6 +1,7 @@
 import math
 import os
 import pathlib
+import shutil
 import struct
 import subprocess
 
@@ -9,17 +10,23 @@ BUILD_DIR = ROOT / "build"
 
 DEFAULT_NASM = pathlib.Path(r"C:\Program Files\nasm-3.01\nasm.exe")
 DEFAULT_TCC32 = pathlib.Path(r"C:\Program Files (x86)\tcc-0.9.27\i386-win32-tcc.exe")
+DEFAULT_ZIG = "zig"
 DEFAULT_BOCHS = pathlib.Path(r"C:\Program Files\Bochs-3.0\bochs.exe")
 DEFAULT_QEMU = pathlib.Path(r"C:\Program Files\qemu\qemu-system-i386.exe")
 
 NASM_EXE = pathlib.Path(os.environ.get("NASM_EXE", DEFAULT_NASM))
 TCC32_EXE = pathlib.Path(os.environ.get("TCC32_EXE", DEFAULT_TCC32))
+ZIG_EXE = os.environ.get("ZIG_EXE") or shutil.which(DEFAULT_ZIG) or DEFAULT_ZIG
 BOCHS_EXE = pathlib.Path(os.environ.get("BOCHS_EXE", DEFAULT_BOCHS))
 QEMU_EXE = pathlib.Path(os.environ.get("QEMU_EXE", DEFAULT_QEMU))
 BOCHS_DIR = BOCHS_EXE.parent
 
 BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
+STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
+ZIG_SOURCES = [
+    ROOT / "zigdemo.zig",
+]
 KERNEL_C_SOURCES = [
     ROOT / "console.c",
     ROOT / "keyboard.c",
@@ -56,58 +63,67 @@ def ensure_parent(path):
 
 BOOT_BIN = build_artifact(BOOT_ASM, ".bin")
 INTERRUPTS_OBJ = build_artifact(INTERRUPTS_ASM, ".o")
-STAGE2_EXE = BUILD_DIR / "stage2.exe"
+STAGE2_EXE = BUILD_DIR / "stage2.elf"
 STAGE2_BIN = build_artifact(STAGE2_EXE, ".bin")
 STAGE2_META = build_artifact(STAGE2_EXE, ".meta")
 FLOPPY_IMG = BUILD_DIR / "floppy.img"
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 KERNEL_OBJS = [build_artifact(source, ".o") for source in KERNEL_C_SOURCES]
+ZIG_OBJS = [build_artifact(source, ".o") for source in ZIG_SOURCES]
+ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
+ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 
 
-def flatten_pe(pe_path):
-    pe_bytes = pe_path.read_bytes()
-    if len(pe_bytes) < 0x40:
-        raise RuntimeError("stage2.exe is too small to be a valid PE image.")
+def flatten_elf(elf_path):
+    elf_bytes = elf_path.read_bytes()
+    if len(elf_bytes) < 52:
+        raise RuntimeError("stage2.elf is too small to be a valid ELF image.")
+    if elf_bytes[0:4] != b"\x7fELF":
+        raise RuntimeError("stage2.elf does not contain a valid ELF signature.")
+    if elf_bytes[4] != 1:
+        raise RuntimeError("Expected a 32-bit ELF image.")
+    if elf_bytes[5] != 1:
+        raise RuntimeError("Expected a little-endian ELF image.")
 
-    pe_header_offset = struct.unpack_from("<I", pe_bytes, 0x3C)[0]
-    signature = struct.unpack_from("<I", pe_bytes, pe_header_offset)[0]
-    if signature != 0x00004550:
-        raise RuntimeError("stage2.exe does not contain a valid PE signature.")
+    e_type, e_machine, _, e_entry, e_phoff, _, _, _, e_phentsize, e_phnum = struct.unpack_from(
+        "<HHIIIIIHHH", elf_bytes, 16
+    )
+    if e_type != 2:
+        raise RuntimeError(f"Expected an executable ELF image, got type {e_type}.")
+    if e_machine != 3:
+        raise RuntimeError(f"Expected an x86 ELF image, got machine {e_machine}.")
+    if e_phentsize != 32:
+        raise RuntimeError(f"Expected ELF32 program headers of size 32, got {e_phentsize}.")
 
-    coff_offset = pe_header_offset + 4
-    number_of_sections = struct.unpack_from("<H", pe_bytes, coff_offset + 2)[0]
-    size_of_optional_header = struct.unpack_from("<H", pe_bytes, coff_offset + 16)[0]
-    optional_offset = coff_offset + 20
-    optional_magic = struct.unpack_from("<H", pe_bytes, optional_offset)[0]
-    if optional_magic != 0x10B:
-        raise RuntimeError(f"Expected a PE32 optional header, got 0x{optional_magic:X}.")
+    load_segments = []
+    image_base = None
+    image_end = 0
+    for index in range(e_phnum):
+        phoff = e_phoff + (index * e_phentsize)
+        p_type, p_offset, p_vaddr, _, p_filesz, p_memsz, _, _ = struct.unpack_from("<IIIIIIII", elf_bytes, phoff)
+        if p_type != 1:
+            continue
+        if image_base is None:
+            image_base = p_vaddr
+        else:
+            image_base = min(image_base, p_vaddr)
+        image_end = max(image_end, p_vaddr + p_memsz)
+        load_segments.append((p_vaddr, p_offset, p_filesz, p_memsz))
 
-    entry_rva = struct.unpack_from("<I", pe_bytes, optional_offset + 16)[0]
-    image_base = struct.unpack_from("<I", pe_bytes, optional_offset + 28)[0]
+    if image_base is None:
+        raise RuntimeError("ELF image does not contain any PT_LOAD segments.")
     if image_base != STAGE2_IMAGE_BASE:
         raise RuntimeError(f"Expected stage2 image base 0x{STAGE2_IMAGE_BASE:X}, got 0x{image_base:X}.")
 
-    section_table_offset = optional_offset + size_of_optional_header
-    image_size = 0
-    sections = []
-    for index in range(number_of_sections):
-        section_offset = section_table_offset + (40 * index)
-        virtual_size, virtual_address, size_of_raw_data, pointer_to_raw_data = struct.unpack_from(
-            "<IIII", pe_bytes, section_offset + 8
-        )
-        image_size = max(image_size, virtual_address + max(virtual_size, size_of_raw_data))
-        sections.append((virtual_address, size_of_raw_data, pointer_to_raw_data))
+    flat = bytearray(image_end - image_base)
+    for p_vaddr, p_offset, p_filesz, p_memsz in load_segments:
+        dest_offset = p_vaddr - image_base
+        flat[dest_offset : dest_offset + p_filesz] = elf_bytes[p_offset : p_offset + p_filesz]
+        if p_memsz > p_filesz:
+            flat[dest_offset + p_filesz : dest_offset + p_memsz] = b"\x00" * (p_memsz - p_filesz)
 
-    flat = bytearray(image_size)
-    for virtual_address, size_of_raw_data, pointer_to_raw_data in sections:
-        if size_of_raw_data == 0:
-            continue
-        flat[virtual_address : virtual_address + size_of_raw_data] = pe_bytes[
-            pointer_to_raw_data : pointer_to_raw_data + size_of_raw_data
-        ]
-
-    return bytes(flat), entry_rva
+    return bytes(flat), e_entry - image_base
 
 
 def write_bochsrc(target, source, env):
@@ -156,6 +172,39 @@ def compile_kernel(target, source, env):
     return None
 
 
+COMMON_ZIG_OPTS = [
+    "--cache-dir", str(ZIG_CACHE_DIR),
+    "--global-cache-dir", str(ZIG_GLOBAL_CACHE_DIR),
+    "-target", "x86-freestanding-none",
+    "-O",
+    "ReleaseSmall",
+    "-fno-stack-protector",
+]
+
+def compile_zig(target, source, env):
+    output_path = pathlib.Path(str(target[0]))
+    source_path = pathlib.Path(str(source[0]))
+    ensure_parent(output_path)
+    ensure_parent(ZIG_CACHE_DIR / "cache")
+    ensure_parent(ZIG_GLOBAL_CACHE_DIR / "cache")
+    if output_path.exists():
+        output_path.unlink()
+    run(
+        [
+            str(ZIG_EXE),
+            "build-obj",
+            str(source_path),
+            *COMMON_ZIG_OPTS,
+            "-ofmt=elf",
+            "-fno-entry",
+            f"-femit-bin={output_path}",
+        ]
+    )
+    if not output_path.exists():
+        raise RuntimeError(f"Zig did not produce {output_path.name}.")
+    return None
+
+
 def link_stage2(target, source, env):
     output_path = pathlib.Path(str(target[0]))
     ensure_parent(output_path)
@@ -163,15 +212,17 @@ def link_stage2(target, source, env):
         output_path.unlink()
     run(
         [
-            str(TCC32_EXE),
-            "-nostdlib",
-            "-Wl,-image-base=0x8000",
-            "-Wl,-section-alignment=0x200",
-            "-Wl,-file-alignment=0x200",
-            "-o",
-            str(output_path),
+            str(ZIG_EXE),
+            "build-exe",
+            *COMMON_ZIG_OPTS,
+            "-fentry=_start",
+            "-fno-compiler-rt",
+            "-T",
+            str(STAGE2_LINKER_SCRIPT),
+            f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
             *[str(path) for path in KERNEL_OBJS],
+            *[str(path) for path in ZIG_OBJS],
         ]
     )
     return None
@@ -182,7 +233,7 @@ def build_stage2_payload(target, source, env):
     meta_path = pathlib.Path(str(target[1]))
     ensure_parent(stage2_path)
     ensure_parent(meta_path)
-    stage2_bytes, entry_rva = flatten_pe(pathlib.Path(str(source[0])))
+    stage2_bytes, entry_rva = flatten_elf(pathlib.Path(str(source[0])))
     stage2_path.write_bytes(stage2_bytes)
 
     stage2_sectors = math.ceil(len(stage2_bytes) / 512.0)
@@ -286,7 +337,11 @@ kernel_objs = [
     env.Command(str(obj_path), str(source_path), Action(compile_kernel, "Compiling $TARGET"))
     for source_path, obj_path in zip(KERNEL_C_SOURCES, KERNEL_OBJS)
 ]
-stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, *kernel_objs], Action(link_stage2, "Linking $TARGET"))
+zig_objs = [
+    env.Command(str(obj_path), str(source_path), Action(compile_zig, "Compiling $TARGET"))
+    for source_path, obj_path in zip(ZIG_SOURCES, ZIG_OBJS)
+]
+stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, *kernel_objs, *zig_objs], Action(link_stage2, "Linking $TARGET"))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,

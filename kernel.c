@@ -8,6 +8,7 @@ static const u8 VGA_ATTR = 0x07;
 
 // from interrupts.asm
 extern void interrupts_init(void);
+extern void zig_print_banner(void);
 
 struct app_context cur_app;
 
@@ -212,6 +213,7 @@ u32 app_launcher_init(struct app_context* app, int row) {
 void _start(void) {
     console_init(VGA_ATTR);
     console_puts("Hello from protected mode.\n");
+    zig_print_banner();
     console_puts("Press a key.\n\n");
     interrupts_init();
 
