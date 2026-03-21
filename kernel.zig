@@ -19,15 +19,6 @@ export fn consume_key_event(event: *const keyboard.KeyEvent) callconv(.c) void {
     }
 }
 
-comptime {
-    // Force semantic analysis of imported modules so their `pub export fn`
-    // declarations are emitted into this translation unit.
-    _ = console;
-    _ = readline;
-    _ = keyboard;
-    _ = app_keylog;
-}
-
 /// Kernel entry point
 export fn _start() void {
     console.console_init(VGA_ATTR);
