@@ -19,7 +19,7 @@ pub const ESC_DOWN = 0x50;
 pub const ESC_DELETE = 0x53;
 
 /// Keyboard event structure
-pub const KeyEvent = extern struct {
+pub const KeyEvent = struct {
     scancode: u8,
     keycode: u8,
     pressed: u8,

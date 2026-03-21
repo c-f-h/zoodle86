@@ -12,13 +12,8 @@ extern fn interrupts_init() void;
 // Global application context
 var cur_app: app.AppContext = undefined;
 
-/// Get the current app context
-export fn get_cur_app() [*c]app.AppContext {
-    return &cur_app;
-}
-
 /// Keyboard event consumer called by interrupt handler
-export fn consume_key_event(event: [*c]const keyboard.KeyEvent) callconv(.c) void {
+export fn consume_key_event(event: *const keyboard.KeyEvent) callconv(.c) void {
     if (cur_app.key_event_handler != null) {
         _ = cur_app.key_event_handler.?(event);
     }
@@ -41,8 +36,8 @@ export fn _start() void {
 
     interrupts_init();
 
-    //_ = app_keylog.app_keylog_init(@ptrCast(&cur_app));
-    _ = readline.app_launcher_init(@ptrCast(&cur_app), 3);
+    //_ = app_keylog.app_keylog_init(&cur_app);
+    _ = readline.app_launcher_init(&cur_app, 3);
 
     while (true) {
         keyboard.keyboard_poll();

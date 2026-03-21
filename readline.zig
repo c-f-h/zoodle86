@@ -41,9 +41,7 @@ const ReadlineBuf = struct {
 var readline: ReadlineBuf = .{};
 var readline_row: u32 = 0; // in which row to draw the readline buffer
 
-pub export fn app_launcher_keyhandler(event: ?*const anyopaque) callconv(.c) u32 {
-    if (event == null) return 0;
-    const ev = @as([*c]const keyboard.KeyEvent, @ptrCast(event))[0];
+pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c) u32 {
     if (ev.pressed == 0) return 0;
 
     var redraw_all = false;
@@ -149,11 +147,8 @@ pub export fn app_launcher_keyhandler(event: ?*const anyopaque) callconv(.c) u32
     return 0;
 }
 
-pub export fn app_launcher_init(app_ctx: [*c]app.AppContext, row: u32) callconv(.c) u32 {
-    if (app_ctx == null) return 1;
-    const app_ptr = &app_ctx[0];
-
-    app_ptr.* = .{
+pub export fn app_launcher_init(app_ctx: *app.AppContext, row: u32) callconv(.c) u32 {
+    app_ctx.* = .{
         .name = "launcher",
         .key_event_handler = app_launcher_keyhandler,
     };
