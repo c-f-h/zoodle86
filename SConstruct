@@ -22,9 +22,7 @@ BOCHS_DIR = BOCHS_EXE.parent
 BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
-ZIG_SOURCES = [
-    ROOT / "kernel.zig",
-]
+ZIG_KERNEL_SRC = ROOT / "kernel.zig"
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 
@@ -59,7 +57,7 @@ STAGE2_META = build_artifact(STAGE2_EXE, ".meta")
 FLOPPY_IMG = BUILD_DIR / "floppy.img"
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
-ZIG_OBJS = [build_artifact(source, ".o") for source in ZIG_SOURCES]
+ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 
@@ -138,7 +136,6 @@ def write_bochsrc(target, source, env):
         ),
         encoding="ascii",
     )
-    return None
 
 
 def assemble_interrupts(target, source, env):
@@ -146,7 +143,6 @@ def assemble_interrupts(target, source, env):
     run([str(NASM_EXE), "-f", "elf32", str(INTERRUPTS_ASM), "-o", str(INTERRUPTS_OBJ)])
     if not INTERRUPTS_OBJ.exists():
         raise RuntimeError("NASM did not produce interrupts.o.")
-    return None
 
 
 COMMON_ZIG_OPTS = [
@@ -180,7 +176,6 @@ def compile_zig(target, source, env):
     )
     if not output_path.exists():
         raise RuntimeError(f"Zig did not produce {output_path.name}.")
-    return None
 
 
 def link_stage2(target, source, env):
@@ -199,10 +194,9 @@ def link_stage2(target, source, env):
             str(STAGE2_LINKER_SCRIPT),
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
-            *[str(path) for path in ZIG_OBJS],
+            str(ZIG_OBJ),
         ]
     )
-    return None
 
 
 def build_stage2_payload(target, source, env):
@@ -223,7 +217,6 @@ def build_stage2_payload(target, source, env):
         )
 
     meta_path.write_text(f"{entry_rva}\n{stage2_sectors}\n", encoding="ascii")
-    return None
 
 
 def assemble_boot(target, source, env):
@@ -241,24 +234,19 @@ def assemble_boot(target, source, env):
             str(NASM_EXE),
             f"-DSTAGE2_SECTORS={stage2_sectors}",
             f"-DSTAGE2_ENTRY_OFFSET={entry_rva}",
-            "-f",
-            "bin",
+            "-f", "bin",
             str(BOOT_ASM),
-            "-o",
-            str(output_path),
+            "-o", str(output_path),
         ]
     )
-
-    boot_bytes = output_path.read_bytes()
-    if len(boot_bytes) != 512:
-        raise RuntimeError(f"Boot sector must be exactly 512 bytes, got {len(boot_bytes)}.")
-    return None
 
 
 def build_floppy(target, source, env):
     target_path = pathlib.Path(str(target[0]))
-    ensure_parent(target_path)
+    ensure_parent(target_path)      # ensure build directory exists
     boot_bytes = pathlib.Path(str(source[0])).read_bytes()
+    if len(boot_bytes) != 512:
+        raise RuntimeError(f"Boot sector must be exactly 512 bytes, got {len(boot_bytes)}.")
     stage2_bytes = pathlib.Path(str(source[1])).read_bytes()
     if 512 + len(stage2_bytes) > FLOPPY_SIZE:
         raise RuntimeError("stage2.bin does not fit in the floppy image.")
@@ -266,7 +254,6 @@ def build_floppy(target, source, env):
     image_bytes[0 : len(boot_bytes)] = boot_bytes
     image_bytes[512 : 512 + len(stage2_bytes)] = stage2_bytes
     target_path.write_bytes(image_bytes)
-    return None
 
 
 def run_bochs(target, source, env):
@@ -278,7 +265,6 @@ def run_bochs(target, source, env):
             f"Command failed with exit code {completed.returncode}: "
             f"{' '.join(map(str, [BOCHS_EXE, '-q', '-f', BOCHSRC_PATH]))}"
         )
-    return None
 
 
 def run_qemu(target, source, env):
@@ -301,19 +287,15 @@ def run_qemu(target, source, env):
             f"Command failed with exit code {completed.returncode}: "
             f"{' '.join(map(str, [QEMU_EXE, '-m', '32', '-boot', 'a', '-drive', f'file={FLOPPY_IMG},if=floppy,format=raw']))}"
         )
-    return None
 
 
 env = Environment(ENV=os.environ)
 
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
 interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
-zig_objs = [
-    # build always because zig imports are not correctly tracked by scons - let zig figure it out
-    AlwaysBuild(env.Command(str(obj_path), str(source_path), Action(compile_zig, "Compiling $TARGET")))
-    for source_path, obj_path in zip(ZIG_SOURCES, ZIG_OBJS)
-]
-stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, *zig_objs], Action(link_stage2, "Linking $TARGET"))
+# build always because zig imports are not correctly tracked by scons - let zig figure it out
+zig_obj = AlwaysBuild(env.Command(str(ZIG_OBJ), str(ZIG_KERNEL_SRC), Action(compile_zig, "Compiling $TARGET")))
+stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, zig_obj], Action(link_stage2, "Linking $TARGET"))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,
