@@ -13,6 +13,17 @@
 				"kind": "build",
 				"isDefault": true
 			}
+		},
+		{
+			"label": "scons build",
+			"type": "shell",
+			"command": "scons",
+			"args": [],
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			}
 		}
 	]
 }
