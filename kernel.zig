@@ -3,6 +3,7 @@ const readline = @import("readline.zig");
 const keyboard = @import("keyboard.zig");
 const app_keylog = @import("app_keylog.zig");
 const app = @import("app.zig");
+const ide = @import("ide.zig");
 
 const std = @import("std");
 
@@ -64,6 +65,10 @@ export fn _start() void {
     kernel_main() catch |err| {
         @panic(switch (err) {
             error.OutOfMemory => "Out of memory",
+            ide.IdeError.Timeout => "IDE timeout",
+            ide.IdeError.DeviceFault => "IDE device fault",
+            ide.IdeError.ControllerError => "IDE controller error",
+            else => "Unknown error",
         });
     };
 }
@@ -85,7 +90,11 @@ fn kernel_main() !void {
     var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
     alloc = fba.allocator();
 
-    console.dumpMem(0x10000, 16);
+    ide.selectDrive(ide.Drive.master);
+    const sector_buffer = try alloc.create([512]u8);
+    try ide.readSectorLba28(ide.Drive.master, 0, sector_buffer);
+
+    console.dumpMem(@intFromPtr(sector_buffer), 16);
 
     //_ = app_keylog.app_keylog_init(&cur_app);
     _ = readline.app_launcher_init(&cur_app, 1);

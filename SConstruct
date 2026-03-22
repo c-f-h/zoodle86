@@ -122,8 +122,8 @@ def write_bochsrc(target, source, env):
                 "megs: 32",
                 f'romimage: file="{BOCHS_DIR / "BIOS-bochs-latest"}", options=fastboot',
                 f'vgaromimage: file="{BOCHS_DIR / "VGABIOS-lgpl-latest.bin"}"',
-                "boot: floppy",
-                f'floppya: 1_44="{FLOPPY_IMG.relative_to(ROOT)}", status=inserted',
+                "boot: c",
+                f'ata0-master: type=disk, path="{FLOPPY_IMG.relative_to(ROOT)}", mode=flat',
                 f'log: {BOCHSOUT_PATH.relative_to(ROOT)}',
                 'display_library: win32, options="autoscale"',
                 "panic: action=ask",
@@ -273,12 +273,9 @@ def run_qemu(target, source, env):
     completed = subprocess.run(
         [
             str(QEMU_EXE),
-            "-m",
-            "32",
-            "-boot",
-            "a",
-            "-drive",
-            f"file={FLOPPY_IMG},if=floppy,format=raw",
+            "-m", "32",
+            "-boot", "order=ac",
+            "-drive", f"file={FLOPPY_IMG},if=ide,format=raw",
         ],
         cwd=ROOT,
     )

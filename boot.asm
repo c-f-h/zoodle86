@@ -22,6 +22,13 @@ start:
 
     ; save boot drive obtained from BIOS
     mov [boot_drive], dl
+    test dl, 0x80
+    jz no_hdd
+    mov byte [loading_message_cont], 'H'   ; -> "HDD"
+no_hdd:
+    and dl, ~0x80
+    add dl, '0'
+    mov byte [loading_message_cont+4], dl
 
     ;; get memory map from BIOS
     xor bp, bp                  ; keep count of entries
@@ -179,7 +186,8 @@ boot_drive db 0
 disk_sector db 0
 disk_head db 0
 disk_cylinder db 0
-loading_message db 'Loading stage 2...', 0
+loading_message db 'Loading stage 2 from '
+loading_message_cont db 'FDD ?...', 0
 error_message db 13, 10, 'Bootloader failure.', 0
 
 times 510 - ($ - $$) db 0
