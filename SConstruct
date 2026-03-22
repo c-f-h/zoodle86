@@ -26,7 +26,7 @@ ZIG_KERNEL_SRC = ROOT / "kernel.zig"
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 
-FLOPPY_SIZE = 1_474_560
+IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
 
 
@@ -54,7 +54,7 @@ INTERRUPTS_OBJ = build_artifact(INTERRUPTS_ASM, ".o")
 STAGE2_EXE = BUILD_DIR / "stage2.elf"
 STAGE2_BIN = build_artifact(STAGE2_EXE, ".bin")
 STAGE2_META = build_artifact(STAGE2_EXE, ".meta")
-FLOPPY_IMG = BUILD_DIR / "floppy.img"
+BOOT_IMG = BUILD_DIR / "image.img"
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
@@ -123,7 +123,7 @@ def write_bochsrc(target, source, env):
                 f'romimage: file="{BOCHS_DIR / "BIOS-bochs-latest"}", options=fastboot',
                 f'vgaromimage: file="{BOCHS_DIR / "VGABIOS-lgpl-latest.bin"}"',
                 "boot: c",
-                f'ata0-master: type=disk, path="{FLOPPY_IMG.relative_to(ROOT)}", mode=flat',
+                f'ata0-master: type=disk, path="{BOOT_IMG.relative_to(ROOT)}", mode=flat',
                 f'log: {BOCHSOUT_PATH.relative_to(ROOT)}',
                 'display_library: win32, options="autoscale"',
                 "panic: action=ask",
@@ -210,7 +210,7 @@ def build_stage2_payload(target, source, env):
     stage2_sectors = math.ceil(len(stage2_bytes) / 512.0)
     if stage2_sectors < 1:
         raise RuntimeError("Computed invalid stage2 sector count.")
-    max_stage2_sectors = (FLOPPY_SIZE // 512) - 1
+    max_stage2_sectors = (IMAGE_SIZE // 512) - 1
     if stage2_sectors > max_stage2_sectors:
         raise RuntimeError(
             f"stage2.bin requires {stage2_sectors} sectors, but only {max_stage2_sectors} sectors fit after the boot sector."
@@ -241,19 +241,26 @@ def assemble_boot(target, source, env):
     )
 
 
-def build_floppy(target, source, env):
+def build_image(target, source, env):
     target_path = pathlib.Path(str(target[0]))
     ensure_parent(target_path)      # ensure build directory exists
+    
     boot_bytes = pathlib.Path(str(source[0])).read_bytes()
     if len(boot_bytes) != 512:
         raise RuntimeError(f"Boot sector must be exactly 512 bytes, got {len(boot_bytes)}.")
     stage2_bytes = pathlib.Path(str(source[1])).read_bytes()
-    if 512 + len(stage2_bytes) > FLOPPY_SIZE:
-        raise RuntimeError("stage2.bin does not fit in the floppy image.")
-    image_bytes = bytearray(FLOPPY_SIZE)
-    image_bytes[0 : len(boot_bytes)] = boot_bytes
-    image_bytes[512 : 512 + len(stage2_bytes)] = stage2_bytes
-    target_path.write_bytes(image_bytes)
+    if 512 + len(stage2_bytes) > IMAGE_SIZE:
+        raise RuntimeError("stage2.bin does not fit in the disk image.")
+    
+    # If target doesn't exist, create it full of zeros
+    if not target_path.exists():
+        target_path.write_bytes(b"\x00" * IMAGE_SIZE)
+    
+    # Open for modification and patch in the boot sector and stage2
+    img_file = target_path.open("r+b")
+    img_file.write(boot_bytes)
+    img_file.write(stage2_bytes)
+    img_file.close()
 
 
 def run_bochs(target, source, env):
@@ -275,16 +282,14 @@ def run_qemu(target, source, env):
             str(QEMU_EXE),
             "-m", "32",
             "-boot", "order=ac",
-            "-drive", f"file={FLOPPY_IMG},if=ide,format=raw",
+            "-drive", f"file={BOOT_IMG},if=ide,format=raw",
         ],
         cwd=ROOT,
     )
     if completed.returncode != 0:
         raise RuntimeError(
-            f"Command failed with exit code {completed.returncode}: "
-            f"{' '.join(map(str, [QEMU_EXE, '-m', '32', '-boot', 'a', '-drive', f'file={FLOPPY_IMG},if=floppy,format=raw']))}"
+            f"Command qemu failed with exit code {completed.returncode}"
         )
-
 
 env = Environment(ENV=os.environ)
 
@@ -299,8 +304,8 @@ stage2_payload = env.Command(
     Action(build_stage2_payload, "Flattening $SOURCE"),
 )
 boot_bin = env.Command(str(BOOT_BIN), [str(BOOT_ASM), stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
-floppy_img = env.Command(str(FLOPPY_IMG), [boot_bin, stage2_payload[0]], Action(build_floppy, "Packing $TARGET"))
+boot_img = env.Command(str(BOOT_IMG), [boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 
-Default(floppy_img)
-AlwaysBuild(env.Alias("run", [floppy_img, bochsrc], Action(run_bochs, "Running Bochs")))
-AlwaysBuild(env.Alias("qemu", [floppy_img], Action(run_qemu, "Running QEMU")))
+Default(boot_img)
+AlwaysBuild(env.Alias("run", [boot_img, bochsrc], Action(run_bochs, "Running Bochs")))
+AlwaysBuild(env.Alias("qemu", [boot_img], Action(run_qemu, "Running QEMU")))
