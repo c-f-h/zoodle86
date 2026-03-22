@@ -19,6 +19,28 @@ export fn consume_key_event(event: *const keyboard.KeyEvent) callconv(.c) void {
     }
 }
 
+const E820MemoryMapEntry = struct {
+    base: u64, // 8 bytes
+    length: u64, // 8 bytes
+    type_: u32, // 4 bytes
+    acpi_attrs: u32, // 4 bytes
+};
+
+fn readMemMap() void {
+    const num_entries = @as(*align(1) u16, @ptrFromInt(0x7e00)).*;
+    const entries = @as([*]align(1) E820MemoryMapEntry, @ptrFromInt(0x7e02))[0..num_entries];
+
+    for (entries) |*entry| {
+        console.puts("Memory Map: base=");
+        console.putHexU64(entry.base);
+        console.puts(", length=");
+        console.putHexU64(entry.length);
+        console.puts(", type=");
+        console.putDecU32(entry.type_);
+        console.puts("\n");
+    }
+}
+
 /// Kernel entry point
 export fn _start() void {
     console.console_init(VGA_ATTR);
@@ -28,6 +50,7 @@ export fn _start() void {
     interrupts_init();
 
     console.dumpMem(0x7e00, 16);
+    readMemMap();
 
     //_ = app_keylog.app_keylog_init(&cur_app);
     _ = readline.app_launcher_init(&cur_app, 1);

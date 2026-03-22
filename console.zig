@@ -117,6 +117,14 @@ pub fn putHexU32(value: u32) void {
     }
 }
 
+pub fn putHexU64(value: u64) void {
+    // Split u64 into two u32 halves to avoid 64-bit shift runtime functions
+    const hi: u32 = @intCast(value >> 32);
+    const lo: u32 = @intCast(value & 0xFFFFFFFF);
+    putHexU32(hi);
+    putHexU32(lo);
+}
+
 pub fn putDecU32(value: u32) void {
     if (value == 0) {
         putch('0');
