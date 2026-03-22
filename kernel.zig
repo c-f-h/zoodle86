@@ -4,6 +4,8 @@ const keyboard = @import("keyboard.zig");
 const app_keylog = @import("app_keylog.zig");
 const app = @import("app.zig");
 
+const std = @import("std");
+
 const VGA_ATTR: u8 = 0x07;
 
 // External interrupt setup from interrupts.asm
@@ -11,6 +13,8 @@ extern fn interrupts_init() void;
 
 // Global application context
 var cur_app: app.AppContext = undefined;
+
+var alloc: std.mem.Allocator = undefined;
 
 /// Keyboard event consumer called by interrupt handler
 export fn consume_key_event(event: *const keyboard.KeyEvent) callconv(.c) void {
@@ -57,11 +61,18 @@ fn findUsableMemoryWindow() struct { u32, u32 } {
 
 /// Kernel entry point
 export fn _start() void {
-    console.console_init(VGA_ATTR);
-    console.puts("Hello from protected mode.\n");
-    console.puts("Press a key.\n\n");
+    kernel_main() catch |err| {
+        @panic(switch (err) {
+            error.OutOfMemory => "Out of memory",
+        });
+    };
+}
 
+fn kernel_main() !void {
     interrupts_init();
+
+    console.console_init(VGA_ATTR);
+    console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow();
     console.puts("Usable memory: base=");
@@ -70,7 +81,11 @@ export fn _start() void {
     console.putHexU32(mem_size);
     console.newline();
 
-    console.dumpMem(0x7e00, 16);
+    var mem_start: [*]u8 = @ptrFromInt(mem_base);
+    var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
+    alloc = fba.allocator();
+
+    console.dumpMem(0x10000, 16);
 
     //_ = app_keylog.app_keylog_init(&cur_app);
     _ = readline.app_launcher_init(&cur_app, 1);
