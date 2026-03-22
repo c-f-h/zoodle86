@@ -26,19 +26,33 @@ const E820MemoryMapEntry = struct {
     acpi_attrs: u32, // 4 bytes
 };
 
-fn readMemMap() void {
-    const num_entries = @as(*align(1) u16, @ptrFromInt(0x7e00)).*;
-    const entries = @as([*]align(1) E820MemoryMapEntry, @ptrFromInt(0x7e02))[0..num_entries];
+/// Finds the largest contiguous usable memory region below 4GB using the
+/// E820 memory map provided by the bootloader.
+/// Panics if no suitable region of at least 8MB is found.
+fn findUsableMemoryWindow() struct { u32, u32 } {
+    const mem_map_address = 0x7e00;
+    const num_entries = @as(*align(1) u16, @ptrFromInt(mem_map_address)).*;
+    const entries = @as([*]align(1) E820MemoryMapEntry, @ptrFromInt(mem_map_address + 2))[0..num_entries];
+
+    var largest_usable_base: u64 = 0;
+    var largest_usable_length: u64 = 0;
 
     for (entries) |*entry| {
-        console.puts("Memory Map: base=");
-        console.putHexU64(entry.base);
-        console.puts(", length=");
-        console.putHexU64(entry.length);
-        console.puts(", type=");
-        console.putDecU32(entry.type_);
-        console.puts("\n");
+        if (entry.type_ == 1 and entry.base < (1 << 32)) {
+            const real_usable_length = @min(entry.length, (1 << 32) - entry.base);
+            // Usable RAM below 4GB
+            if (real_usable_length > largest_usable_length) {
+                largest_usable_base = entry.base;
+                largest_usable_length = real_usable_length;
+            }
+        }
     }
+
+    if (largest_usable_length < 8 * 1024 * 1024) {
+        @panic("Not enough memory found: 8MB required");
+    }
+
+    return .{ @intCast(largest_usable_base), @intCast(largest_usable_length) };
 }
 
 /// Kernel entry point
@@ -49,8 +63,14 @@ export fn _start() void {
 
     interrupts_init();
 
+    const mem_base, const mem_size = findUsableMemoryWindow();
+    console.puts("Usable memory: base=");
+    console.putHexU32(mem_base);
+    console.puts(", size=");
+    console.putHexU32(mem_size);
+    console.newline();
+
     console.dumpMem(0x7e00, 16);
-    readMemMap();
 
     //_ = app_keylog.app_keylog_init(&cur_app);
     _ = readline.app_launcher_init(&cur_app, 1);
@@ -61,8 +81,12 @@ export fn _start() void {
 }
 
 pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
-    _ = message;
     _ = trace;
     _ = return_address;
+    console.setCursor(0, 0);
+    console.setAttr(0x4F); // Red background, white text
+    console.puts("KERNEL PANIC:\n");
+    console.puts(message);
+    console.puts("\nSystem halted.");
     while (true) {}
 }
