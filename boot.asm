@@ -6,12 +6,9 @@ STAGE2_LOAD_OFFSET  equ 0x8000
 FLOPPY_SECTORS_PER_TRACK equ 18
 FLOPPY_HEADS_PER_CYLINDER equ 2
 
-; should be set by build script
-;%define STAGE2_SECTORS 4
-
-%ifndef STAGE2_ENTRY_OFFSET
-%define STAGE2_ENTRY_OFFSET 0
-%endif
+; must be set by build script:
+;   STAGE2_SECTORS          how many sectors to load for stage 2
+;   STAGE2_ENTRY_OFFSET     the entrypoint into stage 2
 
 CODE_SEL equ 0x08
 DATA_SEL equ 0x10
@@ -26,10 +23,30 @@ start:
     ; save boot drive obtained from BIOS
     mov [boot_drive], dl
 
-    ; set video mode
-    mov ax, 0x0003
-    int 0x10
+    ;; get memory map from BIOS
+    xor bp, bp                  ; keep count of entries
+    mov di, 0x7E02              ; directly after the bootloader - space for count
+    xor ebx, ebx                ; initial value for ebx - int 15 will update it
 
+load_smap_loop:
+    clc
+    mov eax, 0xE820             ; command for int 15h
+    mov ecx, 24                 ; buffer size
+    mov edx, 0x534D4150         ; magic number 'SMAP'
+    int 0x15                    ; load an smap entry
+    jc general_error
+    mov edx, 0x534D4150         ; magic number 'SMAP'
+    cmp eax, edx
+    jne general_error
+    inc bp
+    add di, 24                ; advance to next entry
+    test ebx, ebx
+    jnz load_smap_loop
+
+    ; finished loading smap entries - store the count
+    mov word [0x7e00], bp
+
+    ;; load stage 2 from the boot drive
     mov si, loading_message
     call print_string
 
@@ -39,7 +56,7 @@ start:
     mov byte [disk_head], 0
     mov byte [disk_cylinder], 0
     call load_stage2
-    jc disk_error
+    jc general_error
 
     ; Do not carry real-mode interrupt state into protected mode. Until stage 2
     ; installs a valid IDT, any hardware IRQ would triple-fault and reboot.
@@ -53,10 +70,9 @@ start:
 
     jmp CODE_SEL:protected_mode_entry
 
-disk_error:
-    mov si, disk_error_message
+general_error:
+    mov si, error_message
     call print_string
-
 .hang:
     hlt
     jmp .hang
@@ -159,14 +175,12 @@ protected_mode_entry:
     mov eax, STAGE2_LOAD_OFFSET + STAGE2_ENTRY_OFFSET
     jmp eax
 
-[bits 16]
-
 boot_drive db 0
 disk_sector db 0
 disk_head db 0
 disk_cylinder db 0
 loading_message db 'Loading stage 2...', 0
-disk_error_message db 13, 10, 'Disk read failed.', 0
+error_message db 13, 10, 'Bootloader failure.', 0
 
 times 510 - ($ - $$) db 0
 dw 0xAA55

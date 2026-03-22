@@ -138,3 +138,40 @@ pub fn putDecU32(value: u32) void {
         putch(digits[count]);
     }
 }
+
+/// Dump memory in hex viewer format showing address, hex bytes, and ASCII representation.
+/// Displays `num_lines` of 16 bytes each starting from the given address.
+pub fn dumpMem(addr: u32, num_lines: u32) void {
+    var line: u32 = 0;
+    while (line < num_lines) : (line += 1) {
+        const line_addr = addr + (line * 16);
+        const ptr: [*]const u8 = @ptrFromInt(line_addr);
+
+        // Print address
+        putHexU32(line_addr);
+        puts(": ");
+
+        // Print hex bytes
+        var byte_idx: u32 = 0;
+        while (byte_idx < 16) : (byte_idx += 1) {
+            putHexU8(ptr[byte_idx]);
+            putch(' ');
+        }
+
+        // Print separator
+        puts("| ");
+
+        // Print ASCII representation
+        byte_idx = 0;
+        while (byte_idx < 16) : (byte_idx += 1) {
+            const ch = ptr[byte_idx];
+            if (ch >= 32 and ch < 127) {
+                putch(ch);
+            } else {
+                putch('.');
+            }
+        }
+
+        newline();
+    }
+}

@@ -27,8 +27,10 @@ export fn _start() void {
 
     interrupts_init();
 
+    console.dumpMem(0x7e00, 16);
+
     //_ = app_keylog.app_keylog_init(&cur_app);
-    _ = readline.app_launcher_init(&cur_app, 3);
+    _ = readline.app_launcher_init(&cur_app, 1);
 
     while (true) {
         keyboard.keyboard_poll();
