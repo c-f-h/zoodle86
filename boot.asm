@@ -179,6 +179,17 @@ protected_mode_entry:
     mov ss, ax
     mov esp, 0x90000
 
+    ; Required before any SSE/xmm usage
+    mov eax, cr0
+    and eax, ~(1 << 2)   ; Clear EM (emulation)
+    or  eax, (1 << 1)    ; Set MP (monitor coprocessor)
+    mov cr0, eax
+
+    mov eax, cr4
+    or  eax, (1 << 9)    ; Set OSFXSR
+    or  eax, (1 << 10)   ; Set OSXMMEXCPT (optional but recommended)
+    mov cr4, eax
+
     mov eax, STAGE2_LOAD_OFFSET + STAGE2_ENTRY_OFFSET
     jmp eax
 

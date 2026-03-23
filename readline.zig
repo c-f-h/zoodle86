@@ -10,7 +10,6 @@ const ReadlineBuf = struct {
     buf: [READLINE_BUF_MAX_LEN]u8 = [_]u8{0} ** READLINE_BUF_MAX_LEN,
     len: u32 = 0,
     cursor: u32 = 0,
-    done: bool = false,
 
     pub fn result(this: *ReadlineBuf) []const u8 {
         return this.buf[0..this.len];
@@ -88,7 +87,7 @@ const ReadlineBuf = struct {
 pub var readline: ReadlineBuf = undefined;
 var readline_row: u32 = 0; // in which row to draw the readline buffer
 
-fn readlineKeyhandler(ev: *const keyboard.KeyEvent) u32 {
+fn readlineKeyhandler(ctx: *app.AppContext, ev: *const keyboard.KeyEvent) u32 {
     if (ev.pressed == 0) return 0;
 
     var redraw_all = false;
@@ -149,7 +148,7 @@ fn readlineKeyhandler(ev: *const keyboard.KeyEvent) u32 {
     } else {
         switch (ev.keycode) {
             keyboard.VK_ENTER => {
-                readline.done = true;
+                ctx.done = true;
                 vga.disableCursor();
             },
             keyboard.VK_HOME => readline.cursor = 0,
