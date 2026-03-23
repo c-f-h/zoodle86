@@ -10,6 +10,11 @@ const ReadlineBuf = struct {
     buf: [READLINE_BUF_MAX_LEN]u8 = [_]u8{0} ** READLINE_BUF_MAX_LEN,
     len: u32 = 0,
     cursor: u32 = 0,
+    done: bool = false,
+
+    pub fn result(this: *ReadlineBuf) []const u8 {
+        return this.buf[0..this.len];
+    }
 
     /// Determine if a character is part of a word (alphanumeric or underscore).
     fn isWordChar(ch: u8) bool {
@@ -80,10 +85,10 @@ const ReadlineBuf = struct {
     }
 };
 
-var readline: ReadlineBuf = .{};
+pub var readline: ReadlineBuf = undefined;
 var readline_row: u32 = 0; // in which row to draw the readline buffer
 
-pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c) u32 {
+fn readlineKeyhandler(ev: *const keyboard.KeyEvent) u32 {
     if (ev.pressed == 0) return 0;
 
     var redraw_all = false;
@@ -143,6 +148,10 @@ pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c)
         }
     } else {
         switch (ev.keycode) {
+            keyboard.VK_ENTER => {
+                readline.done = true;
+                vga.disableCursor();
+            },
             keyboard.VK_HOME => readline.cursor = 0,
             keyboard.VK_END => readline.cursor = readline.len,
             keyboard.VK_LEFT => {
@@ -187,18 +196,18 @@ pub export fn app_launcher_keyhandler(ev: *const keyboard.KeyEvent) callconv(.c)
     return 0;
 }
 
-pub export fn app_launcher_init(app_ctx: *app.AppContext, row: u32) callconv(.c) u32 {
+pub export fn initReadlineApp(app_ctx: *app.AppContext) u32 {
     app_ctx.* = .{
-        .name = "launcher",
-        .key_event_handler = app_launcher_keyhandler,
+        .name = "readline",
+        .key_event_handler = readlineKeyhandler,
     };
 
-    readline_row = row;
-    readline.cursor = 0;
-    readline.len = 0;
-    @memset(&readline.buf, 0);
+    const cpos = console.getCursorPos();
+    readline_row = cpos[0];
+    readline = .{};
 
     console.setCursor(readline_row, 0);
+    vga.enableCursor();
 
     // clear display row
     var i: u32 = 0;

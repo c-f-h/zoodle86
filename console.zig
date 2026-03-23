@@ -34,7 +34,7 @@ fn advanceLine() void {
     scrollIfNeeded();
 }
 
-pub export fn console_init(attr: u8) callconv(.c) void {
+pub export fn console_init(attr: u8) void {
     console_attr = attr;
     console_row = 0;
     console_col = 0;
@@ -54,6 +54,10 @@ pub fn setCursor(row: u32, col: u32) void {
     console_row = if (row >= vga.TEXT_HEIGHT) vga.TEXT_HEIGHT - 1 else row;
     console_col = if (col >= vga.TEXT_WIDTH) vga.TEXT_WIDTH - 1 else col;
     syncCursor();
+}
+
+pub fn getCursorPos() struct { u32, u32 } {
+    return .{ console_row, console_col };
 }
 
 pub fn setAttr(attr: u8) void {

@@ -18,7 +18,7 @@ var cur_app: app.AppContext = undefined;
 var alloc: std.mem.Allocator = undefined;
 
 /// Keyboard event consumer called by interrupt handler
-export fn consume_key_event(event: *const keyboard.KeyEvent) callconv(.c) void {
+export fn consume_key_event(event: *const keyboard.KeyEvent) void {
     if (cur_app.key_event_handler != null) {
         _ = cur_app.key_event_handler.?(event);
     }
@@ -96,8 +96,16 @@ fn kernel_main() !void {
 
     console.dumpMem(@intFromPtr(sector_buffer), 16);
 
-    //_ = app_keylog.app_keylog_init(&cur_app);
-    _ = readline.app_launcher_init(&cur_app, 1);
+    //_ = app_keylog.initKeylogApp(&cur_app);
+    _ = readline.initReadlineApp(&cur_app);
+
+    while (!readline.readline.done) {
+        keyboard.keyboard_poll();
+    }
+    console.newline();
+    console.puts("You entered: ");
+    console.puts(readline.readline.result());
+    console.newline();
 
     while (true) {
         keyboard.keyboard_poll();

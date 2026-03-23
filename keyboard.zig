@@ -236,7 +236,7 @@ fn decodeScancode(scancode: u8, event: *KeyEvent) u8 {
 }
 
 /// Poll the ringbuffer of scancodes filled by the keyboard ISR, decode key events, and send them to the event sink.
-pub export fn keyboard_poll() callconv(.c) void {
+pub export fn keyboard_poll() void {
     // Disable interrupts
     asm volatile ("cli");
 
