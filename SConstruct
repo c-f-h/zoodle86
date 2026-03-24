@@ -62,57 +62,6 @@ ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 
 
-def flatten_elf(elf_path):
-    elf_bytes = elf_path.read_bytes()
-    if len(elf_bytes) < 52:
-        raise RuntimeError("stage2.elf is too small to be a valid ELF image.")
-    if elf_bytes[0:4] != b"\x7fELF":
-        raise RuntimeError("stage2.elf does not contain a valid ELF signature.")
-    if elf_bytes[4] != 1:
-        raise RuntimeError("Expected a 32-bit ELF image.")
-    if elf_bytes[5] != 1:
-        raise RuntimeError("Expected a little-endian ELF image.")
-
-    e_type, e_machine, _, e_entry, e_phoff, _, _, _, e_phentsize, e_phnum = struct.unpack_from(
-        "<HHIIIIIHHH", elf_bytes, 16
-    )
-    if e_type != 2:
-        raise RuntimeError(f"Expected an executable ELF image, got type {e_type}.")
-    if e_machine != 3:
-        raise RuntimeError(f"Expected an x86 ELF image, got machine {e_machine}.")
-    if e_phentsize != 32:
-        raise RuntimeError(f"Expected ELF32 program headers of size 32, got {e_phentsize}.")
-
-    load_segments = []
-    image_base = None
-    image_end = 0
-    for index in range(e_phnum):
-        phoff = e_phoff + (index * e_phentsize)
-        p_type, p_offset, p_vaddr, _, p_filesz, p_memsz, _, _ = struct.unpack_from("<IIIIIIII", elf_bytes, phoff)
-        if p_type != 1:
-            continue
-        if image_base is None:
-            image_base = p_vaddr
-        else:
-            image_base = min(image_base, p_vaddr)
-        image_end = max(image_end, p_vaddr + p_memsz)
-        load_segments.append((p_vaddr, p_offset, p_filesz, p_memsz))
-
-    if image_base is None:
-        raise RuntimeError("ELF image does not contain any PT_LOAD segments.")
-    if image_base != STAGE2_IMAGE_BASE:
-        raise RuntimeError(f"Expected stage2 image base 0x{STAGE2_IMAGE_BASE:X}, got 0x{image_base:X}.")
-
-    flat = bytearray(image_end - image_base)
-    for p_vaddr, p_offset, p_filesz, p_memsz in load_segments:
-        dest_offset = p_vaddr - image_base
-        flat[dest_offset : dest_offset + p_filesz] = elf_bytes[p_offset : p_offset + p_filesz]
-        if p_memsz > p_filesz:
-            flat[dest_offset + p_filesz : dest_offset + p_memsz] = b"\x00" * (p_memsz - p_filesz)
-
-    return bytes(flat), e_entry - image_base
-
-
 def write_bochsrc(target, source, env):
     target_path = pathlib.Path(str(target[0]))
     ensure_parent(target_path)
@@ -204,10 +153,20 @@ def build_stage2_payload(target, source, env):
     meta_path = pathlib.Path(str(target[1]))
     ensure_parent(stage2_path)
     ensure_parent(meta_path)
-    stage2_bytes, entry_rva = flatten_elf(pathlib.Path(str(source[0])))
-    stage2_path.write_bytes(stage2_bytes)
 
-    stage2_sectors = math.ceil(len(stage2_bytes) / 512.0)
+    run([
+        str(ZIG_EXE), "run", str(ROOT / "flatten_elf.zig"), "--",
+        str(pathlib.Path(str(source[0])).absolute()),
+        str(stage2_path.absolute()),
+        str(meta_path.absolute()),
+    ])
+
+    meta_lines = meta_path.read_text(encoding="ascii").splitlines()
+    if len(meta_lines) < 2:
+        raise RuntimeError("stage2.meta is malformed.")
+    entry_rva = int(meta_lines[0], 10)
+    stage2_sectors = int(meta_lines[1], 10)
+
     if stage2_sectors < 1:
         raise RuntimeError("Computed invalid stage2 sector count.")
     max_stage2_sectors = (IMAGE_SIZE // 512) - 1
@@ -215,8 +174,6 @@ def build_stage2_payload(target, source, env):
         raise RuntimeError(
             f"stage2.bin requires {stage2_sectors} sectors, but only {max_stage2_sectors} sectors fit after the boot sector."
         )
-
-    meta_path.write_text(f"{entry_rva}\n{stage2_sectors}\n", encoding="ascii")
 
 
 def assemble_boot(target, source, env):
