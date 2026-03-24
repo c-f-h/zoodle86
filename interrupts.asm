@@ -1,6 +1,8 @@
 [bits 32]
 section .text
 
+extern _bss_start, _bss_end
+
 ; entry point to initialize the interrupt handler
 global interrupts_init
 
@@ -29,6 +31,13 @@ KEYBOARD_BUFFER_SIZE equ 16
 KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
 
 interrupts_init:
+    ; zero out the BSS section
+    mov edi, _bss_start
+    mov ecx, _bss_end
+    sub ecx, edi
+    xor eax, eax
+    rep stosb
+
     ; Build the IDT first so protected mode has a valid destination for IRQ1
     ; before we unmask anything.
     call setup_idt

@@ -145,9 +145,9 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
             image_base = phdr.p_vaddr;
         }
         // find image end address similarly
-        if (phdr.p_vaddr + phdr.p_memsz > image_end) {
-            image_end = phdr.p_vaddr + phdr.p_memsz;
-        }
+        // NB: we use file size since we manually zero out the bss section on startup;
+        // this makes the image slightly smaller
+        image_end = @max(image_end, phdr.p_vaddr + phdr.p_filesz);
     }
 
     if (image_base == null) {
