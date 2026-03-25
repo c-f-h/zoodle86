@@ -104,11 +104,31 @@ fn kernel_main() !void {
         }
         console.newline();
 
-        if (std.mem.eql(u8, readline.readline.result(), "keylog")) {
-            _ = app_keylog.initKeylogApp(&cur_app);
-        } else {
-            _ = readline.initReadlineApp(&cur_app);
+        const cmdline = readline.readline.result();
+
+        var tokens = std.mem.tokenizeAny(u8, cmdline, " \t");
+        if (tokens.next()) |cmd| {
+            if (std.mem.eql(u8, cmd, "keylog")) {
+                _ = app_keylog.initKeylogApp(&cur_app);
+                continue;
+            } else if (std.mem.eql(u8, cmd, "dumpmem")) {
+                if (tokens.next()) |addr_str| {
+                    if (std.fmt.parseInt(u32, addr_str, 16)) |addr| {
+                        console.dumpMem(addr, 16);
+                    } else |_| {
+                        console.puts("Enter a hex address.\n");
+                    }
+                } else {
+                    console.puts("Usage: dumpmem <hex-address>\n");
+                }
+            } else {
+                console.puts("Unknown command ");
+                console.puts(cmd);
+                console.newline();
+            }
         }
+
+        _ = readline.initReadlineApp(&cur_app);
     }
 }
 
