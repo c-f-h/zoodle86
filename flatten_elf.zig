@@ -59,18 +59,16 @@ pub fn main(init: std.process.Init) !void {
 
     _ = it.skip();
 
-    var stderr = std.Io.File.stderr();
-
     const elf_path = it.next() orelse {
-        try stderr.writeStreamingAll(init.io, "Usage: flatten_elf <input.elf> <output.bin> <metadata.txt>\n");
+        std.debug.print("Usage: flatten_elf <input.elf> <output.bin> <metadata.txt>\n", .{});
         return FlattenElfError.InvalidArgs;
     };
     const out_path = it.next() orelse {
-        try stderr.writeStreamingAll(init.io, "Usage: flatten_elf <input.elf> <output.bin> <metadata.txt>\n");
+        std.debug.print("Usage: flatten_elf <input.elf> <output.bin> <metadata.txt>\n", .{});
         return FlattenElfError.InvalidArgs;
     };
     const meta_path = it.next() orelse {
-        try stderr.writeStreamingAll(init.io, "Usage: flatten_elf <input.elf> <output.bin> <metadata.txt>\n");
+        std.debug.print("Usage: flatten_elf <input.elf> <output.bin> <metadata.txt>\n", .{});
         return FlattenElfError.InvalidArgs;
     };
 
@@ -124,14 +122,16 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
     var image_base: ?u32 = null;
     var image_end: u32 = 0;
 
+    var buf: [256]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io.*, &buf);
+    const stdout = &stdout_writer.interface;
+
     var i: u16 = 0;
     while (i < ehdr.e_phnum) : (i += 1) {
         const phdr = ehdr.phdrPtr(elf.ptr, i);
 
         // print segment information to stdout
-        var stdout = std.Io.File.stdout();
-        var buf: [256]u8 = undefined;
-        try stdout.writeStreamingAll(io.*, try std.fmt.bufPrint(&buf, " section type={x:08} offset={x:08} vaddr={x:08} paddr={x:08} filesz={x:08} memsz={x:08}  \n", .{ phdr.p_type, phdr.p_offset, phdr.p_vaddr, phdr.p_paddr, phdr.p_filesz, phdr.p_memsz }));
+        try stdout.print(" section type={x:08} offset={x:08} vaddr={x:08} paddr={x:08} filesz={x:08} memsz={x:08}  \n", .{ phdr.p_type, phdr.p_offset, phdr.p_vaddr, phdr.p_paddr, phdr.p_filesz, phdr.p_memsz });
 
         // consider only LOAD segments
         if (phdr.p_type != 1) {
@@ -149,6 +149,7 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
         // this makes the image slightly smaller
         image_end = @max(image_end, phdr.p_vaddr + phdr.p_filesz);
     }
+    try stdout.flush();
 
     if (image_base == null) {
         return FlattenElfError.NoLoadSegments;
