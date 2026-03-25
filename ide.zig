@@ -1,3 +1,5 @@
+const io = @import("io.zig");
+
 pub const Bus = struct {
     io_base: u16,
     control_base: u16,
@@ -53,42 +55,12 @@ inline fn ioPort(bus: Bus, offset: u16) u16 {
     return bus.io_base + offset;
 }
 
-inline fn outb(port: u16, value: u8) void {
-    asm volatile ("outb %[val], %[port]"
-        :
-        : [val] "{al}" (value),
-          [port] "N{dx}" (port),
-    );
-}
-
-inline fn outw(port: u16, value: u16) void {
-    asm volatile ("outw %[val], %[port]"
-        :
-        : [val] "{ax}" (value),
-          [port] "N{dx}" (port),
-    );
-}
-
-inline fn inb(port: u16) u8 {
-    return asm volatile ("inb %[port], %[ret]"
-        : [ret] "={al}" (-> u8),
-        : [port] "N{dx}" (port),
-    );
-}
-
-inline fn inw(port: u16) u16 {
-    return asm volatile ("inw %[port], %[ret]"
-        : [ret] "={ax}" (-> u16),
-        : [port] "N{dx}" (port),
-    );
-}
-
 inline fn readStatus(bus: Bus) u8 {
-    return inb(ioPort(bus, REG_STATUS));
+    return io.inb(ioPort(bus, REG_STATUS));
 }
 
 inline fn readAltStatus(bus: Bus) u8 {
-    return inb(bus.control_base);
+    return io.inb(bus.control_base);
 }
 
 fn ata400nsDelay(bus: Bus) void {
@@ -126,7 +98,7 @@ fn waitUntilDataRequest(bus: Bus) IdeError!void {
 
 /// Selects an ATA drive on the primary IDE channel.
 pub fn selectDrive(drive: Drive) void {
-    outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, 0));
+    io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, 0));
     ata400nsDelay(PRIMARY);
 }
 
@@ -134,11 +106,11 @@ pub fn selectDrive(drive: Drive) void {
 pub fn identifyDrive(drive: Drive, out_words: *[256]u16) IdeError!void {
     selectDrive(drive);
 
-    outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 0);
-    outb(ioPort(PRIMARY, REG_LBA0), 0);
-    outb(ioPort(PRIMARY, REG_LBA1), 0);
-    outb(ioPort(PRIMARY, REG_LBA2), 0);
-    outb(ioPort(PRIMARY, REG_COMMAND), CMD_IDENTIFY);
+    io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 0);
+    io.outb(ioPort(PRIMARY, REG_LBA0), 0);
+    io.outb(ioPort(PRIMARY, REG_LBA1), 0);
+    io.outb(ioPort(PRIMARY, REG_LBA2), 0);
+    io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_IDENTIFY);
 
     if (readStatus(PRIMARY) == 0) {
         return error.NoDevice;
@@ -146,7 +118,7 @@ pub fn identifyDrive(drive: Drive, out_words: *[256]u16) IdeError!void {
 
     try waitUntilNotBusy(PRIMARY);
 
-    if (inb(ioPort(PRIMARY, REG_LBA1)) != 0 or inb(ioPort(PRIMARY, REG_LBA2)) != 0) {
+    if (io.inb(ioPort(PRIMARY, REG_LBA1)) != 0 or io.inb(ioPort(PRIMARY, REG_LBA2)) != 0) {
         return error.NotAtaDevice;
     }
 
@@ -154,7 +126,7 @@ pub fn identifyDrive(drive: Drive, out_words: *[256]u16) IdeError!void {
 
     var i: usize = 0;
     while (i < out_words.len) : (i += 1) {
-        out_words[i] = inw(dataPort(PRIMARY));
+        out_words[i] = io.inw(dataPort(PRIMARY));
     }
 }
 
@@ -162,19 +134,19 @@ pub fn identifyDrive(drive: Drive, out_words: *[256]u16) IdeError!void {
 pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!void {
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
-    outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
-    outb(ioPort(PRIMARY, REG_FEATURES), 0);
-    outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
-    outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
-    outb(ioPort(PRIMARY, REG_LBA1), @truncate(lba >> 8));
-    outb(ioPort(PRIMARY, REG_LBA2), @truncate(lba >> 16));
-    outb(ioPort(PRIMARY, REG_COMMAND), CMD_READ_SECTORS);
+    io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
+    io.outb(ioPort(PRIMARY, REG_FEATURES), 0);
+    io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
+    io.outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
+    io.outb(ioPort(PRIMARY, REG_LBA1), @truncate(lba >> 8));
+    io.outb(ioPort(PRIMARY, REG_LBA2), @truncate(lba >> 16));
+    io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_READ_SECTORS);
 
     try waitUntilDataRequest(PRIMARY);
 
     var i: usize = 0;
     while (i < 256) : (i += 1) {
-        const word = inw(dataPort(PRIMARY));
+        const word = io.inw(dataPort(PRIMARY));
         out_sector[i * 2] = @truncate(word);
         out_sector[(i * 2) + 1] = @truncate(word >> 8);
     }
@@ -184,13 +156,13 @@ pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!vo
 pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeError!void {
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
-    outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
-    outb(ioPort(PRIMARY, REG_FEATURES), 0);
-    outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
-    outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
-    outb(ioPort(PRIMARY, REG_LBA1), @truncate(lba >> 8));
-    outb(ioPort(PRIMARY, REG_LBA2), @truncate(lba >> 16));
-    outb(ioPort(PRIMARY, REG_COMMAND), CMD_WRITE_SECTORS);
+    io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
+    io.outb(ioPort(PRIMARY, REG_FEATURES), 0);
+    io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
+    io.outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
+    io.outb(ioPort(PRIMARY, REG_LBA1), @truncate(lba >> 8));
+    io.outb(ioPort(PRIMARY, REG_LBA2), @truncate(lba >> 16));
+    io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_WRITE_SECTORS);
 
     try waitUntilDataRequest(PRIMARY);
 
@@ -198,9 +170,9 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
     while (i < 256) : (i += 1) {
         const lo = @as(u16, in_sector[i * 2]);
         const hi = @as(u16, in_sector[(i * 2) + 1]) << 8;
-        outw(dataPort(PRIMARY), hi | lo);
+        io.outw(dataPort(PRIMARY), hi | lo);
     }
 
-    outb(ioPort(PRIMARY, REG_COMMAND), CMD_CACHE_FLUSH);
+    io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_CACHE_FLUSH);
     try waitUntilNotBusy(PRIMARY);
 }

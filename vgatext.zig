@@ -1,3 +1,5 @@
+const io = @import("io.zig");
+
 pub const TEXT_WIDTH: u32 = 80;
 pub const TEXT_HEIGHT: u32 = 25;
 
@@ -7,21 +9,6 @@ const VGA_CRTC_DATA: u16 = 0x3D5;
 
 const vga: *volatile [TEXT_HEIGHT * TEXT_WIDTH]u16 =
     @ptrFromInt(VGA_BASE);
-
-inline fn outb(port: u16, value: u8) void {
-    asm volatile ("outb %[val], %[port]"
-        :
-        : [val] "{al}" (value),
-          [port] "N{dx}" (port),
-    );
-}
-
-inline fn inb(port: u16) u8 {
-    return asm volatile ("inb %[port], %[ret]"
-        : [ret] "={al}" (-> u8),
-        : [port] "N{dx}" (port),
-    );
-}
 
 pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
     vga[row * TEXT_WIDTH + col] = (@as(u16, attr) << 8) | ch;
@@ -37,26 +24,26 @@ pub fn clear(attr: u8) void {
 }
 
 pub fn enableCursor() void {
-    outb(VGA_CRTC_INDEX, 0x0A);
-    outb(VGA_CRTC_DATA, inb(VGA_CRTC_DATA) & ~@as(u8, 0x20));
+    io.outb(VGA_CRTC_INDEX, 0x0A);
+    io.outb(VGA_CRTC_DATA, io.inb(VGA_CRTC_DATA) & ~@as(u8, 0x20));
 }
 
 pub fn disableCursor() void {
-    outb(VGA_CRTC_INDEX, 0x0A);
-    outb(VGA_CRTC_DATA, inb(VGA_CRTC_DATA) | 0x20);
+    io.outb(VGA_CRTC_INDEX, 0x0A);
+    io.outb(VGA_CRTC_DATA, io.inb(VGA_CRTC_DATA) | 0x20);
 }
 
 pub fn setCursorSize(cursor_start: u8, cursor_end: u8) void {
-    outb(VGA_CRTC_INDEX, 0x0A);
-    outb(VGA_CRTC_DATA, cursor_start);
-    outb(VGA_CRTC_INDEX, 0x0B);
-    outb(VGA_CRTC_DATA, cursor_end);
+    io.outb(VGA_CRTC_INDEX, 0x0A);
+    io.outb(VGA_CRTC_DATA, cursor_start);
+    io.outb(VGA_CRTC_INDEX, 0x0B);
+    io.outb(VGA_CRTC_DATA, cursor_end);
 }
 
 pub fn setCursorPos(row: u32, col: u32) void {
     const pos: u16 = @intCast(row * TEXT_WIDTH + col);
-    outb(VGA_CRTC_INDEX, 0x0E);
-    outb(VGA_CRTC_DATA, @truncate(pos >> 8));
-    outb(VGA_CRTC_INDEX, 0x0F);
-    outb(VGA_CRTC_DATA, @truncate(pos & 0xFF));
+    io.outb(VGA_CRTC_INDEX, 0x0E);
+    io.outb(VGA_CRTC_DATA, @truncate(pos >> 8));
+    io.outb(VGA_CRTC_INDEX, 0x0F);
+    io.outb(VGA_CRTC_DATA, @truncate(pos & 0xFF));
 }
