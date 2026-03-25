@@ -4,6 +4,7 @@ const keyboard = @import("keyboard.zig");
 const app_keylog = @import("app_keylog.zig");
 const app = @import("app.zig");
 const ide = @import("ide.zig");
+const io = @import("io.zig");
 
 const std = @import("std");
 
@@ -121,6 +122,10 @@ fn kernel_main() !void {
                 } else {
                     console.puts("Usage: dumpmem <hex-address>\n");
                 }
+            } else if (std.mem.eql(u8, cmd, "shutdown")) {
+                io.outw(0xB004, 0x2000); // Bochs specific
+                io.outw(0x604, 0x2000); // QEMU specific
+                // TODO: General ACPI shutdown is more involved...
             } else {
                 console.puts("Unknown command ");
                 console.puts(cmd);
