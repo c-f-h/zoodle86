@@ -121,7 +121,11 @@ fn kernel_main() !void {
                 }
             } else if (std.mem.eql(u8, cmd, "write")) {
                 if (tokens.next()) |name| {
-                    try writeFileFromConsole(name);
+                    // TODO: fix memory handling
+                    var fname_buf = [1]u8{0} ** 128;
+                    const fname = fname_buf[0..name.len];
+                    @memcpy(fname, name); // copy because readline() is used internally; not reentrant currently
+                    try writeFileFromConsole(fname);
                 } else {
                     console.puts("Usage: write <name>\n");
                 }
@@ -228,16 +232,16 @@ fn catFile(name: []const u8) !void {
 }
 
 fn writeFileFromConsole(name: []const u8) !void {
-    var contents = std.array_list.Managed(u8).init(alloc);
-    defer contents.deinit();
+    var contents: std.ArrayList(u8) = .empty;
+    defer contents.deinit(alloc);
 
     console.puts("Enter file contents. Single '.' line saves.\n");
 
     while (true) {
         const line = readLine();
         if (line.len == 1 and line[0] == '.') break;
-        try contents.appendSlice(line);
-        try contents.append('\n');
+        try contents.appendSlice(alloc, line);
+        try contents.append(alloc, '\n');
     }
 
     disk_fs.writeFile(name, contents.items) catch |err| {
