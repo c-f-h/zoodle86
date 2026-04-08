@@ -57,13 +57,32 @@ load_smap_loop:
     mov si, loading_message
     call print_string
 
+    mov dl, [boot_drive]
+    test dl, 0x80
+    jnz load_stage2_lba
+
     mov bx, STAGE2_LOAD_OFFSET  ; es:bx = buffer
     mov cx, STAGE2_SECTORS
     mov byte [disk_sector], 2
     mov byte [disk_head], 0
     mov byte [disk_cylinder], 0
-    call load_stage2
+    call load_stage2_chs
     jc general_error
+    jmp stage2_loaded
+
+load_stage2_lba:
+    mov word [dap_num_sectors], STAGE2_SECTORS
+    mov word [dap_buffer_offset], STAGE2_LOAD_OFFSET
+    mov word [dap_buffer_segment], STAGE2_LOAD_SEGMENT
+    mov dword [dap_lba_low], 1
+    mov dword [dap_lba_high], 0
+    mov si, disk_address_packet
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc general_error
+
+stage2_loaded:
 
     ; Do not carry real-mode interrupt state into protected mode. Until stage 2
     ; installs a valid IDT, any hardware IRQ would triple-fault and reboot.
@@ -104,7 +123,7 @@ enable_a20:
     out 0x92, al
     ret
 
-load_stage2:
+load_stage2_chs:
 .next_sector:
     test cx, cx
     jz .done
@@ -178,6 +197,7 @@ protected_mode_entry:
     mov gs, ax
     mov ss, ax
     mov esp, 0x90000
+    cld
 
     ; Required before any SSE/xmm usage
     mov eax, cr0
@@ -197,6 +217,19 @@ boot_drive db 0
 disk_sector db 0
 disk_head db 0
 disk_cylinder db 0
+disk_address_packet:
+    db 0x10
+    db 0
+dap_num_sectors:
+    dw 0
+dap_buffer_offset:
+    dw 0
+dap_buffer_segment:
+    dw 0
+dap_lba_low:
+    dd 0
+dap_lba_high:
+    dd 0
 loading_message db 'Loading stage 2 from '
 loading_message_cont db 'FDD ?...', 0
 error_message db 13, 10, 'Bootloader failure.', 0
