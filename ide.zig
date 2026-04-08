@@ -43,6 +43,7 @@ const CMD_CACHE_FLUSH: u8 = 0xE7;
 const STATUS_ERR: u8 = 0x01;
 const STATUS_DRQ: u8 = 0x08;
 const STATUS_DF: u8 = 0x20;
+const STATUS_DRDY: u8 = 0x40;
 const STATUS_BSY: u8 = 0x80;
 
 const POLL_TIMEOUT: u32 = 1_000_000;
@@ -75,10 +76,14 @@ fn driveHeadValue(drive: Drive, lba_high4: u8) u8 {
     return 0xE0 | drive_bit | (lba_high4 & 0x0F);
 }
 
-fn waitUntilNotBusy(bus: Bus) IdeError!void {
+fn waitUntilReady(bus: Bus) IdeError!void {
     var i: u32 = 0;
     while (i < POLL_TIMEOUT) : (i += 1) {
-        if ((readStatus(bus) & STATUS_BSY) == 0) return;
+        const status = readStatus(bus);
+        if ((status & STATUS_BSY) != 0) continue;
+        if ((status & STATUS_DF) != 0) return error.DeviceFault;
+        if ((status & STATUS_ERR) != 0) return error.ControllerError;
+        if ((status & STATUS_DRDY) != 0) return;
     }
     return error.Timeout;
 }
@@ -116,7 +121,7 @@ pub fn identifyDrive(drive: Drive, out_words: *[256]u16) IdeError!void {
         return error.NoDevice;
     }
 
-    try waitUntilNotBusy(PRIMARY);
+    try waitUntilReady(PRIMARY);
 
     if (io.inb(ioPort(PRIMARY, REG_LBA1)) != 0 or io.inb(ioPort(PRIMARY, REG_LBA2)) != 0) {
         return error.NotAtaDevice;
@@ -136,7 +141,7 @@ pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!vo
 
     io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
     ata400nsDelay(PRIMARY);
-    try waitUntilNotBusy(PRIMARY);
+    try waitUntilReady(PRIMARY);
     io.outb(ioPort(PRIMARY, REG_FEATURES), 0);
     io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
     io.outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
@@ -160,7 +165,7 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
 
     io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
     ata400nsDelay(PRIMARY);
-    try waitUntilNotBusy(PRIMARY);
+    try waitUntilReady(PRIMARY);
     io.outb(ioPort(PRIMARY, REG_FEATURES), 0);
     io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
     io.outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
@@ -178,5 +183,5 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
     }
 
     io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_CACHE_FLUSH);
-    try waitUntilNotBusy(PRIMARY);
+    try waitUntilReady(PRIMARY);
 }
