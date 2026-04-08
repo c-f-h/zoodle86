@@ -101,7 +101,8 @@ fn kernel_main() !void {
     var mem_start: [*]u8 = @ptrFromInt(mem_base);
     var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
     alloc = fba.allocator();
-    console.puts("Filesystem mount is deferred until first use.\n");
+
+    try ensureFsMounted();
 
     while (true) {
         const cmdline = readLine();
@@ -111,37 +112,21 @@ fn kernel_main() !void {
             if (std.mem.eql(u8, cmd, "keylog")) {
                 runKeylog();
             } else if (std.mem.eql(u8, cmd, "ls")) {
-                ensureFsMounted() catch |err| {
-                    printFsError(err);
-                    continue;
-                };
                 try listFiles();
             } else if (std.mem.eql(u8, cmd, "cat")) {
                 if (tokens.next()) |name| {
-                    ensureFsMounted() catch |err| {
-                        printFsError(err);
-                        continue;
-                    };
                     try catFile(name);
                 } else {
                     console.puts("Usage: cat <name>\n");
                 }
             } else if (std.mem.eql(u8, cmd, "write")) {
                 if (tokens.next()) |name| {
-                    ensureFsMounted() catch |err| {
-                        printFsError(err);
-                        continue;
-                    };
                     try writeFileFromConsole(name);
                 } else {
                     console.puts("Usage: write <name>\n");
                 }
             } else if (std.mem.eql(u8, cmd, "rm")) {
                 if (tokens.next()) |name| {
-                    ensureFsMounted() catch |err| {
-                        printFsError(err);
-                        continue;
-                    };
                     deleteFile(name);
                 } else {
                     console.puts("Usage: rm <name>\n");
@@ -149,10 +134,6 @@ fn kernel_main() !void {
             } else if (std.mem.eql(u8, cmd, "mv")) {
                 if (tokens.next()) |old_name| {
                     if (tokens.next()) |new_name| {
-                        ensureFsMounted() catch |err| {
-                            printFsError(err);
-                            continue;
-                        };
                         renameFile(old_name, new_name);
                     } else {
                         console.puts("Usage: mv <old> <new>\n");
@@ -161,10 +142,6 @@ fn kernel_main() !void {
                     console.puts("Usage: mv <old> <new>\n");
                 }
             } else if (std.mem.eql(u8, cmd, "mkfs")) {
-                ensureFsMounted() catch |err| {
-                    printFsError(err);
-                    continue;
-                };
                 try disk_fs.format();
                 console.puts("Filesystem reformatted.\n");
             } else if (std.mem.eql(u8, cmd, "dumpmem")) {
@@ -234,8 +211,13 @@ fn listFiles() !void {
 
 fn catFile(name: []const u8) !void {
     const data = disk_fs.readFile(alloc, name) catch |err| {
-        printFsError(err);
-        return;
+        switch (err) {
+            error.OutOfMemory => return err,
+            else => |fs_err| {
+                printFsError(fs_err);
+                return;
+            },
+        }
     };
     defer alloc.free(data);
 
@@ -292,7 +274,7 @@ fn renameFile(old_name: []const u8, new_name: []const u8) void {
     console.puts(".\n");
 }
 
-fn printFsError(err: anyerror) void {
+fn printFsError(err: fs.FsError) void {
     switch (err) {
         error.Corrupt => console.puts("Filesystem is corrupt.\n"),
         error.DirectoryFull => console.puts("Directory is full.\n"),
@@ -307,7 +289,6 @@ fn printFsError(err: anyerror) void {
         error.NoDevice => console.puts("IDE device not present.\n"),
         error.NotAtaDevice => console.puts("IDE device is not ATA.\n"),
         error.InvalidLba => console.puts("Invalid disk LBA.\n"),
-        else => console.puts("Filesystem operation failed.\n"),
     }
 }
 

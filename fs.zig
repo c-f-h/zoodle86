@@ -27,7 +27,9 @@ pub const FsError = error{
     InvalidName,
     InvalidSuperblock,
     NoSpace,
-};
+} || ide.IdeError;
+
+pub const ReadFileError = FsError || error{OutOfMemory};
 
 const Superblock = extern struct {
     magic: [4]u8,
@@ -75,7 +77,7 @@ pub const FileSystem = struct {
     superblock: Superblock,
 
     /// Mounts the filesystem, formatting a fresh one if the superblock is missing.
-    pub fn mountOrFormat(drive: ide.Drive) !FileSystem {
+    pub fn mountOrFormat(drive: ide.Drive) FsError!FileSystem {
         var fs = FileSystem{
             .drive = drive,
             .superblock = undefined,
@@ -93,7 +95,7 @@ pub const FileSystem = struct {
     }
 
     /// Formats the fixed filesystem region and initializes the reserved directory slot.
-    pub fn format(self: *FileSystem) !void {
+    pub fn format(self: *FileSystem) FsError!void {
         self.superblock = makeDefaultSuperblock(FS_SECTOR_COUNT);
 
         var zero_sector = [_]u8{0} ** 512;
@@ -114,7 +116,7 @@ pub const FileSystem = struct {
     }
 
     /// Returns metadata for a directory slot when it contains a normal file.
-    pub fn getFileInfo(self: *const FileSystem, index: usize) !?FileInfo {
+    pub fn getFileInfo(self: *const FileSystem, index: usize) FsError!?FileInfo {
         if (index >= DIRECTORY_ENTRY_COUNT) return null;
 
         const entry = try self.readDirectoryEntry(index);
@@ -130,7 +132,7 @@ pub const FileSystem = struct {
     }
 
     /// Reads an entire file into allocator-owned memory.
-    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, name: []const u8) ReadFileError![]u8 {
         const entry = try self.findFileEntry(name);
         if (entry.size_bytes == 0) {
             return allocator.alloc(u8, 0);
@@ -157,7 +159,7 @@ pub const FileSystem = struct {
     }
 
     /// Creates or overwrites a file with the provided full contents.
-    pub fn writeFile(self: *FileSystem, name: []const u8, data: []const u8) !void {
+    pub fn writeFile(self: *FileSystem, name: []const u8, data: []const u8) FsError!void {
         try validateName(name);
 
         const existing_index = try self.findFileIndex(name);
@@ -185,7 +187,7 @@ pub const FileSystem = struct {
     }
 
     /// Deletes a file from the directory without reclaiming its data extent.
-    pub fn deleteFile(self: *FileSystem, name: []const u8) !void {
+    pub fn deleteFile(self: *FileSystem, name: []const u8) FsError!void {
         const index = (try self.findFileIndex(name)) orelse return error.FileNotFound;
         var entry = try self.readDirectoryEntry(index);
         entry.state = ENTRY_STATE_DELETED;
@@ -205,7 +207,7 @@ pub const FileSystem = struct {
     }
 
     /// Renames a file while preserving its existing data extent.
-    pub fn renameFile(self: *FileSystem, old_name: []const u8, new_name: []const u8) !void {
+    pub fn renameFile(self: *FileSystem, old_name: []const u8, new_name: []const u8) FsError!void {
         try validateName(new_name);
         const index = (try self.findFileIndex(old_name)) orelse return error.FileNotFound;
         if ((try self.findFileIndex(new_name)) != null) return error.FileExists;
@@ -217,7 +219,7 @@ pub const FileSystem = struct {
         try self.writeDirectoryEntry(index, &entry);
     }
 
-    fn readSuperblock(self: *FileSystem) !void {
+    fn readSuperblock(self: *FileSystem) FsError!void {
         var sector = [_]u8{0} ** 512;
         try ide.readSectorLba28(self.drive, FS_START_LBA, &sector);
 
@@ -230,18 +232,18 @@ pub const FileSystem = struct {
         self.superblock = superblock;
     }
 
-    fn writeSuperblock(self: *const FileSystem) !void {
+    fn writeSuperblock(self: *const FileSystem) FsError!void {
         var sector = [_]u8{0} ** 512;
         @memcpy(sector[0..@sizeOf(Superblock)], std.mem.asBytes(&self.superblock));
         try ide.writeSectorLba28(self.drive, FS_START_LBA, &sector);
     }
 
-    fn findFileEntry(self: *const FileSystem, name: []const u8) !DirectoryEntry {
+    fn findFileEntry(self: *const FileSystem, name: []const u8) FsError!DirectoryEntry {
         const index = (try self.findFileIndex(name)) orelse return error.FileNotFound;
         return self.readDirectoryEntry(index);
     }
 
-    fn findFileIndex(self: *const FileSystem, name: []const u8) !?usize {
+    fn findFileIndex(self: *const FileSystem, name: []const u8) FsError!?usize {
         try validateName(name);
 
         var index: usize = 1;
@@ -257,7 +259,7 @@ pub const FileSystem = struct {
         return null;
     }
 
-    fn findReusableEntryIndex(self: *const FileSystem) !usize {
+    fn findReusableEntryIndex(self: *const FileSystem) FsError!usize {
         var index: usize = 1;
         while (index < DIRECTORY_ENTRY_COUNT) : (index += 1) {
             const entry = try self.readDirectoryEntry(index);
@@ -269,7 +271,7 @@ pub const FileSystem = struct {
         return error.DirectoryFull;
     }
 
-    fn allocateExtent(self: *const FileSystem, sector_count: u32) !u32 {
+    fn allocateExtent(self: *const FileSystem, sector_count: u32) FsError!u32 {
         if (sector_count == 0) return 0;
 
         const start_lba = self.superblock.next_free_lba;
@@ -281,7 +283,7 @@ pub const FileSystem = struct {
         return start_lba;
     }
 
-    fn writeDataExtent(self: *FileSystem, start_lba: u32, sector_count: u32, data: []const u8) !void {
+    fn writeDataExtent(self: *FileSystem, start_lba: u32, sector_count: u32, data: []const u8) FsError!void {
         if (sector_count == 0) return;
 
         var sector = [_]u8{0} ** 512;
@@ -300,7 +302,7 @@ pub const FileSystem = struct {
         }
     }
 
-    fn readDirectoryEntry(self: *const FileSystem, index: usize) !DirectoryEntry {
+    fn readDirectoryEntry(self: *const FileSystem, index: usize) FsError!DirectoryEntry {
         const sector_lba = self.superblock.directory_start_lba + @as(u32, @intCast(index / 8));
         const entry_offset = (index % 8) * @sizeOf(DirectoryEntry);
 
@@ -313,7 +315,7 @@ pub const FileSystem = struct {
         return entry;
     }
 
-    fn writeDirectoryEntry(self: *const FileSystem, index: usize, entry: *const DirectoryEntry) !void {
+    fn writeDirectoryEntry(self: *const FileSystem, index: usize, entry: *const DirectoryEntry) FsError!void {
         const sector_lba = self.superblock.directory_start_lba + @as(u32, @intCast(index / 8));
         const entry_offset = (index % 8) * @sizeOf(DirectoryEntry);
 
