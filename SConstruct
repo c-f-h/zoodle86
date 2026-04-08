@@ -28,6 +28,7 @@ BOCHSOUT = ROOT / "bochsout.txt"
 
 IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
+STAGE2_RESERVED_SECTORS = 32
 
 
 def run(cmd):
@@ -169,10 +170,9 @@ def build_stage2_payload(target, source, env):
 
     if stage2_sectors < 1:
         raise RuntimeError("Computed invalid stage2 sector count.")
-    max_stage2_sectors = (IMAGE_SIZE // 512) - 1
-    if stage2_sectors > max_stage2_sectors:
+    if stage2_sectors > STAGE2_RESERVED_SECTORS:
         raise RuntimeError(
-            f"stage2.bin requires {stage2_sectors} sectors, but only {max_stage2_sectors} sectors fit after the boot sector."
+            f"stage2.bin requires {stage2_sectors} sectors, but only {STAGE2_RESERVED_SECTORS} sectors are reserved after the boot sector."
         )
 
 
@@ -206,16 +206,21 @@ def build_image(target, source, env):
     if len(boot_bytes) != 512:
         raise RuntimeError(f"Boot sector must be exactly 512 bytes, got {len(boot_bytes)}.")
     stage2_bytes = pathlib.Path(str(source[1])).read_bytes()
-    if 512 + len(stage2_bytes) > IMAGE_SIZE:
-        raise RuntimeError("stage2.bin does not fit in the disk image.")
+    reserved_stage2_bytes = STAGE2_RESERVED_SECTORS * 512
+    if len(stage2_bytes) > reserved_stage2_bytes:
+        raise RuntimeError("stage2.bin exceeds the reserved 32-sector stage2 area.")
+    if 512 + reserved_stage2_bytes > IMAGE_SIZE:
+        raise RuntimeError("Reserved stage2 area does not fit in the disk image.")
     
     # If target doesn't exist, create it full of zeros
     if not target_path.exists():
         target_path.write_bytes(b"\x00" * IMAGE_SIZE)
     
-    # Open for modification and patch in the boot sector and stage2
+    # Open for modification and patch in the boot sector and reserved stage2 area.
     img_file = target_path.open("r+b")
     img_file.write(boot_bytes)
+    img_file.write(b"\x00" * reserved_stage2_bytes)
+    img_file.seek(512)
     img_file.write(stage2_bytes)
     img_file.close()
 

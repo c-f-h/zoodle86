@@ -4,6 +4,7 @@ const keyboard = @import("keyboard.zig");
 const app_keylog = @import("app_keylog.zig");
 const app = @import("app.zig");
 const ide = @import("ide.zig");
+const fs = @import("fs.zig");
 const io = @import("io.zig");
 
 const std = @import("std");
@@ -17,12 +18,22 @@ extern fn interrupts_init() void;
 var cur_app: app.AppContext = undefined;
 
 var alloc: std.mem.Allocator = undefined;
+var disk_fs: fs.FileSystem = undefined;
+var fs_mounted: bool = false;
 
 /// Keyboard event consumer called by interrupt handler
 export fn consume_key_event(event: *const keyboard.KeyEvent) void {
     if (cur_app.key_event_handler) |handler| {
         _ = handler(&cur_app, event);
     }
+}
+
+pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        dest[i] = src[i];
+    }
+    return dest;
 }
 
 const E820MemoryMapEntry = struct {
@@ -90,28 +101,72 @@ fn kernel_main() !void {
     var mem_start: [*]u8 = @ptrFromInt(mem_base);
     var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
     alloc = fba.allocator();
-
-    ide.selectDrive(ide.Drive.master);
-    const sector_buffer = try alloc.create([512]u8);
-    try ide.readSectorLba28(ide.Drive.master, 0, sector_buffer);
-
-    console.dumpMem(@intFromPtr(sector_buffer), 16);
-
-    _ = readline.initReadlineApp(&cur_app);
+    console.puts("Filesystem mount is deferred until first use.\n");
 
     while (true) {
-        while (!cur_app.done) {
-            keyboard.keyboard_poll();
-        }
-        console.newline();
-
-        const cmdline = readline.readline.result();
+        const cmdline = readLine();
 
         var tokens = std.mem.tokenizeAny(u8, cmdline, " \t");
         if (tokens.next()) |cmd| {
             if (std.mem.eql(u8, cmd, "keylog")) {
-                _ = app_keylog.initKeylogApp(&cur_app);
-                continue;
+                runKeylog();
+            } else if (std.mem.eql(u8, cmd, "ls")) {
+                ensureFsMounted() catch |err| {
+                    printFsError(err);
+                    continue;
+                };
+                try listFiles();
+            } else if (std.mem.eql(u8, cmd, "cat")) {
+                if (tokens.next()) |name| {
+                    ensureFsMounted() catch |err| {
+                        printFsError(err);
+                        continue;
+                    };
+                    try catFile(name);
+                } else {
+                    console.puts("Usage: cat <name>\n");
+                }
+            } else if (std.mem.eql(u8, cmd, "write")) {
+                if (tokens.next()) |name| {
+                    ensureFsMounted() catch |err| {
+                        printFsError(err);
+                        continue;
+                    };
+                    try writeFileFromConsole(name);
+                } else {
+                    console.puts("Usage: write <name>\n");
+                }
+            } else if (std.mem.eql(u8, cmd, "rm")) {
+                if (tokens.next()) |name| {
+                    ensureFsMounted() catch |err| {
+                        printFsError(err);
+                        continue;
+                    };
+                    deleteFile(name);
+                } else {
+                    console.puts("Usage: rm <name>\n");
+                }
+            } else if (std.mem.eql(u8, cmd, "mv")) {
+                if (tokens.next()) |old_name| {
+                    if (tokens.next()) |new_name| {
+                        ensureFsMounted() catch |err| {
+                            printFsError(err);
+                            continue;
+                        };
+                        renameFile(old_name, new_name);
+                    } else {
+                        console.puts("Usage: mv <old> <new>\n");
+                    }
+                } else {
+                    console.puts("Usage: mv <old> <new>\n");
+                }
+            } else if (std.mem.eql(u8, cmd, "mkfs")) {
+                ensureFsMounted() catch |err| {
+                    printFsError(err);
+                    continue;
+                };
+                try disk_fs.format();
+                console.puts("Filesystem reformatted.\n");
             } else if (std.mem.eql(u8, cmd, "dumpmem")) {
                 if (tokens.next()) |addr_str| {
                     if (std.fmt.parseInt(u32, addr_str, 16)) |addr| {
@@ -132,8 +187,127 @@ fn kernel_main() !void {
                 console.newline();
             }
         }
+    }
+}
 
-        _ = readline.initReadlineApp(&cur_app);
+fn readLine() []const u8 {
+    _ = readline.initReadlineApp(&cur_app);
+    while (!cur_app.done) {
+        keyboard.keyboard_poll();
+    }
+    console.newline();
+    return readline.readline.result();
+}
+
+fn ensureFsMounted() !void {
+    if (fs_mounted) return;
+
+    ide.selectDrive(ide.Drive.master);
+    disk_fs = try fs.FileSystem.mountOrFormat(ide.Drive.master);
+    fs_mounted = true;
+}
+
+fn runKeylog() void {
+    _ = app_keylog.initKeylogApp(&cur_app);
+    while (true) {
+        keyboard.keyboard_poll();
+    }
+}
+
+fn listFiles() !void {
+    var found_any = false;
+    var index: usize = 1;
+    while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
+        if (try disk_fs.getFileInfo(index)) |info| {
+            found_any = true;
+            console.puts(info.name[0..info.name_len]);
+            console.puts(" (");
+            console.putDecU32(info.size_bytes);
+            console.puts(" bytes)\n");
+        }
+    }
+
+    if (!found_any) {
+        console.puts("(empty)\n");
+    }
+}
+
+fn catFile(name: []const u8) !void {
+    const data = disk_fs.readFile(alloc, name) catch |err| {
+        printFsError(err);
+        return;
+    };
+    defer alloc.free(data);
+
+    console.puts(data);
+    if (data.len == 0 or data[data.len - 1] != '\n') {
+        console.newline();
+    }
+}
+
+fn writeFileFromConsole(name: []const u8) !void {
+    var contents = std.array_list.Managed(u8).init(alloc);
+    defer contents.deinit();
+
+    console.puts("Enter file contents. Single '.' line saves.\n");
+
+    while (true) {
+        const line = readLine();
+        if (line.len == 1 and line[0] == '.') break;
+        try contents.appendSlice(line);
+        try contents.append('\n');
+    }
+
+    disk_fs.writeFile(name, contents.items) catch |err| {
+        printFsError(err);
+        return;
+    };
+
+    console.puts("Wrote ");
+    console.puts(name);
+    console.puts(".\n");
+}
+
+fn deleteFile(name: []const u8) void {
+    disk_fs.deleteFile(name) catch |err| {
+        printFsError(err);
+        return;
+    };
+
+    console.puts("Deleted ");
+    console.puts(name);
+    console.puts(".\n");
+}
+
+fn renameFile(old_name: []const u8, new_name: []const u8) void {
+    disk_fs.renameFile(old_name, new_name) catch |err| {
+        printFsError(err);
+        return;
+    };
+
+    console.puts("Renamed ");
+    console.puts(old_name);
+    console.puts(" to ");
+    console.puts(new_name);
+    console.puts(".\n");
+}
+
+fn printFsError(err: anyerror) void {
+    switch (err) {
+        error.Corrupt => console.puts("Filesystem is corrupt.\n"),
+        error.DirectoryFull => console.puts("Directory is full.\n"),
+        error.FileExists => console.puts("File already exists.\n"),
+        error.FileNotFound => console.puts("File not found.\n"),
+        error.InvalidName => console.puts("Invalid filename.\n"),
+        error.InvalidSuperblock => console.puts("Filesystem superblock is invalid.\n"),
+        error.NoSpace => console.puts("Filesystem is out of space.\n"),
+        error.Timeout => console.puts("IDE timed out.\n"),
+        error.DeviceFault => console.puts("IDE device fault.\n"),
+        error.ControllerError => console.puts("IDE controller error.\n"),
+        error.NoDevice => console.puts("IDE device not present.\n"),
+        error.NotAtaDevice => console.puts("IDE device is not ATA.\n"),
+        error.InvalidLba => console.puts("Invalid disk LBA.\n"),
+        else => console.puts("Filesystem operation failed.\n"),
     }
 }
 

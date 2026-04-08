@@ -135,6 +135,8 @@ pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!vo
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
     io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
+    ata400nsDelay(PRIMARY);
+    try waitUntilNotBusy(PRIMARY);
     io.outb(ioPort(PRIMARY, REG_FEATURES), 0);
     io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
     io.outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
@@ -157,6 +159,8 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
     io.outb(ioPort(PRIMARY, REG_DRIVE_HEAD), driveHeadValue(drive, @truncate(lba >> 24)));
+    ata400nsDelay(PRIMARY);
+    try waitUntilNotBusy(PRIMARY);
     io.outb(ioPort(PRIMARY, REG_FEATURES), 0);
     io.outb(ioPort(PRIMARY, REG_SECTOR_COUNT), 1);
     io.outb(ioPort(PRIMARY, REG_LBA0), @truncate(lba));
