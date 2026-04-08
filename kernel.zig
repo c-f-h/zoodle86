@@ -19,7 +19,6 @@ var cur_app: app.AppContext = undefined;
 
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
-var fs_mounted: bool = false;
 
 /// Keyboard event consumer called by interrupt handler
 export fn consume_key_event(event: *const keyboard.KeyEvent) void {
@@ -102,7 +101,7 @@ fn kernel_main() !void {
     var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
     alloc = fba.allocator();
 
-    try ensureFsMounted();
+    try mountFs();
 
     while (true) {
         const cmdline = readLine();
@@ -180,12 +179,22 @@ fn readLine() []const u8 {
     return readline.readline.result();
 }
 
-fn ensureFsMounted() !void {
-    if (fs_mounted) return;
+fn mountFs() !void {
+    const drive = ide.Drive.master;
+    ide.selectDrive(drive);
 
-    ide.selectDrive(ide.Drive.master);
-    disk_fs = try fs.FileSystem.mountOrFormat(ide.Drive.master);
-    fs_mounted = true;
+    const drive_info = try ide.identifyDrive(drive);
+    console.puts("Drive model:     ");
+    console.puts(&drive_info.model);
+    console.newline();
+    console.puts("Drive serial:    ");
+    console.puts(&drive_info.serial);
+    console.newline();
+    console.puts("Sectors (LBA28): ");
+    console.putDecU32(drive_info.max_lba28);
+    console.newline();
+
+    disk_fs = try fs.FileSystem.mountOrFormat(drive);
 }
 
 fn runKeylog() void {

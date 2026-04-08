@@ -8,8 +8,6 @@ pub const FS_START_LBA: u32 = 1 + STAGE2_RESERVED_SECTORS;
 pub const SUPERBLOCK_SECTORS: u32 = 1;
 pub const DIRECTORY_SECTORS: u32 = 8;
 pub const DATA_START_LBA: u32 = FS_START_LBA + SUPERBLOCK_SECTORS + DIRECTORY_SECTORS;
-pub const IMAGE_SECTORS: u32 = 1_474_560 / 512;
-pub const FS_SECTOR_COUNT: u32 = IMAGE_SECTORS - FS_START_LBA;
 
 const MAGIC = "ZOD1".*;
 const VERSION: u16 = 1;
@@ -96,7 +94,10 @@ pub const FileSystem = struct {
 
     /// Formats the fixed filesystem region and initializes the reserved directory slot.
     pub fn format(self: *FileSystem) FsError!void {
-        self.superblock = makeDefaultSuperblock(FS_SECTOR_COUNT);
+        const drive_info = try ide.identifyDrive(self.drive);
+        const fs_sector_count: u32 = drive_info.max_lba28 - FS_START_LBA;
+
+        self.superblock = makeDefaultSuperblock(fs_sector_count);
 
         var zero_sector = [_]u8{0} ** 512;
         var sector_lba: u32 = FS_START_LBA;
@@ -347,12 +348,12 @@ fn isValidSuperblock(superblock: *const Superblock) bool {
         superblock.version == VERSION and
         superblock.directory_entry_count == @as(u16, DIRECTORY_ENTRY_COUNT) and
         superblock.fs_start_lba == FS_START_LBA and
-        superblock.fs_sector_count == FS_SECTOR_COUNT and
+        superblock.fs_sector_count > DATA_START_LBA and
         superblock.directory_start_lba == FS_START_LBA + SUPERBLOCK_SECTORS and
         superblock.directory_sector_count == DIRECTORY_SECTORS and
         superblock.data_start_lba == DATA_START_LBA and
         superblock.next_free_lba >= DATA_START_LBA and
-        superblock.next_free_lba <= FS_START_LBA + FS_SECTOR_COUNT;
+        superblock.next_free_lba <= FS_START_LBA + superblock.fs_sector_count;
 }
 
 fn zeroEntry() DirectoryEntry {
