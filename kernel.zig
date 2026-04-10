@@ -6,6 +6,7 @@ const app = @import("app.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const io = @import("io.zig");
+const gdt = @import("gdt.zig");
 
 const std = @import("std");
 
@@ -100,6 +101,8 @@ fn kernel_main() !void {
     var mem_start: [*]u8 = @ptrFromInt(mem_base);
     var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
     alloc = fba.allocator();
+
+    gdt.set();
 
     try mountFs();
 
