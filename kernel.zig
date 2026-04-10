@@ -77,6 +77,7 @@ export fn _start() void {
     kernel_main() catch |err| {
         @panic(switch (err) {
             error.OutOfMemory => "Out of memory",
+            error.BufferTooSmall => "Buffer too small",
             ide.IdeError.Timeout => "IDE timeout",
             ide.IdeError.DeviceFault => "IDE device fault",
             ide.IdeError.ControllerError => "IDE controller error",
@@ -107,9 +108,10 @@ fn kernel_main() !void {
     try mountFs();
 
     while (true) {
-        const cmdline = readLine();
-
+        var cmdline_buf = [1]u8{0} ** 128;
+        const cmdline = try readLineInto(&cmdline_buf);
         var tokens = std.mem.tokenizeAny(u8, cmdline, " \t");
+
         if (tokens.next()) |cmd| {
             if (std.mem.eql(u8, cmd, "keylog")) {
                 runKeylog();
@@ -122,11 +124,7 @@ fn kernel_main() !void {
                     console.puts("Usage: cat <name>\n");
                 }
             } else if (std.mem.eql(u8, cmd, "write")) {
-                if (tokens.next()) |name| {
-                    // TODO: fix memory handling
-                    var fname_buf = [1]u8{0} ** 128;
-                    const fname = fname_buf[0..name.len];
-                    @memcpy(fname, name); // copy because readline() is used internally; not reentrant currently
+                if (tokens.next()) |fname| {
                     try writeFileFromConsole(fname);
                 } else {
                     console.puts("Usage: write <name>\n");
@@ -180,6 +178,16 @@ fn readLine() []const u8 {
     }
     console.newline();
     return readline.readline.result();
+}
+
+fn readLineInto(buf: []u8) ![]u8 {
+    const line = readLine();
+    if (line.len > buf.len) {
+        return error.BufferTooSmall;
+    }
+    const copy_len = @min(line.len, buf.len);
+    @memcpy(buf, line[0..copy_len]);
+    return buf[0..copy_len];
 }
 
 fn mountFs() !void {
