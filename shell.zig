@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const app = @import("app.zig");
 const app_keylog = @import("app_keylog.zig");
 const console = @import("console.zig");
 const fs = @import("fs.zig");
@@ -11,7 +10,6 @@ const readline = @import("readline.zig");
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
 const Shell = struct {
-    app_ctx: *app.AppContext,
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
 };
@@ -35,16 +33,15 @@ const commands = [_]Command{
 };
 
 /// Run the interactive shell command loop.
-pub fn run(app_ctx: *app.AppContext, alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !void {
+pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !void {
     var shell = Shell{
-        .app_ctx = app_ctx,
         .alloc = alloc,
         .disk_fs = disk_fs,
     };
 
     while (true) {
         var cmdline_buf = [1]u8{0} ** 128;
-        const cmdline = try readLineInto(shell.app_ctx, &cmdline_buf);
+        const cmdline = try readLineInto(&cmdline_buf);
         var args = std.mem.tokenizeAny(u8, cmdline, " \t");
         const cmd_name = args.next() orelse continue;
 
@@ -68,8 +65,16 @@ fn findCommand(name: []const u8) ?*const Command {
 }
 
 fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
     _ = args;
-    runKeylog(shell.app_ctx);
+
+    var app: app_keylog.Keylog = .{};
+    app.init();
+    defer app.deinit();
+
+    while (true) {
+        keyboard.keyboard_poll();
+    }
 }
 
 fn cmdLs(shell: *Shell, args: *ArgsIterator) !void {
@@ -87,7 +92,7 @@ fn cmdCat(shell: *Shell, args: *ArgsIterator) !void {
 
 fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        try writeFileFromConsole(shell.app_ctx, shell.alloc, shell.disk_fs, name);
+        try writeFileFromConsole(shell.alloc, shell.disk_fs, name);
     } else {
         console.puts("Usage: write <name>\n");
     }
@@ -140,30 +145,24 @@ fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {
     // TODO: General ACPI shutdown is more involved...
 }
 
-fn readLine(app_ctx: *app.AppContext) []const u8 {
-    _ = readline.initReadlineApp(app_ctx);
-    while (!app_ctx.done) {
+fn readLineInto(buf: []u8) ![]u8 {
+    var rl: readline.ReadlineApp = .{};
+    rl.init();
+    defer rl.deinit();
+
+    while (!rl.done) {
         keyboard.keyboard_poll();
     }
     console.newline();
-    return readline.readline.result();
-}
 
-fn readLineInto(app_ctx: *app.AppContext, buf: []u8) ![]u8 {
-    const line = readLine(app_ctx);
+    const line = rl.readline.result();
     if (line.len > buf.len) {
         return error.BufferTooSmall;
     }
     const copy_len = @min(line.len, buf.len);
     @memcpy(buf, line[0..copy_len]);
-    return buf[0..copy_len];
-}
 
-fn runKeylog(app_ctx: *app.AppContext) void {
-    _ = app_keylog.initKeylogApp(app_ctx);
-    while (true) {
-        keyboard.keyboard_poll();
-    }
+    return buf[0..copy_len];
 }
 
 fn listFiles(disk_fs: *fs.FileSystem) !void {
@@ -203,7 +202,6 @@ fn catFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) 
 }
 
 fn writeFileFromConsole(
-    app_ctx: *app.AppContext,
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
     name: []const u8,
@@ -214,7 +212,8 @@ fn writeFileFromConsole(
     console.puts("Enter file contents. Single '.' line saves.\n");
 
     while (true) {
-        const line = readLine(app_ctx);
+        var buf = [1]u8{0} ** 128;
+        const line = try readLineInto(&buf);
         if (line.len == 1 and line[0] == '.') break;
         try contents.appendSlice(alloc, line);
         try contents.append(alloc, '\n');

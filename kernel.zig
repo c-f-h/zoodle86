@@ -1,6 +1,5 @@
 const console = @import("console.zig");
 const keyboard = @import("keyboard.zig");
-const app = @import("app.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const gdt = @import("gdt.zig");
@@ -13,16 +12,35 @@ const VGA_ATTR: u8 = 0x07;
 // External interrupt setup from interrupts.asm
 extern fn interrupts_init() void;
 
-// Global application context
-var cur_app: app.AppContext = undefined;
+// Keyboard handler
+pub const KeyboardHandler = struct {
+    handler: *const fn (?*anyopaque, *const keyboard.KeyEvent) u32,
+    ctx: ?*anyopaque,
+};
+
+var cur_kb_handler: ?KeyboardHandler = null;
+
+pub fn setKeyboardHandler(handler: *const fn (?*anyopaque, *const keyboard.KeyEvent) u32, ctx: ?*anyopaque) void {
+    if (cur_kb_handler != null) {
+        @panic("Keyboard handler already set");
+    }
+    cur_kb_handler = KeyboardHandler{
+        .handler = handler,
+        .ctx = ctx,
+    };
+}
+
+pub fn clearKeyboardHandler() void {
+    cur_kb_handler = null;
+}
 
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
 
 /// Keyboard event consumer called by interrupt handler
 export fn consume_key_event(event: *const keyboard.KeyEvent) void {
-    if (cur_app.key_event_handler) |handler| {
-        _ = handler(&cur_app, event);
+    if (cur_kb_handler) |handler| {
+        _ = handler.handler(handler.ctx, event);
     }
 }
 
@@ -104,7 +122,7 @@ fn kernel_main() !void {
     gdt.set();
 
     try mountFs();
-    try shell.run(&cur_app, alloc, &disk_fs);
+    try shell.run(alloc, &disk_fs);
 }
 
 fn mountFs() !void {

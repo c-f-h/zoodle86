@@ -1,4 +1,4 @@
-const app = @import("app.zig");
+const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
 const vga = @import("vgatext.zig");
@@ -84,11 +84,13 @@ const ReadlineBuf = struct {
     }
 };
 
-pub var readline: ReadlineBuf = undefined;
 var readline_row: u32 = 0; // in which row to draw the readline buffer
 
-fn readlineKeyhandler(ctx: *app.AppContext, ev: *const keyboard.KeyEvent) u32 {
+fn readlineKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
     if (ev.pressed == 0) return 0;
+
+    var self: *ReadlineApp = @ptrCast(@alignCast(ctx.?));
+    var readline = &self.readline;
 
     var redraw_all = false;
     const non_shift_mods: u8 = ev.modifiers & ~@as(u8, keyboard.MOD_SHIFT);
@@ -148,7 +150,7 @@ fn readlineKeyhandler(ctx: *app.AppContext, ev: *const keyboard.KeyEvent) u32 {
     } else {
         switch (ev.keycode) {
             keyboard.VK_ENTER => {
-                ctx.done = true;
+                self.done = true;
                 vga.disableCursor();
             },
             keyboard.VK_HOME => readline.cursor = 0,
@@ -195,24 +197,28 @@ fn readlineKeyhandler(ctx: *app.AppContext, ev: *const keyboard.KeyEvent) u32 {
     return 0;
 }
 
-pub export fn initReadlineApp(app_ctx: *app.AppContext) u32 {
-    app_ctx.* = .{
-        .name = "readline",
-        .key_event_handler = readlineKeyhandler,
-    };
+pub const ReadlineApp = struct {
+    done: bool = false,
+    readline: ReadlineBuf = undefined,
 
-    const cpos = console.getCursorPos();
-    readline_row = cpos[0];
-    readline = .{};
+    pub fn init(self: *ReadlineApp) void {
+        kernel.setKeyboardHandler(readlineKeyhandler, self);
 
-    console.setCursor(readline_row, 0);
-    vga.enableCursor();
+        const cpos = console.getCursorPos();
+        readline_row = cpos[0];
+        self.readline = .{};
 
-    // clear display row
-    var i: u32 = 0;
-    while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-        vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
+        console.setCursor(readline_row, 0);
+        vga.enableCursor();
+
+        // clear display row
+        var i: u32 = 0;
+        while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
+            vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
+        }
     }
 
-    return 0;
-}
+    pub fn deinit(_: *ReadlineApp) void {
+        kernel.clearKeyboardHandler();
+    }
+};

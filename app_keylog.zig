@@ -1,11 +1,11 @@
+const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
-const app = @import("app.zig");
 
 const VGA_ATTR: u8 = 0x07;
 
 /// Handle keyboard events and log them to console
-fn appKeylogKeyhandler(ctx: *app.AppContext, ev: *const keyboard.KeyEvent) u32 {
+fn appKeylogKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
     _ = ctx;
     // Print press/release status
     console.puts(if (ev.pressed != 0) "Down: " else "Up:   ");
@@ -86,12 +86,11 @@ fn appKeylogKeyhandler(ctx: *app.AppContext, ev: *const keyboard.KeyEvent) u32 {
     return 0;
 }
 
-/// Initialize the keylog app
-pub export fn initKeylogApp(app_ctx: *app.AppContext) u32 {
-    app_ctx.* = .{
-        .name = "keylog",
-        .key_event_handler = appKeylogKeyhandler,
-    };
-
-    return 0;
-}
+pub const Keylog = struct {
+    pub fn init(_: *Keylog) void {
+        kernel.setKeyboardHandler(appKeylogKeyhandler, null);
+    }
+    pub fn deinit(_: *Keylog) void {
+        kernel.clearKeyboardHandler();
+    }
+};
