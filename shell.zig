@@ -21,15 +21,16 @@ const Command = struct {
 };
 
 const commands = [_]Command{
-    .{ .name = "keylog", .description = "Log keys.", .handler = cmdKeylog },
-    .{ .name = "ls", .description = "List files.", .handler = cmdLs },
-    .{ .name = "cat", .description = "Show file.", .handler = cmdCat },
-    .{ .name = "write", .description = "Write file.", .handler = cmdWrite },
-    .{ .name = "rm", .description = "Delete file.", .handler = cmdRm },
-    .{ .name = "mv", .description = "Rename file.", .handler = cmdMv },
-    .{ .name = "mkfs", .description = "Format FS.", .handler = cmdMkfs },
-    .{ .name = "dumpmem", .description = "Dump memory.", .handler = cmdDumpmem },
-    .{ .name = "shutdown", .description = "Power off.", .handler = cmdShutdown },
+    .{ .name = "help", .description = "List available commands.", .handler = cmdHelp },
+    .{ .name = "keylog", .description = "Run the key event logger.", .handler = cmdKeylog },
+    .{ .name = "ls", .description = "List files in the filesystem.", .handler = cmdLs },
+    .{ .name = "cat", .description = "Print a file's contents.", .handler = cmdCat },
+    .{ .name = "write", .description = "Write a file from console input.", .handler = cmdWrite },
+    .{ .name = "rm", .description = "Delete a file.", .handler = cmdRm },
+    .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
+    .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
+    .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
+    .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
 };
 
 /// Run the interactive shell command loop.
@@ -77,6 +78,18 @@ fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
+fn cmdHelp(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    _ = args;
+
+    for (commands) |command| {
+        console.puts(command.name);
+        console.puts(" - ");
+        console.puts(command.description);
+        console.newline();
+    }
+}
+
 fn cmdLs(shell: *Shell, args: *ArgsIterator) !void {
     _ = args;
     try listFiles(shell.disk_fs);
@@ -86,7 +99,7 @@ fn cmdCat(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
         try catFile(shell.alloc, shell.disk_fs, name);
     } else {
-        console.puts("Usage: cat <name>\n");
+        printUsage("cat");
     }
 }
 
@@ -94,7 +107,7 @@ fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
         try writeFileFromConsole(shell.alloc, shell.disk_fs, name);
     } else {
-        console.puts("Usage: write <name>\n");
+        printUsage("write");
     }
 }
 
@@ -102,17 +115,17 @@ fn cmdRm(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
         deleteFile(shell.disk_fs, name);
     } else {
-        console.puts("Usage: rm <name>\n");
+        printUsage("rm");
     }
 }
 
 fn cmdMv(shell: *Shell, args: *ArgsIterator) !void {
     const old_name = args.next() orelse {
-        console.puts("Usage: mv <old> <new>\n");
+        printUsage("mv");
         return;
     };
     const new_name = args.next() orelse {
-        console.puts("Usage: mv <old> <new>\n");
+        printUsage("mv");
         return;
     };
     renameFile(shell.disk_fs, old_name, new_name);
@@ -133,7 +146,7 @@ fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
             console.puts("Enter a hex address.\n");
         }
     } else {
-        console.puts("Usage: dumpmem <hex-address>\n");
+        printUsage("dumpmem");
     }
 }
 
@@ -143,6 +156,25 @@ fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {
     io.outw(0xB004, 0x2000); // Bochs specific
     io.outw(0x604, 0x2000); // QEMU specific
     // TODO: General ACPI shutdown is more involved...
+}
+
+fn printUsage(name: []const u8) void {
+    if (findCommand(name)) |command| {
+        console.puts("Usage: ");
+        console.puts(command.name);
+        if (std.mem.eql(u8, command.name, "cat")) {
+            console.puts(" <name>");
+        } else if (std.mem.eql(u8, command.name, "write")) {
+            console.puts(" <name>");
+        } else if (std.mem.eql(u8, command.name, "rm")) {
+            console.puts(" <name>");
+        } else if (std.mem.eql(u8, command.name, "mv")) {
+            console.puts(" <old> <new>");
+        } else if (std.mem.eql(u8, command.name, "dumpmem")) {
+            console.puts(" <hex-address>");
+        }
+        console.puts("\n");
+    }
 }
 
 fn readLineInto(buf: []u8) ![]u8 {
