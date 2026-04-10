@@ -1,12 +1,10 @@
 const console = @import("console.zig");
-const readline = @import("readline.zig");
 const keyboard = @import("keyboard.zig");
-const app_keylog = @import("app_keylog.zig");
 const app = @import("app.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
-const io = @import("io.zig");
 const gdt = @import("gdt.zig");
+const shell = @import("shell.zig");
 
 const std = @import("std");
 
@@ -106,88 +104,7 @@ fn kernel_main() !void {
     gdt.set();
 
     try mountFs();
-
-    while (true) {
-        var cmdline_buf = [1]u8{0} ** 128;
-        const cmdline = try readLineInto(&cmdline_buf);
-        var tokens = std.mem.tokenizeAny(u8, cmdline, " \t");
-
-        if (tokens.next()) |cmd| {
-            if (std.mem.eql(u8, cmd, "keylog")) {
-                runKeylog();
-            } else if (std.mem.eql(u8, cmd, "ls")) {
-                try listFiles();
-            } else if (std.mem.eql(u8, cmd, "cat")) {
-                if (tokens.next()) |name| {
-                    try catFile(name);
-                } else {
-                    console.puts("Usage: cat <name>\n");
-                }
-            } else if (std.mem.eql(u8, cmd, "write")) {
-                if (tokens.next()) |fname| {
-                    try writeFileFromConsole(fname);
-                } else {
-                    console.puts("Usage: write <name>\n");
-                }
-            } else if (std.mem.eql(u8, cmd, "rm")) {
-                if (tokens.next()) |name| {
-                    deleteFile(name);
-                } else {
-                    console.puts("Usage: rm <name>\n");
-                }
-            } else if (std.mem.eql(u8, cmd, "mv")) {
-                if (tokens.next()) |old_name| {
-                    if (tokens.next()) |new_name| {
-                        renameFile(old_name, new_name);
-                    } else {
-                        console.puts("Usage: mv <old> <new>\n");
-                    }
-                } else {
-                    console.puts("Usage: mv <old> <new>\n");
-                }
-            } else if (std.mem.eql(u8, cmd, "mkfs")) {
-                try disk_fs.format();
-                console.puts("Filesystem reformatted.\n");
-            } else if (std.mem.eql(u8, cmd, "dumpmem")) {
-                if (tokens.next()) |addr_str| {
-                    if (std.fmt.parseInt(u32, addr_str, 16)) |addr| {
-                        console.dumpMem(addr, 16);
-                    } else |_| {
-                        console.puts("Enter a hex address.\n");
-                    }
-                } else {
-                    console.puts("Usage: dumpmem <hex-address>\n");
-                }
-            } else if (std.mem.eql(u8, cmd, "shutdown")) {
-                io.outw(0xB004, 0x2000); // Bochs specific
-                io.outw(0x604, 0x2000); // QEMU specific
-                // TODO: General ACPI shutdown is more involved...
-            } else {
-                console.puts("Unknown command ");
-                console.puts(cmd);
-                console.newline();
-            }
-        }
-    }
-}
-
-fn readLine() []const u8 {
-    _ = readline.initReadlineApp(&cur_app);
-    while (!cur_app.done) {
-        keyboard.keyboard_poll();
-    }
-    console.newline();
-    return readline.readline.result();
-}
-
-fn readLineInto(buf: []u8) ![]u8 {
-    const line = readLine();
-    if (line.len > buf.len) {
-        return error.BufferTooSmall;
-    }
-    const copy_len = @min(line.len, buf.len);
-    @memcpy(buf, line[0..copy_len]);
-    return buf[0..copy_len];
+    try shell.run(&cur_app, alloc, &disk_fs);
 }
 
 fn mountFs() !void {
@@ -206,114 +123,6 @@ fn mountFs() !void {
     console.newline();
 
     disk_fs = try fs.FileSystem.mountOrFormat(drive);
-}
-
-fn runKeylog() void {
-    _ = app_keylog.initKeylogApp(&cur_app);
-    while (true) {
-        keyboard.keyboard_poll();
-    }
-}
-
-fn listFiles() !void {
-    var found_any = false;
-    var index: usize = 1;
-    while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        if (try disk_fs.getFileInfo(index)) |info| {
-            found_any = true;
-            console.puts(info.name[0..info.name_len]);
-            console.puts(" (");
-            console.putDecU32(info.size_bytes);
-            console.puts(" bytes)\n");
-        }
-    }
-
-    if (!found_any) {
-        console.puts("(empty)\n");
-    }
-}
-
-fn catFile(name: []const u8) !void {
-    const data = disk_fs.readFile(alloc, name) catch |err| {
-        switch (err) {
-            error.OutOfMemory => return err,
-            else => |fs_err| {
-                printFsError(fs_err);
-                return;
-            },
-        }
-    };
-    defer alloc.free(data);
-
-    console.puts(data);
-    if (data.len == 0 or data[data.len - 1] != '\n') {
-        console.newline();
-    }
-}
-
-fn writeFileFromConsole(name: []const u8) !void {
-    var contents: std.ArrayList(u8) = .empty;
-    defer contents.deinit(alloc);
-
-    console.puts("Enter file contents. Single '.' line saves.\n");
-
-    while (true) {
-        const line = readLine();
-        if (line.len == 1 and line[0] == '.') break;
-        try contents.appendSlice(alloc, line);
-        try contents.append(alloc, '\n');
-    }
-
-    disk_fs.writeFile(name, contents.items) catch |err| {
-        printFsError(err);
-        return;
-    };
-
-    console.puts("Wrote ");
-    console.puts(name);
-    console.puts(".\n");
-}
-
-fn deleteFile(name: []const u8) void {
-    disk_fs.deleteFile(name) catch |err| {
-        printFsError(err);
-        return;
-    };
-
-    console.puts("Deleted ");
-    console.puts(name);
-    console.puts(".\n");
-}
-
-fn renameFile(old_name: []const u8, new_name: []const u8) void {
-    disk_fs.renameFile(old_name, new_name) catch |err| {
-        printFsError(err);
-        return;
-    };
-
-    console.puts("Renamed ");
-    console.puts(old_name);
-    console.puts(" to ");
-    console.puts(new_name);
-    console.puts(".\n");
-}
-
-fn printFsError(err: fs.FsError) void {
-    switch (err) {
-        error.Corrupt => console.puts("Filesystem is corrupt.\n"),
-        error.DirectoryFull => console.puts("Directory is full.\n"),
-        error.FileExists => console.puts("File already exists.\n"),
-        error.FileNotFound => console.puts("File not found.\n"),
-        error.InvalidName => console.puts("Invalid filename.\n"),
-        error.InvalidSuperblock => console.puts("Filesystem superblock is invalid.\n"),
-        error.NoSpace => console.puts("Filesystem is out of space.\n"),
-        error.Timeout => console.puts("IDE timed out.\n"),
-        error.DeviceFault => console.puts("IDE device fault.\n"),
-        error.ControllerError => console.puts("IDE controller error.\n"),
-        error.NoDevice => console.puts("IDE device not present.\n"),
-        error.NotAtaDevice => console.puts("IDE device is not ATA.\n"),
-        error.InvalidLba => console.puts("Invalid disk LBA.\n"),
-    }
 }
 
 pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {

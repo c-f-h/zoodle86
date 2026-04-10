@@ -8,7 +8,8 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 - `boot.asm`: boot sector and stage-2 loader.
 - `interrupts.asm`: low-level IRQ and interrupt entry code plus a freestanding memcpy symbol.
-- `kernel.zig`: kernel entrypoint, memory setup, and command loop.
+- `kernel.zig`: kernel entrypoint, memory setup, and shell startup.
+- `shell.zig`: command loop and table-driven shell command dispatch.
 - `console.zig`, `vgatext.zig`: VGA text-mode output.
 - `keyboard.zig`, `readline.zig`: keyboard input and line editing.
 - `app.zig`, `app_keylog.zig`: app state and the keylog app.
@@ -42,7 +43,7 @@ The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stag
 
 The disk image uses a fixed layout: sector 0 is the boot sector, sectors 1-32 are reserved for stage 2, and the custom filesystem starts at sector 33. The filesystem uses a one-sector superblock, an eight-sector flat root directory, and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file.
 
-`kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, and then runs a simple command loop. The filesystem is mounted lazily on first filesystem command use. Current built-in commands include `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
+`kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
 
 ## Style Guidelines
 
