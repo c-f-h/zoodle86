@@ -32,7 +32,7 @@ Build pipeline details:
 - Zig links the Zig object plus the interrupt object into `build/stage2.elf` as an ELF image with image base `0x8000`.
 - `flatten_elf.zig` flattens that ELF into `build/stage2.bin` and writes metadata with the entry offset and sector count to `build/stage2.meta`.
 - SCons rebuilds `boot.asm` with those values injected as NASM defines.
-- `build/image.img` is produced by packing the boot sector into sector 0, reserving sectors 1-32 for stage 2, and leaving the filesystem region at sector 33 and beyond intact across rebuilds.
+- `build/image.img` is produced by packing the boot sector into sector 0, reserving sectors 1-63 for stage 2, and leaving the filesystem region at sector 33 and beyond intact across rebuilds.
 - SCons also generates `build/bochsrc.txt` and logs Bochs output to `build/bochsout.txt`.
 
 There is no separate unit-test suite yet. A successful build is the current baseline check.
@@ -41,7 +41,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stage-2 image at `0x8000`, and switches to 32-bit protected mode before jumping into Zig code. On hard-disk boots it uses BIOS extended LBA reads for stage 2; the older CHS path is only used for floppy-style boots.
 
-The disk image uses a fixed layout: sector 0 is the boot sector, sectors 1-32 are reserved for stage 2, and the custom filesystem starts at sector 33. The filesystem uses a one-sector superblock, an eight-sector flat root directory, and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file.
+The disk image uses a fixed layout: sector 0 is the boot sector, sectors 1-63 are reserved for stage 2, and the custom filesystem starts at sector 33. The filesystem uses a one-sector superblock, an eight-sector flat root directory, and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file.
 
 `kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
 

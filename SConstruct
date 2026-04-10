@@ -28,7 +28,7 @@ BOCHSOUT = ROOT / "bochsout.txt"
 
 IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
-STAGE2_RESERVED_SECTORS = 32
+STAGE2_RESERVED_SECTORS = 63    # NB: must match the value in fs.zig
 
 
 def run(cmd):
@@ -208,7 +208,7 @@ def build_image(target, source, env):
     stage2_bytes = pathlib.Path(str(source[1])).read_bytes()
     reserved_stage2_bytes = STAGE2_RESERVED_SECTORS * 512
     if len(stage2_bytes) > reserved_stage2_bytes:
-        raise RuntimeError("stage2.bin exceeds the reserved 32-sector stage2 area.")
+        raise RuntimeError(f"stage2.bin exceeds the reserved {STAGE2_RESERVED_SECTORS}-sector stage2 area.")
     if 512 + reserved_stage2_bytes > IMAGE_SIZE:
         raise RuntimeError("Reserved stage2 area does not fit in the disk image.")
     
