@@ -267,6 +267,7 @@ stage2_payload = env.Command(
 )
 boot_bin = env.Command(str(BOOT_BIN), [str(BOOT_ASM), stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
+env.Precious(boot_img)
 
 Default(boot_img)
 AlwaysBuild(env.Alias("run", [boot_img, bochsrc], Action(run_bochs, "Running Bochs")))
