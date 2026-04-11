@@ -1,37 +1,8 @@
 const std = @import("std");
+const elf32 = @import("kernel/elf32.zig");
 
-const Elf32_Ehdr = extern struct {
-    e_ident: [16]u8,
-    e_type: u16,
-    e_machine: u16,
-    e_version: u32,
-    e_entry: u32,
-    e_phoff: u32, // program header offset
-    e_shoff: u32, // section header offset
-    e_flags: u32,
-    e_ehsize: u16,
-    e_phentsize: u16, // size per program header entry
-    e_phnum: u16, // number of program header entries
-    e_shentsize: u16, // size per section header entry
-    e_shnum: u16, // number of section header entries
-    e_shstrndx: u16,
-
-    // Given a pointer to the ELF image, return a pointer to the ith segment header
-    fn phdrPtr(ehdr: *align(1) const Elf32_Ehdr, elf: [*]u8, i: u32) *align(1) const Elf32_Phdr {
-        return @ptrCast(elf + ehdr.e_phoff + i * ehdr.e_phentsize);
-    }
-};
-
-const Elf32_Phdr = extern struct {
-    p_type: u32,
-    p_offset: u32,
-    p_vaddr: u32,
-    p_paddr: u32,
-    p_filesz: u32,
-    p_memsz: u32,
-    p_flags: u32,
-    p_align: u32,
-};
+const Elf32_Ehdr = elf32.Elf32_Ehdr;
+const Elf32_Phdr = elf32.Elf32_Phdr;
 
 const FlattenElfError = error{
     ElfTooSmall,
@@ -164,7 +135,7 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
     while (i < ehdr.e_phnum) : (i += 1) {
         const phdr = ehdr.phdrPtr(elf.ptr, i);
 
-        if (phdr.p_type != 1) {
+        if (phdr.p_type != elf32.PT_LOAD) {
             continue;
         }
 
