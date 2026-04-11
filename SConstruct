@@ -20,7 +20,7 @@ QEMU_EXE = pathlib.Path(os.environ.get("QEMU_EXE", DEFAULT_QEMU))
 BOCHS_DIR = BOCHS_EXE.parent
 
 BOOT_ASM = ROOT / "boot.asm"
-INTERRUPTS_ASM = ROOT / "interrupts.asm"
+INTERRUPTS_ASM = ROOT / "kernel" / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 BOCHSRC = ROOT / "bochsrc.txt"

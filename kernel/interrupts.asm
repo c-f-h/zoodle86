@@ -284,7 +284,7 @@ keyboard_scancode_head: resb 1
 keyboard_scancode_tail: resb 1
 keyboard_scancode_buffer: resb KEYBOARD_BUFFER_SIZE
 
-align 8
+alignb 8
 idt: resq NUM_IDT_ENTRIES
 
 section .data
