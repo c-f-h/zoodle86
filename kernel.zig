@@ -59,24 +59,40 @@ const E820MemoryMapEntry = struct {
     acpi_attrs: u32, // 4 bytes
 };
 
+fn getMemoryMap() []align(2) E820MemoryMapEntry {
+    const mem_map_address = 0x7e00;
+    const num_entries = @as(*align(1) u16, @ptrFromInt(mem_map_address)).*;
+    return @as([*]align(2) E820MemoryMapEntry, @ptrFromInt(mem_map_address + 2))[0..num_entries];
+}
+
 /// Finds the largest contiguous usable memory region below 4GB using the
 /// E820 memory map provided by the bootloader.
 /// Panics if no suitable region of at least 8MB is found.
-fn findUsableMemoryWindow() struct { u32, u32 } {
-    const mem_map_address = 0x7e00;
-    const num_entries = @as(*align(1) u16, @ptrFromInt(mem_map_address)).*;
-    const entries = @as([*]align(1) E820MemoryMapEntry, @ptrFromInt(mem_map_address + 2))[0..num_entries];
+fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
+    const entries = getMemoryMap();
 
     var largest_usable_base: u64 = 0;
     var largest_usable_length: u64 = 0;
 
     for (entries) |*entry| {
-        if (entry.type_ == 1 and entry.base < (1 << 32)) {
-            const real_usable_length = @min(entry.length, (1 << 32) - entry.base);
-            // Usable RAM below 4GB
-            if (real_usable_length > largest_usable_length) {
-                largest_usable_base = entry.base;
-                largest_usable_length = real_usable_length;
+        if (verbose) {
+            console.puts("  ");
+            console.putHexU64(entry.base);
+            console.puts(" - ");
+            console.putHexU64(entry.base + entry.length);
+            console.puts(" - type ");
+            console.putDecU32(entry.type_);
+            console.newline();
+        }
+
+        if (entry.type_ == 1) {
+            if (entry.base < (1 << 32)) {
+                const real_usable_length = @min(entry.length, (1 << 32) - entry.base);
+                // Usable RAM below 4GB
+                if (real_usable_length > largest_usable_length) {
+                    largest_usable_base = entry.base;
+                    largest_usable_length = real_usable_length;
+                }
             }
         }
     }
@@ -108,11 +124,12 @@ fn kernel_main() !void {
     console.console_init(VGA_ATTR);
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
-    const mem_base, const mem_size = findUsableMemoryWindow();
+    const mem_base, const mem_size = findUsableMemoryWindow(true);
     console.puts("Usable memory: base=");
     console.putHexU32(mem_base);
     console.puts(", size=");
-    console.putHexU32(mem_size);
+    console.putDecU32(@divTrunc(mem_size, 1024 * 1024));
+    console.puts(" MiB");
     console.newline();
 
     var mem_start: [*]u8 = @ptrFromInt(mem_base);
