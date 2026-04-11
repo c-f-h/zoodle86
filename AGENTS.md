@@ -8,14 +8,15 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 - `boot.asm`: boot sector and stage-2 loader.
 - `interrupts.asm`: low-level IRQ and interrupt entry code plus a freestanding memcpy symbol.
-- `kernel.zig`: kernel entrypoint, memory setup, and shell startup.
-- `shell.zig`: command loop and table-driven shell command dispatch.
-- `console.zig`, `vgatext.zig`: VGA text-mode output.
-- `keyboard.zig`, `readline.zig`: keyboard input and line editing.
-- `app.zig`, `app_keylog.zig`: app state and the keylog app.
-- `fs.zig`: fixed-layout extent-based filesystem for persistent whole-file storage.
-- `ide.zig`, `io.zig`: low-level IDE and port I/O helpers.
+- `kernel/kernel.zig`: kernel entrypoint, memory setup, and shell startup.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch.
+- `kernel/console.zig`, `kernel/vgatext.zig`: VGA text-mode output.
+- `kernel/keyboard.zig`, `kernel/readline.zig`: keyboard input and line editing.
+- `kernel/app.zig`, `kernel/app_keylog.zig`: app state and the keylog app.
+- `kernel/fs.zig`, `kernel/fs_defs.zig`: fixed-layout extent-based filesystem for persistent whole-file storage.
+- `kernel/ide.zig`, `kernel/io.zig`: low-level IDE and port I/O helpers.
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
+- `extract_fs.zig`, `compile_fs.zig`: tools for extracting files from a file system and compiling a file system image
 - `stage2.ld`: linker script for the stage-2 image.
 - `SConstruct`: build and run entrypoints.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
@@ -28,7 +29,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 Build pipeline details:
 - NASM assembles `interrupts.asm` into `build/interrupts.o` and later assembles `boot.asm` into the final 512-byte boot sector.
-- Zig compiles `kernel.zig` into an object file `build/kernel.o` (single compilation unit).
+- Zig compiles `kernel/kernel.zig` into an object file `build/kernel.o` (single compilation unit).
 - Zig links the Zig object plus the interrupt object into `build/stage2.elf` as an ELF image with image base `0x8000`.
 - `flatten_elf.zig` flattens that ELF into `build/stage2.bin` and writes metadata with the entry offset and sector count to `build/stage2.meta`.
 - SCons rebuilds `boot.asm` with those values injected as NASM defines.
@@ -43,7 +44,7 @@ The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stag
 
 The disk image uses a fixed layout: sector 0 is the boot sector, sectors 1-63 are reserved for stage 2, and the custom filesystem starts at sector 33. The filesystem uses a one-sector superblock, an eight-sector flat root directory, and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file.
 
-`kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
+`kernel/kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `kernel/shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
 
 ## Style Guidelines
 

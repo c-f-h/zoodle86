@@ -1,4 +1,4 @@
-const fs_defs = @import("fs_defs.zig");
+const fs_defs = @import("kernel/fs_defs.zig");
 const std = @import("std");
 
 const CompileError = error{

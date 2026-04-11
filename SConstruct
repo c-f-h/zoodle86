@@ -22,7 +22,7 @@ BOCHS_DIR = BOCHS_EXE.parent
 BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
-ZIG_KERNEL_SRC = ROOT / "kernel.zig"
+ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 
