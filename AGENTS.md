@@ -17,13 +17,14 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/ide.zig`, `kernel/io.zig`: low-level IDE and port I/O helpers.
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `extract_fs.zig`, `compile_fs.zig`: tools for extracting files from a file system and compiling a file system image
+- `userspace.zig`, `userspace.ld`: freestanding userspace ELF binary and linker script that gets copied into the disk filesystem as `userspace.elf`.
 - `stage2.ld`: linker script for the stage-2 image.
 - `SConstruct`: build and run entrypoints.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
 
 ## Build, Test, and Development Commands
 
-- `scons`: build the boot sector, stage-2 payload, and `build/image.img`.
+- `scons`: build the boot sector, stage-2 payload, userspace ELF, filesystem image, and final `build/image.img`.
 - `scons run`: build and run the image in Bochs.
 - `scons qemu`: build and run the image in QEMU.
 
@@ -31,9 +32,12 @@ Build pipeline details:
 - NASM assembles `interrupts.asm` into `build/interrupts.o` and later assembles `boot.asm` into the final 512-byte boot sector.
 - Zig compiles `kernel/kernel.zig` into an object file `build/kernel.o` (single compilation unit).
 - Zig links the Zig object plus the interrupt object into `build/stage2.elf` as an ELF image with image base `0x8000`.
+- Zig links `userspace.zig` into `build/userspace.elf`.
 - `flatten_elf.zig` flattens that ELF into `build/stage2.bin` and writes metadata with the entry offset and sector count to `build/stage2.meta`.
 - SCons rebuilds `boot.asm` with those values injected as NASM defines.
-- `build/image.img` is produced by packing the boot sector into sector 0, reserving sectors 1-63 for stage 2, and leaving the filesystem region at sector 33 and beyond intact across rebuilds.
+- SCons extracts the existing filesystem from `build/image.img` into a pristine `build/fsimage/` directory when a prior image exists, then copies in `build/userspace.elf`.
+- `compile_fs.zig` compiles `build/fsimage/` into `build/fsimage.img`.
+- `build/image.img` is produced by copying `build/fsimage.img`, writing the boot sector to sector 0, zeroing sectors 1-63, and writing `build/stage2.bin` into that reserved stage-2 area.
 - SCons also generates `build/bochsrc.txt` and logs Bochs output to `build/bochsout.txt`.
 
 There is no separate unit-test suite yet. A successful build is the current baseline check.

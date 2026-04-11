@@ -52,18 +52,27 @@ def ensure_parent(path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def reset_dir(path):
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
 BOOT_BIN = build_artifact(BOOT_ASM, ".bin")
 INTERRUPTS_OBJ = build_artifact(INTERRUPTS_ASM, ".o")
 STAGE2_EXE = BUILD_DIR / "stage2.elf"
 STAGE2_BIN = build_artifact(STAGE2_EXE, ".bin")
 STAGE2_META = build_artifact(STAGE2_EXE, ".meta")
-BOOT_IMG = BUILD_DIR / "image.img"
+FS_IMAGE_DIR = BUILD_DIR / "fsimage"   # temp dir for collecting filesystem contents
+FS_IMAGE = BUILD_DIR / "fsimage.img"   # file system image, without bootloader and stage 2
+BOOT_IMG = BUILD_DIR / "image.img"     # final image with bootloader/stage 2/filesystem
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
 USERSPACE_EXE = build_artifact(USERSPACE_SRC, ".elf")
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
+IMAGE_SIZE_SECTORS = IMAGE_SIZE // 512
 
 
 def write_bochsrc(target, source, env):
@@ -225,31 +234,67 @@ def assemble_boot(target, source, env):
     )
 
 
+def build_fs_image(target, source, env):
+    target_path = pathlib.Path(str(target[0]))
+    ensure_parent(target_path)
+    if target_path.exists():
+        target_path.unlink()
+
+    reset_dir(FS_IMAGE_DIR)
+
+    # preserve any existing filesystem contents of image.img
+    if BOOT_IMG.exists():
+        run(
+            [
+                str(ZIG_EXE),
+                "run",
+                str(ROOT / "extract_fs.zig"),
+                "--",
+                str(BOOT_IMG.absolute()),
+                str(FS_IMAGE_DIR.absolute()),
+            ]
+        )
+
+    # inject the userspace.elf binary
+    shutil.copy2(USERSPACE_EXE, FS_IMAGE_DIR / USERSPACE_EXE.name)
+
+    run(
+        [
+            str(ZIG_EXE),
+            "run",
+            str(ROOT / "compile_fs.zig"),
+            "--",
+            str(FS_IMAGE_DIR.absolute()),
+            str(IMAGE_SIZE_SECTORS),
+            str(target_path.absolute()),
+        ]
+    )
+
+
 def build_image(target, source, env):
     target_path = pathlib.Path(str(target[0]))
-    ensure_parent(target_path)      # ensure build directory exists
-    
-    boot_bytes = pathlib.Path(str(source[0])).read_bytes()
+    ensure_parent(target_path)
+
+    fs_image_bytes = pathlib.Path(str(source[0])).read_bytes()
+    if len(fs_image_bytes) != IMAGE_SIZE:
+        raise RuntimeError(f"Filesystem image must be exactly {IMAGE_SIZE} bytes, got {len(fs_image_bytes)}.")
+
+    boot_bytes = pathlib.Path(str(source[1])).read_bytes()
     if len(boot_bytes) != 512:
         raise RuntimeError(f"Boot sector must be exactly 512 bytes, got {len(boot_bytes)}.")
-    stage2_bytes = pathlib.Path(str(source[1])).read_bytes()
+    stage2_bytes = pathlib.Path(str(source[2])).read_bytes()
     reserved_stage2_bytes = STAGE2_RESERVED_SECTORS * 512
     if len(stage2_bytes) > reserved_stage2_bytes:
         raise RuntimeError(f"stage2.bin exceeds the reserved {STAGE2_RESERVED_SECTORS}-sector stage2 area.")
     if 512 + reserved_stage2_bytes > IMAGE_SIZE:
         raise RuntimeError("Reserved stage2 area does not fit in the disk image.")
-    
-    # If target doesn't exist, create it full of zeros
-    if not target_path.exists():
-        target_path.write_bytes(b"\x00" * IMAGE_SIZE)
-    
-    # Open for modification and patch in the boot sector and reserved stage2 area.
-    img_file = target_path.open("r+b")
-    img_file.write(boot_bytes)
-    img_file.write(b"\x00" * reserved_stage2_bytes)
-    img_file.seek(512)
-    img_file.write(stage2_bytes)
-    img_file.close()
+
+    target_path.write_bytes(fs_image_bytes)
+    with target_path.open("r+b") as img_file:
+        img_file.write(boot_bytes)
+        img_file.write(b"\x00" * reserved_stage2_bytes)
+        img_file.seek(512)
+        img_file.write(stage2_bytes)
 
 def check_bochs_returncode(rc):
     if rc not in (0, 1):
@@ -295,7 +340,8 @@ stage2_payload = env.Command(
 )
 boot_bin = env.Command(str(BOOT_BIN), [str(BOOT_ASM), stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
 userspace_exe = env.Command(str(USERSPACE_EXE), str(USERSPACE_SRC), Action(build_userspace_exe, "Compiling $TARGET"))
-boot_img = env.Command(str(BOOT_IMG), [boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
+fsimage = env.Command(str(FS_IMAGE), [userspace_exe], Action(build_fs_image, "Building $TARGET"))
+boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)
 
 Default(boot_img)
