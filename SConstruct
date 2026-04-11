@@ -75,12 +75,13 @@ def write_bochsrc(target, source, env):
                 "boot: c",
                 f'ata0-master: type=disk, path="{BOOT_IMG.relative_to(ROOT)}", mode=flat',
                 f'log: {BOCHSOUT_PATH.relative_to(ROOT)}',
-                'display_library: win32, options="autoscale"',
+                'display_library: win32, options="autoscale, gui_debug"',
                 "panic: action=ask",
                 "error: action=report",
                 "info: action=report",
                 "debug: action=ignore",
                 "clock: sync=realtime",
+                "magic_break: enabled=1",  # use xchg bx, bx to break
                 "",
             ]
         ),
@@ -224,20 +225,21 @@ def build_image(target, source, env):
     img_file.write(stage2_bytes)
     img_file.close()
 
+def check_bochs_returncode(rc):
+    if rc not in (0, 1):
+        raise RuntimeError(f"Bochs failed with exit code {rc}")
 
 def run_bochs(target, source, env):
-    print(f"NASM : {NASM_EXE}")
     print(f"Bochs: {BOCHS_EXE}")
     completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH)], cwd=ROOT)
-    if completed.returncode not in (0, 1):
-        raise RuntimeError(
-            f"Command failed with exit code {completed.returncode}: "
-            f"{' '.join(map(str, [BOCHS_EXE, '-q', '-f', BOCHSRC_PATH]))}"
-        )
+    check_bochs_returncode(completed.returncode)
 
+def debug_bochs(target, source, env):
+    print(f"Bochs: {BOCHS_EXE}")
+    completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH), "-debugger"], cwd=ROOT)
+    check_bochs_returncode(completed.returncode)
 
 def run_qemu(target, source, env):
-    print(f"NASM : {NASM_EXE}")
     print(f"QEMU : {QEMU_EXE}")
     completed = subprocess.run(
         [
@@ -271,4 +273,5 @@ env.Precious(boot_img)
 
 Default(boot_img)
 AlwaysBuild(env.Alias("run", [boot_img, bochsrc], Action(run_bochs, "Running Bochs")))
+AlwaysBuild(env.Alias("debug", [boot_img, bochsrc], Action(debug_bochs, "Running Bochs with debugger")))
 AlwaysBuild(env.Alias("qemu", [boot_img], Action(run_qemu, "Running QEMU")))

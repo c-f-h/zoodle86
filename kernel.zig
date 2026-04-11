@@ -3,14 +3,16 @@ const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const gdt = @import("gdt.zig");
-const shell = @import("shell.zig");
+//const shell = @import("shell.zig");
 
 const std = @import("std");
 
 const VGA_ATTR: u8 = 0x07;
+var kernel_interrupt_stack: [4096]u8 align(16) = undefined;
 
 // External interrupt setup from interrupts.asm
 extern fn interrupts_init() void;
+extern fn enter_user_mode(user_eip: u32, user_esp: u32) noreturn;
 
 // Keyboard handler
 pub const KeyboardHandler = struct {
@@ -41,6 +43,22 @@ var disk_fs: fs.FileSystem = undefined;
 export fn consume_key_event(event: *const keyboard.KeyEvent) void {
     if (cur_kb_handler) |handler| {
         _ = handler.handler(handler.ctx, event);
+    }
+}
+
+/// Dispatches the minimal int 0x80 syscall ABI used by the user-mode test stub.
+export fn syscall_dispatch(nr: u32, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
+    _ = arg1;
+    _ = arg2;
+    _ = arg3;
+
+    switch (nr) {
+        1 => {
+            console.puts("hello from syscall int 0x80");
+            console.newline();
+            return 42;
+        },
+        else => return 0xffff_ffff,
     }
 }
 
@@ -108,8 +126,8 @@ fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
 export fn _start() void {
     kernel_main() catch |err| {
         @panic(switch (err) {
-            error.OutOfMemory => "Out of memory",
-            error.BufferTooSmall => "Buffer too small",
+            //error.OutOfMemory => "Out of memory",
+            //error.BufferTooSmall => "Buffer too small",
             ide.IdeError.Timeout => "IDE timeout",
             ide.IdeError.DeviceFault => "IDE device fault",
             ide.IdeError.ControllerError => "IDE controller error",
@@ -142,10 +160,24 @@ fn kernel_main() !void {
     const user_data_mem = all_mem[4 * MiB ..];
 
     gdt.setUserSegments(user_code_mem, user_data_mem);
+    gdt.initTss(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
     gdt.set();
 
     try mountFs();
-    try shell.run(alloc, &disk_fs);
+
+    // mov eax, 1 ; int 0x80 ; jmp $
+    user_code_mem[0] = 0xb8;
+    user_code_mem[1] = 0x01;
+    user_code_mem[2] = 0x00;
+    user_code_mem[3] = 0x00;
+    user_code_mem[4] = 0x00;
+    user_code_mem[5] = 0xcd;
+    user_code_mem[6] = 0x80;
+    user_code_mem[7] = 0xeb;
+    user_code_mem[8] = 0xfe;
+    console.puts("Switching to user mode...");
+    console.newline();
+    enter_user_mode(0, @intCast(user_data_mem.len - 4));
 }
 
 fn mountFs() !void {

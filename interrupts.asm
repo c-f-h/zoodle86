@@ -2,9 +2,11 @@
 section .text
 
 extern _bss_start, _bss_end
+extern syscall_dispatch
 
 ; entry point to initialize the interrupt handler
 global interrupts_init
+global enter_user_mode
 
 ; keyboard interrupt output: total IRQ count plus a raw scancode ring buffer
 global keyboard_irq_count
@@ -26,9 +28,13 @@ PIC_READ_IRR    equ 0x0a    ; OCW3 irq ready next CMD read
 PIC_READ_ISR    equ 0x0b    ; OCW3 irq service next CMD read
 
 KEYBOARD_VECTOR equ 0x21    ; interrupt vector to which IRQ1 will be remapped
-NUM_IDT_ENTRIES equ KEYBOARD_VECTOR + 1
+SYSCALL_VECTOR equ 0x80
+NUM_IDT_ENTRIES equ SYSCALL_VECTOR + 1
 KEYBOARD_BUFFER_SIZE equ 16
 KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
+USER_CODE_SELECTOR equ (3 << 3) | 3
+USER_DATA_SELECTOR equ (4 << 3) | 3
+KERNEL_DATA_SELECTOR equ (2 << 3)
 
 interrupts_init:
     ; zero out the BSS section
@@ -46,6 +52,30 @@ interrupts_init:
     call unmask_keyboard_irq
     sti
     ret
+
+; Enters ring 3 by returning through an interrupt frame built on the current
+; kernel stack. The provided EIP and ESP are offsets within the user code/data
+; segments, not linear addresses.
+;
+; cdecl arguments:
+;   [esp + 4] = user_eip
+;   [esp + 8] = user_esp
+enter_user_mode:
+    mov ecx, [esp + 4]
+    mov edx, [esp + 8]
+
+    mov ax, USER_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push USER_DATA_SELECTOR
+    push edx
+    pushfd
+    push USER_CODE_SELECTOR
+    push ecx
+    iretd
 
 setup_idt:
     pushad
@@ -66,6 +96,16 @@ setup_idt:
     mov byte [edi + 5], 10001110b       ; attrs: present, dpl = 0, storage segment = 0, gate type = 1110 = 32-bit
     shr eax, 16
     mov word [edi + 6], ax              ; handler high 16 bits (32 bit handler)
+
+    ; Install a 32-bit interrupt gate for int 0x80 callable from user mode.
+    mov edi, idt + (SYSCALL_VECTOR * 8)
+    mov eax, syscall_isr
+    mov word [edi + 0], ax
+    mov word [edi + 2], cs
+    mov byte [edi + 4], 0
+    mov byte [edi + 5], 11101110b       ; attrs: present, dpl = 3, storage segment = 0, gate type = 1110 = 32-bit
+    shr eax, 16
+    mov word [edi + 6], ax
 
     lidt [idt_descriptor]
     popad
@@ -159,7 +199,17 @@ wait_8042_output_full:
     ret
 
 keyboard_isr:
+    push ds
+    push es
+    push fs
+    push gs
     pushad
+
+    mov ax, KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
     ; Reading port 0x60 both acknowledges the keyboard controller and fetches the raw
     ; scancode byte that triggered IRQ1.
@@ -187,17 +237,55 @@ keyboard_isr:
     ; NB: for IRQs >= 8, we have to send EOI to both PICs
 
     popad
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    iretd
+
+syscall_isr:
+    push ds
+    push es
+    push fs
+    push gs
+    pushad
+
+    mov ax, KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    ; restore eax from pushad (pushes all 8 main registers)
+    mov eax, dword [esp + 28]
+
+    push edx
+    push ecx
+    push ebx
+    push eax
+    call syscall_dispatch
+    add esp, 16
+
+    ; move result into stack position from which popad will restore eax
+    mov [esp + 28], eax
+
+    popad
+    pop gs
+    pop fs
+    pop es
+    pop ds
     iretd
 
 section .bss
-align 8
-idt: resq NUM_IDT_ENTRIES
 
 keyboard_irq_count: resd 1
 keyboard_overflow_count: resd 1
 keyboard_scancode_head: resb 1
 keyboard_scancode_tail: resb 1
 keyboard_scancode_buffer: resb KEYBOARD_BUFFER_SIZE
+
+align 8
+idt: resq NUM_IDT_ENTRIES
 
 section .data
 idt_descriptor:
