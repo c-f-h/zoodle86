@@ -22,7 +22,9 @@ BOCHS_DIR = BOCHS_EXE.parent
 BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "kernel" / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
+USERSPACE_LINKER_SCRIPT = ROOT / "userspace.ld"
 ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
+USERSPACE_SRC = ROOT / "userspace.zig"
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 
@@ -59,6 +61,7 @@ BOOT_IMG = BUILD_DIR / "image.img"
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
+USERSPACE_EXE = build_artifact(USERSPACE_SRC, ".elf")
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 
@@ -141,13 +144,36 @@ def link_stage2(target, source, env):
             *COMMON_ZIG_OPTS,
             "-fentry=_start",
             "-fno-compiler-rt",
-            "-T",
-            str(STAGE2_LINKER_SCRIPT),
+            "-T", str(STAGE2_LINKER_SCRIPT),
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
             str(ZIG_OBJ),
         ]
     )
+
+def build_userspace_exe(target, source, env):
+    output_path = pathlib.Path(str(target[0]))
+    source_path = pathlib.Path(str(source[0]))
+    ensure_parent(output_path)
+    ensure_parent(ZIG_CACHE_DIR / "cache")
+    ensure_parent(ZIG_GLOBAL_CACHE_DIR / "cache")
+    if output_path.exists():
+        output_path.unlink()
+    run(
+        [
+            str(ZIG_EXE),
+            "build-exe",
+            *COMMON_ZIG_OPTS,
+            "-ofmt=elf",
+            "-fentry=_start",
+            "-fno-compiler-rt",
+            "-T", str(USERSPACE_LINKER_SCRIPT),
+            f"-femit-bin={output_path.as_posix()}",
+            str(source_path),
+        ]
+    )
+    if not output_path.exists():
+        raise RuntimeError(f"Zig did not produce {output_path.name}.")
 
 
 def build_stage2_payload(target, source, env):
@@ -268,6 +294,7 @@ stage2_payload = env.Command(
     Action(build_stage2_payload, "Flattening $SOURCE"),
 )
 boot_bin = env.Command(str(BOOT_BIN), [str(BOOT_ASM), stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
+userspace_exe = env.Command(str(USERSPACE_EXE), str(USERSPACE_SRC), Action(build_userspace_exe, "Compiling $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)
 
