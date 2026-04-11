@@ -50,9 +50,15 @@ pub var gdt: [5]Descriptor = .{
     @bitCast(@as(u64, 0)), // user data segment
 };
 
-pub fn setUserSegments(codeBase: u32, codeLimit: u20, dataBase: u32, dataLimit: u20) void {
-    gdt[3] = makeSegment(codeBase, codeLimit, AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, Flags{});
-    gdt[4] = makeSegment(dataBase, dataLimit, AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, Flags{});
+pub fn setUserSegments(code: []u8, data: []u8) void {
+    const code_base = @intFromPtr(code.ptr);
+    const code_pages = @divTrunc(code.len, 4 * 1024);
+
+    const data_base = @intFromPtr(data.ptr);
+    const data_pages = @divTrunc(data.len, 4 * 1024);
+
+    gdt[3] = makeSegment(code_base, @truncate(code_pages), AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, Flags{});
+    gdt[4] = makeSegment(data_base, @truncate(data_pages), AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, Flags{});
 }
 
 const GDTR = packed struct {

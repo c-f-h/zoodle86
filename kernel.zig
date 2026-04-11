@@ -124,18 +124,24 @@ fn kernel_main() !void {
     console.console_init(VGA_ATTR);
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
-    const mem_base, const mem_size = findUsableMemoryWindow(true);
+    const mem_base, const mem_size = findUsableMemoryWindow(false);
+    const MiB = 1024 * 1024;
+
     console.puts("Usable memory: base=");
     console.putHexU32(mem_base);
     console.puts(", size=");
-    console.putDecU32(@divTrunc(mem_size, 1024 * 1024));
+    console.putDecU32(@divTrunc(mem_size, MiB));
     console.puts(" MiB");
     console.newline();
 
-    var mem_start: [*]u8 = @ptrFromInt(mem_base);
-    var fba = std.heap.FixedBufferAllocator.init(mem_start[0..mem_size]);
+    var all_mem: []u8 = @as([*]u8, @ptrFromInt(mem_base))[0..mem_size];
+    var fba = std.heap.FixedBufferAllocator.init(all_mem[0 .. 2 * MiB]);
     alloc = fba.allocator();
 
+    const user_code_mem = all_mem[2 * MiB .. 4 * MiB];
+    const user_data_mem = all_mem[4 * MiB ..];
+
+    gdt.setUserSegments(user_code_mem, user_data_mem);
     gdt.set();
 
     try mountFs();
