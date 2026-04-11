@@ -28,7 +28,7 @@ BOCHSOUT = ROOT / "bochsout.txt"
 
 IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
-STAGE2_RESERVED_SECTORS = 63    # NB: must match the value in fs.zig
+STAGE2_RESERVED_SECTORS = 63    # NB: must match fs_defs.zig STAGE2_RESERVED_SECTORS
 
 
 def run(cmd):
