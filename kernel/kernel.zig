@@ -3,6 +3,7 @@ const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const gdt = @import("gdt.zig");
+const elf32 = @import("elf32.zig");
 //const shell = @import("shell.zig");
 
 const std = @import("std");
@@ -66,6 +67,14 @@ pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
     var i: usize = 0;
     while (i < len) : (i += 1) {
         dest[i] = src[i];
+    }
+    return dest;
+}
+
+pub export fn memset(dest: [*]u8, val: u8, len: usize) [*]u8 {
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        dest[i] = val;
     }
     return dest;
 }
@@ -136,6 +145,9 @@ export fn _start() void {
     };
 }
 
+var user_code_mem: []u8 = undefined;
+var user_data_mem: []u8 = undefined;
+
 fn kernel_main() !void {
     interrupts_init();
 
@@ -156,8 +168,8 @@ fn kernel_main() !void {
     var fba = std.heap.FixedBufferAllocator.init(all_mem[0 .. 2 * MiB]);
     alloc = fba.allocator();
 
-    const user_code_mem = all_mem[2 * MiB .. 4 * MiB];
-    const user_data_mem = all_mem[4 * MiB ..];
+    user_code_mem = all_mem[2 * MiB .. 4 * MiB];
+    user_data_mem = all_mem[4 * MiB ..];
 
     gdt.setUserSegments(user_code_mem, user_data_mem);
     gdt.initTss(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
@@ -165,19 +177,60 @@ fn kernel_main() !void {
 
     try mountFs();
 
-    // mov eax, 1 ; int 0x80 ; jmp $
-    user_code_mem[0] = 0xb8;
-    user_code_mem[1] = 0x01;
-    user_code_mem[2] = 0x00;
-    user_code_mem[3] = 0x00;
-    user_code_mem[4] = 0x00;
-    user_code_mem[5] = 0xcd;
-    user_code_mem[6] = 0x80;
-    user_code_mem[7] = 0xeb;
-    user_code_mem[8] = 0xfe;
+    try launchUserspaceElf("userspace.elf");
+}
+
+fn launchUserspaceElf(fname: []const u8) !void {
+    var entry: u32 = 0;
+    {
+        console.puts("Loading ");
+        console.puts(fname);
+        console.puts("...\n");
+        const elf_data = try disk_fs.readFile(alloc, fname);
+        defer alloc.free(elf_data);
+
+        const ehdr: *elf32.Elf32_Ehdr = @ptrCast(@alignCast(elf_data.ptr));
+        entry = ehdr.e_entry;
+        console.puts("Entry point: 0x");
+        console.putHexU32(entry);
+        console.newline();
+
+        var i: u32 = 0;
+        while (i < ehdr.e_phnum) : (i += 1) {
+            const phdr = ehdr.phdrPtr(elf_data.ptr, i);
+            if (phdr.p_type != elf32.PT_LOAD) continue;
+
+            const file_start = elf_data.ptr + phdr.p_offset;
+            const memsz = phdr.p_memsz;
+            const filesz = phdr.p_filesz;
+
+            const dest: [*]u8 = if (phdr.p_flags & elf32.P_X != 0)
+                user_code_mem.ptr + phdr.p_vaddr
+            else
+                user_data_mem.ptr + phdr.p_vaddr;
+
+            @memcpy(dest[0..filesz], file_start[0..filesz]);
+            @memset(dest[filesz..memsz], 0);
+
+            if (phdr.p_flags & elf32.P_X != 0) {
+                console.puts("Loaded code segment: ");
+            } else {
+                console.puts("Loaded data segment: ");
+            }
+            console.putHexU32(phdr.p_vaddr);
+            console.puts(" (");
+            console.putDecU32(filesz);
+            console.puts(" + ");
+            console.putDecU32(memsz - filesz);
+            console.puts(" bss bytes)");
+            console.newline();
+        }
+        // Here we can already free the kernel allocation with the file contents
+    }
+
     console.puts("Switching to user mode...");
     console.newline();
-    enter_user_mode(0, @intCast(user_data_mem.len - 4));
+    enter_user_mode(entry, @intCast(user_data_mem.len - 4));
 }
 
 fn mountFs() !void {
