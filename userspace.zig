@@ -13,8 +13,12 @@ inline fn syscall(nr: u32, arg1: u32, arg2: u32, arg3: u32) u32 {
         : .{ .ebx = true, .ecx = true, .edx = true });
 }
 
+pub fn exit(exitcode: u32) noreturn {
+    _ = syscall(60, exitcode, 0, 0);
+    unreachable;
+}
+
 pub export fn _start() void {
-    while (true) {
-        _ = syscall(1, 0, 0, 0);
-    }
+    _ = syscall(1, 0, 0, 0);
+    exit(0);
 }

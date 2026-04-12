@@ -59,6 +59,9 @@ export fn syscall_dispatch(nr: u32, arg1: u32, arg2: u32, arg3: u32) callconv(.c
             console.newline();
             return 42;
         },
+        60 => {
+            kernel_reenter();
+        },
         else => return 0xffff_ffff,
     }
 }
@@ -131,22 +134,30 @@ fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
     return .{ @intCast(largest_usable_base), @intCast(largest_usable_length) };
 }
 
+fn panicOnError(err: anyerror) noreturn {
+    @panic(switch (err) {
+        error.OutOfMemory => "Out of memory",
+        error.BufferTooSmall => "Buffer too small",
+        ide.IdeError.Timeout => "IDE timeout",
+        ide.IdeError.DeviceFault => "IDE device fault",
+        ide.IdeError.ControllerError => "IDE controller error",
+        else => "Unknown error",
+    });
+}
+
 /// Kernel entry point
 export fn _start() void {
     kernel_main() catch |err| {
-        @panic(switch (err) {
-            //error.OutOfMemory => "Out of memory",
-            //error.BufferTooSmall => "Buffer too small",
-            ide.IdeError.Timeout => "IDE timeout",
-            ide.IdeError.DeviceFault => "IDE device fault",
-            ide.IdeError.ControllerError => "IDE controller error",
-            else => "Unknown error",
-        });
+        panicOnError(err);
     };
 }
 
 var user_code_mem: []u8 = undefined;
 var user_data_mem: []u8 = undefined;
+
+const Task = gdt.Task;
+
+var current_task: Task = .{};
 
 fn kernel_main() !void {
     interrupts_init();
@@ -171,13 +182,32 @@ fn kernel_main() !void {
     user_code_mem = all_mem[2 * MiB .. 4 * MiB];
     user_data_mem = all_mem[4 * MiB ..];
 
-    gdt.setUserSegments(user_code_mem, user_data_mem);
-    gdt.initTss(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
-    gdt.set();
+    current_task.setUserSegments(user_code_mem, user_data_mem);
+    current_task.initTss(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
+    current_task.set();
+
+    console.puts("Set up kernel stack at ");
+    console.putHexU32(@intFromPtr(&kernel_interrupt_stack));
+    console.puts(" - ");
+    console.putHexU32(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
+    console.newline();
 
     try mountFs();
     //try launchUserspaceElf("userspace.elf");
     try shell.run(alloc, &disk_fs);
+}
+
+fn kernel_reenter() noreturn {
+    const esp = asm volatile (""
+        : [ret] "={esp}" (-> usize),
+    );
+    console.puts("Returned to kernel, esp = ");
+    console.putHexU32(esp);
+    console.newline();
+
+    shell.run(alloc, &disk_fs) catch |err| {
+        panicOnError(err);
+    };
 }
 
 pub fn launchUserspaceElf(fname: []const u8) !void {

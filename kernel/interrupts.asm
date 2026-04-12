@@ -70,11 +70,11 @@ enter_user_mode:
     mov fs, ax
     mov gs, ax
 
-    push USER_DATA_SELECTOR
-    push edx
-    pushfd
-    push USER_CODE_SELECTOR
-    push ecx
+    push USER_DATA_SELECTOR ; user SS
+    push edx                ; user esp
+    pushfd                  ; user eflags
+    push USER_CODE_SELECTOR ; user CS
+    push ecx                ; user eip
     iretd
 
 setup_idt:

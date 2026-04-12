@@ -36,7 +36,7 @@ const commands = [_]Command{
 };
 
 /// Run the interactive shell command loop.
-pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !void {
+pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
     var shell = Shell{
         .alloc = alloc,
         .disk_fs = disk_fs,

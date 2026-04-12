@@ -97,53 +97,58 @@ comptime {
     if (@sizeOf(Tss) != 104) @compileError("TSS size should be 104 bytes");
 }
 
-var tss: Tss = .{};
+pub const Task = struct {
+    tss: Tss = .{},
+    gdt: [6]Descriptor = .{
+        @bitCast(@as(u64, 0)), // null descriptor
+        makeSegment(0, 0xFFFFF, AccessFlags{ .read_write = false, .executable = true }, Flags{}), // kernel code segment
+        makeSegment(0, 0xFFFFF, AccessFlags{ .read_write = true, .executable = false }, Flags{}), // kernel data segment
+        @bitCast(@as(u64, 0)), // user code segment
+        @bitCast(@as(u64, 0)), // user data segment
+        @bitCast(@as(u64, 0)), // task state segment
+    },
+    gdtr: GDTR = undefined,
 
-pub var gdt: [6]Descriptor = .{
-    @bitCast(@as(u64, 0)), // null descriptor
-    makeSegment(0, 0xFFFFF, AccessFlags{ .read_write = false, .executable = true }, Flags{}), // kernel code segment
-    makeSegment(0, 0xFFFFF, AccessFlags{ .read_write = true, .executable = false }, Flags{}), // kernel data segment
-    @bitCast(@as(u64, 0)), // user code segment
-    @bitCast(@as(u64, 0)), // user data segment
-    @bitCast(@as(u64, 0)), // task state segment
+    /// Configures the user-mode code and data descriptors.
+    pub fn setUserSegments(task: *Task, code: []u8, data: []u8) void {
+        const code_base = @intFromPtr(code.ptr);
+        const code_pages = @divExact(code.len, 4 * 1024);
+
+        const data_base = @intFromPtr(data.ptr);
+        const data_pages = @divExact(data.len, 4 * 1024);
+
+        task.gdt[3] = makeSegment(code_base, @truncate(code_pages - 1), AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, Flags{});
+        task.gdt[4] = makeSegment(data_base, @truncate(data_pages - 1), AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, Flags{});
+    }
+
+    /// Initializes the task state segment used when ring-3 code traps into the kernel.
+    pub fn initTss(task: *Task, kernel_stack_top: u32) void {
+        task.tss = .{};
+        task.tss.esp0 = kernel_stack_top;
+        task.tss.ss0 = kernel_data_selector;
+        task.tss.iomap_base = @sizeOf(Tss);
+        task.gdt[5] = makeSystemSegment(@intFromPtr(&task.tss), @sizeOf(Tss) - 1, 0x89, Flags{ .size_flag = false, .granularity = false });
+    }
+
+    /// Loads the GDT and sets the task register for the current CPU.
+    pub fn set(task: *Task) void {
+        task.gdtr.initAndLoad(&task.gdt);
+        ltr(tss_selector);
+    }
 };
-
-/// Configures the user-mode code and data descriptors.
-pub fn setUserSegments(code: []u8, data: []u8) void {
-    const code_base = @intFromPtr(code.ptr);
-    const code_pages = @divExact(code.len, 4 * 1024);
-
-    const data_base = @intFromPtr(data.ptr);
-    const data_pages = @divExact(data.len, 4 * 1024);
-
-    gdt[3] = makeSegment(code_base, @truncate(code_pages - 1), AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, Flags{});
-    gdt[4] = makeSegment(data_base, @truncate(data_pages - 1), AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, Flags{});
-}
-
-/// Initializes the task state segment used when ring-3 code traps into the kernel.
-pub fn initTss(kernel_stack_top: u32) void {
-    tss = .{};
-    tss.esp0 = kernel_stack_top;
-    tss.ss0 = kernel_data_selector;
-    tss.iomap_base = @sizeOf(Tss);
-    gdt[5] = makeSystemSegment(@intFromPtr(&tss), @sizeOf(Tss) - 1, 0x89, Flags{ .size_flag = false, .granularity = false });
-}
 
 const GDTR = packed struct {
     limit: u16,
     base: u32,
+
+    /// Set up this GDTR to point to the given GDT and load it into the current CPU.
+    pub fn initAndLoad(self: *GDTR, p_gdt: []Descriptor) void {
+        self.limit = @truncate(p_gdt.len * @sizeOf(Descriptor) - 1);
+        self.base = @intFromPtr(p_gdt.ptr);
+        lgdt(@intFromPtr(self));
+    }
 };
 var gdtr: GDTR = undefined;
-
-/// Loads the GDT and task register.
-pub fn set() void {
-    gdtr = .{
-        .limit = @sizeOf(@TypeOf(gdt)) - 1,
-        .base = @intFromPtr(&gdt),
-    };
-    lgdt(@intFromPtr(&gdtr));
-    ltr(tss_selector);
-}
 
 inline fn lgdt(addr: usize) void {
     asm volatile (
