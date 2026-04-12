@@ -2,14 +2,13 @@ const console = @import("console.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
-const gdt = @import("gdt.zig");
+const task = @import("task.zig");
 const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
 
 const std = @import("std");
 
 const VGA_ATTR: u8 = 0x07;
-var kernel_interrupt_stack: [4096]u8 align(16) = undefined;
 
 // External interrupt setup from interrupts.asm
 extern fn interrupts_init() void;
@@ -155,9 +154,9 @@ export fn _start() void {
 var user_code_mem: []u8 = undefined;
 var user_data_mem: []u8 = undefined;
 
-const Task = gdt.Task;
+const Task = task.Task;
 
-var current_task: Task = .{};
+var current_task: Task = undefined;
 
 fn kernel_main() !void {
     interrupts_init();
@@ -182,15 +181,9 @@ fn kernel_main() !void {
     user_code_mem = all_mem[2 * MiB .. 4 * MiB];
     user_data_mem = all_mem[4 * MiB ..];
 
+    current_task.init();
     current_task.setUserSegments(user_code_mem, user_data_mem);
-    current_task.initTss(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
     current_task.set();
-
-    console.puts("Set up kernel stack at ");
-    console.putHexU32(@intFromPtr(&kernel_interrupt_stack));
-    console.puts(" - ");
-    console.putHexU32(@intFromPtr(&kernel_interrupt_stack) + kernel_interrupt_stack.len);
-    console.newline();
 
     try mountFs();
     //try launchUserspaceElf("userspace.elf");

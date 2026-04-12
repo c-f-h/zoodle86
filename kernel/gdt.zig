@@ -28,13 +28,7 @@ comptime {
     if (@sizeOf(Descriptor) != 8) @compileError("GDT Descriptor size should be 8 bytes");
 }
 
-pub const kernel_code_selector: u16 = 1 << 3;
-pub const kernel_data_selector: u16 = 2 << 3;
-pub const user_code_selector: u16 = (3 << 3) | 3;
-pub const user_data_selector: u16 = (4 << 3) | 3;
-pub const tss_selector: u16 = 5 << 3;
-
-fn makeSegment(base: u32, limit: u20, access: AccessFlags, flags: Flags) Descriptor {
+pub fn makeSegment(base: u32, limit: u20, access: AccessFlags, flags: Flags) Descriptor {
     const high_nibble = @as(u8, @truncate(limit >> 16));
     const limit_high_flags = (@as(u8, @as(u4, @bitCast(flags))) << 4) | high_nibble;
 
@@ -48,11 +42,11 @@ fn makeSegment(base: u32, limit: u20, access: AccessFlags, flags: Flags) Descrip
     };
 }
 
-fn makeSystemSegment(base: u32, limit: u20, access_byte: u8, flags: Flags) Descriptor {
+pub fn makeSystemSegment(base: u32, limit: u20, access_byte: u8, flags: Flags) Descriptor {
     return makeSegment(base, limit, @bitCast(access_byte), flags);
 }
 
-const Tss = extern struct {
+pub const Tss = extern struct {
     prev_tss: u16 = 0,
     _reserved0: u16 = 0,
     esp0: u32 = 0,
@@ -97,47 +91,7 @@ comptime {
     if (@sizeOf(Tss) != 104) @compileError("TSS size should be 104 bytes");
 }
 
-pub const Task = struct {
-    tss: Tss = .{},
-    gdt: [6]Descriptor = .{
-        @bitCast(@as(u64, 0)), // null descriptor
-        makeSegment(0, 0xFFFFF, AccessFlags{ .read_write = false, .executable = true }, Flags{}), // kernel code segment
-        makeSegment(0, 0xFFFFF, AccessFlags{ .read_write = true, .executable = false }, Flags{}), // kernel data segment
-        @bitCast(@as(u64, 0)), // user code segment
-        @bitCast(@as(u64, 0)), // user data segment
-        @bitCast(@as(u64, 0)), // task state segment
-    },
-    gdtr: GDTR = undefined,
-
-    /// Configures the user-mode code and data descriptors.
-    pub fn setUserSegments(task: *Task, code: []u8, data: []u8) void {
-        const code_base = @intFromPtr(code.ptr);
-        const code_pages = @divExact(code.len, 4 * 1024);
-
-        const data_base = @intFromPtr(data.ptr);
-        const data_pages = @divExact(data.len, 4 * 1024);
-
-        task.gdt[3] = makeSegment(code_base, @truncate(code_pages - 1), AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, Flags{});
-        task.gdt[4] = makeSegment(data_base, @truncate(data_pages - 1), AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, Flags{});
-    }
-
-    /// Initializes the task state segment used when ring-3 code traps into the kernel.
-    pub fn initTss(task: *Task, kernel_stack_top: u32) void {
-        task.tss = .{};
-        task.tss.esp0 = kernel_stack_top;
-        task.tss.ss0 = kernel_data_selector;
-        task.tss.iomap_base = @sizeOf(Tss);
-        task.gdt[5] = makeSystemSegment(@intFromPtr(&task.tss), @sizeOf(Tss) - 1, 0x89, Flags{ .size_flag = false, .granularity = false });
-    }
-
-    /// Loads the GDT and sets the task register for the current CPU.
-    pub fn set(task: *Task) void {
-        task.gdtr.initAndLoad(&task.gdt);
-        ltr(tss_selector);
-    }
-};
-
-const GDTR = packed struct {
+pub const GDTR = packed struct {
     limit: u16,
     base: u32,
 
@@ -158,7 +112,7 @@ inline fn lgdt(addr: usize) void {
     );
 }
 
-inline fn ltr(selector: u16) void {
+pub inline fn ltr(selector: u16) void {
     asm volatile (
         \\ltr %[selector]
         :
