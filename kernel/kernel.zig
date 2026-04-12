@@ -197,12 +197,21 @@ fn kernel_main() !void {
     try shell.run(alloc, &disk_fs);
 }
 
-fn kernel_reenter() noreturn {
-    const esp = asm volatile (""
-        : [ret] "={esp}" (-> usize),
+pub inline fn bochsDebugBreak() void {
+    _ = asm volatile ("xchg %%bx, %%bx");
+}
+
+pub inline fn getRegister(comptime reg: [3]u8) u32 {
+    // return spec "={eax}" cannot be a comptime string, so we need a mov instruction
+    const asm_str = "mov %%" ++ reg ++ ", %%eax";
+    return asm volatile (asm_str
+        : [ret] "={eax}" (-> u32),
     );
+}
+
+fn kernel_reenter() noreturn {
     console.puts("Returned to kernel, esp = ");
-    console.putHexU32(esp);
+    console.putHexU32(getRegister("esp".*));
     console.newline();
 
     shell.run(alloc, &disk_fs) catch |err| {

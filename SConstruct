@@ -153,6 +153,7 @@ def link_stage2(target, source, env):
             *COMMON_ZIG_OPTS,
             "-fentry=_start",
             "-fno-compiler-rt",
+            "-fno-strip",
             "-T", str(STAGE2_LINKER_SCRIPT),
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
