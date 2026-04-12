@@ -6,6 +6,7 @@ const fs = @import("fs.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const readline = @import("readline.zig");
+const kernel = @import("kernel.zig");
 
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
@@ -30,6 +31,7 @@ const commands = [_]Command{
     .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
+    .{ .name = "run", .description = "Execute an ELF binary executable.", .handler = cmdRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
 };
 
@@ -147,6 +149,15 @@ fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
         }
     } else {
         printUsage("dumpmem");
+    }
+}
+
+fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    if (args.next()) |fname| {
+        try kernel.launchUserspaceElf(fname);
+    } else {
+        console.puts("Usage: run <executable>\n");
     }
 }
 

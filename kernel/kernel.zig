@@ -4,7 +4,7 @@ const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const gdt = @import("gdt.zig");
 const elf32 = @import("elf32.zig");
-//const shell = @import("shell.zig");
+const shell = @import("shell.zig");
 
 const std = @import("std");
 
@@ -176,11 +176,11 @@ fn kernel_main() !void {
     gdt.set();
 
     try mountFs();
-
-    try launchUserspaceElf("userspace.elf");
+    //try launchUserspaceElf("userspace.elf");
+    try shell.run(alloc, &disk_fs);
 }
 
-fn launchUserspaceElf(fname: []const u8) !void {
+pub fn launchUserspaceElf(fname: []const u8) !void {
     var entry: u32 = 0;
     {
         console.puts("Loading ");
