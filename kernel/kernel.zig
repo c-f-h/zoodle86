@@ -167,8 +167,10 @@ fn kernel_main() !void {
     const mem_base, const mem_size = findUsableMemoryWindow(false);
     const MiB = 1024 * 1024;
 
-    console.puts("Usable memory: base=");
+    console.puts("Usable memory: ");
     console.putHexU32(mem_base);
+    console.puts(" - ");
+    console.putHexU32(mem_base + mem_size);
     console.puts(", size=");
     console.putDecU32(@divTrunc(mem_size, MiB));
     console.puts(" MiB");
@@ -263,7 +265,7 @@ pub fn launchUserspaceElf(fname: []const u8) !void {
 
     console.puts("Switching to user mode...");
     console.newline();
-    enter_user_mode(entry, @intCast(user_data_mem.len - 4));
+    enter_user_mode(entry, @intCast(user_data_mem.len));
 }
 
 fn mountFs() !void {
