@@ -203,8 +203,7 @@ export fn _start() void {
     };
 }
 
-var user_code_mem: []u8 = undefined;
-var user_data_mem: []u8 = undefined;
+var user_mem: []u8 = undefined;
 
 const Task = task.Task;
 
@@ -252,12 +251,11 @@ fn kernel_main() !void {
     var fba = std.heap.FixedBufferAllocator.init(all_mem[0 .. 2 * MiB]);
     alloc = fba.allocator();
 
-    user_code_mem = all_mem[2 * MiB .. 4 * MiB];
-    user_data_mem = all_mem[4 * MiB ..];
+    user_mem = all_mem[2 * MiB ..];
 
     task.initTss();
 
-    current_task.init(user_code_mem, user_data_mem);
+    current_task.init(user_mem);
     current_task.set();
 
     try mountFs();
@@ -311,10 +309,7 @@ pub fn launchUserspaceElf(fname: []const u8) !void {
             const memsz = phdr.p_memsz;
             const filesz = phdr.p_filesz;
 
-            const dest: [*]u8 = if (phdr.p_flags & elf32.P_X != 0)
-                user_code_mem.ptr + phdr.p_vaddr
-            else
-                user_data_mem.ptr + phdr.p_vaddr;
+            const dest: [*]u8 = user_mem.ptr + phdr.p_vaddr;
 
             @memcpy(dest[0..filesz], file_start[0..filesz]);
             @memset(dest[filesz..memsz], 0);
@@ -337,7 +332,7 @@ pub fn launchUserspaceElf(fname: []const u8) !void {
 
     console.puts("Switching to user mode...");
     console.newline();
-    enter_user_mode(entry, @intCast(user_data_mem.len));
+    enter_user_mode(entry, @intCast(user_mem.len));
 }
 
 fn mountFs() !void {

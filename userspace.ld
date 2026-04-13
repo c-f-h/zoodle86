@@ -11,7 +11,7 @@ SECTIONS
         *(.text .text.*)
     }
 
-    . = 0;
+    . = ALIGN(4096);
 
     .rodata : ALIGN(16)
     {

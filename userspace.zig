@@ -18,7 +18,11 @@ pub fn exit(exitcode: u32) noreturn {
     unreachable;
 }
 
+pub fn write(fd: u32, buf: []const u8) u32 {
+    return syscall(1, fd, @intFromPtr(buf.ptr), buf.len);
+}
+
 pub export fn _start() void {
-    _ = syscall(1, 0, 0, 0);
+    _ = write(1, "Hello, world!\n");
     exit(0);
 }
