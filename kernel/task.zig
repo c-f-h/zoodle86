@@ -46,8 +46,14 @@ pub const Task = struct {
     gdt: [6]gdt.Descriptor = undefined,
     gdtr: gdt.GDTR = undefined,
 
-    pub fn init(task: *Task) void {
-        // initialize data members in code rather than via .data to reduce binary size
+    /// Configures the GDT for the kernel and the given user-mode code and data descriptors.
+    pub fn init(task: *Task, code: []u8, data: []u8) void {
+        const code_base = @intFromPtr(code.ptr);
+        const code_pages = @divExact(code.len, 4 * 1024);
+
+        const data_base = @intFromPtr(data.ptr);
+        const data_pages = @divExact(data.len, 4 * 1024);
+
         task.gdt = .{
             // 0: null descriptor - required
             @bitCast(@as(u64, 0)),
@@ -56,25 +62,14 @@ pub const Task = struct {
             // 2: kernel data segment
             gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = true, .executable = false }, gdt.Flags{}),
             // 3: user code segment
-            @bitCast(@as(u64, 0)),
+            gdt.makeSegment(code_base, @truncate(code_pages - 1), gdt.AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, gdt.Flags{}),
             // 4: user data segment
-            @bitCast(@as(u64, 0)),
+            gdt.makeSegment(data_base, @truncate(data_pages - 1), gdt.AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, gdt.Flags{}),
             // 5: task state segment (TSS) - describes entry point into kernel stack
             // access_byte 0x89 for system segment: present = 1, dpl = ring 0, S = 0 (system), type = 0x9 (32-bit TSS - available)
             gdt.makeSystemSegment(@intFromPtr(&tss), @sizeOf(gdt.Tss) - 1, 0x89, gdt.Flags{ .size_flag = false, .granularity = false }),
         };
-    }
-
-    /// Configures the user-mode code and data descriptors.
-    pub fn setUserSegments(task: *Task, code: []u8, data: []u8) void {
-        const code_base = @intFromPtr(code.ptr);
-        const code_pages = @divExact(code.len, 4 * 1024);
-
-        const data_base = @intFromPtr(data.ptr);
-        const data_pages = @divExact(data.len, 4 * 1024);
-
-        task.gdt[3] = gdt.makeSegment(code_base, @truncate(code_pages - 1), gdt.AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, gdt.Flags{});
-        task.gdt[4] = gdt.makeSegment(data_base, @truncate(data_pages - 1), gdt.AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, gdt.Flags{});
+        task.gdtr.init(&task.gdt);
     }
 
     pub fn getKernelStack(task: *Task) *align(KERNEL_STACK_SIZE) KernelStack {
@@ -84,10 +79,10 @@ pub const Task = struct {
 
     /// Loads the GDT and sets the task register for the current CPU.
     pub fn set(task: *Task) void {
-        task.gdtr.initAndLoad(&task.gdt);
-        gdt.ltr(tss_selector);
-
         // write *Task into the first word in the kernel stack
         @as(**Task, @ptrCast(task.getKernelStack())).* = task;
+
+        task.gdtr.load();
+        gdt.ltr(tss_selector);
     }
 };

@@ -102,10 +102,14 @@ pub const GDTR = packed struct {
     limit: u16,
     base: u32,
 
-    /// Set up this GDTR to point to the given GDT and load it into the current CPU.
-    pub fn initAndLoad(self: *GDTR, p_gdt: []Descriptor) void {
+    /// Initialize the GDTR to point to the given descriptor array.
+    pub fn init(self: *GDTR, p_gdt: []Descriptor) void {
         self.limit = @truncate(p_gdt.len * @sizeOf(Descriptor) - 1);
         self.base = @intFromPtr(p_gdt.ptr);
+    }
+
+    /// Load the GDT which this points to into the current CPU.
+    pub fn load(self: *GDTR) void {
         lgdt(@intFromPtr(self));
     }
 };

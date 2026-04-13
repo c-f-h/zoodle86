@@ -183,8 +183,7 @@ fn kernel_main() !void {
 
     task.initTss();
 
-    current_task.init();
-    current_task.setUserSegments(user_code_mem, user_data_mem);
+    current_task.init(user_code_mem, user_data_mem);
     current_task.set();
 
     try mountFs();
