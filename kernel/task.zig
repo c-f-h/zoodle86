@@ -1,12 +1,6 @@
 const gdt = @import("gdt.zig");
 const kernel = @import("kernel.zig");
 
-pub const kernel_code_selector: u16 = 1 << 3;
-pub const kernel_data_selector: u16 = 2 << 3;
-pub const user_code_selector: u16 = (3 << 3) | 3;
-pub const user_data_selector: u16 = (4 << 3) | 3;
-pub const tss_selector: u16 = 5 << 3;
-
 const KERNEL_STACK_SIZE = 4096;
 const KernelStack = [KERNEL_STACK_SIZE]u8;
 
@@ -20,7 +14,7 @@ var tss: gdt.Tss = undefined;
 /// Set up the global TSS for the single CPU. All tasks use the same TSS.
 pub fn initTss() void {
     const stack_top = @intFromPtr(&kernel_stack) + @sizeOf(KernelStack);
-    tss.init(kernel_data_selector, stack_top);
+    tss.init(kernel.kernel_data_selector, stack_top);
 }
 
 /// Given a pointer which points to within a kernel stack, finds the pointer to the associated *Task
@@ -83,6 +77,6 @@ pub const Task = struct {
         @as(**Task, @ptrCast(task.getKernelStack())).* = task;
 
         task.gdtr.load();
-        gdt.ltr(tss_selector);
+        gdt.ltr(kernel.tss_selector);
     }
 };

@@ -4,7 +4,8 @@ section .text
 extern _bss_start, _bss_end
 extern syscall_dispatch
 
-; entry point to initialize the interrupt handler
+; exports
+global zero_bss
 global interrupts_init
 global enter_user_mode
 
@@ -27,30 +28,29 @@ PIC_EOI         equ 0x20    ; end of interrupt
 PIC_READ_IRR    equ 0x0a    ; OCW3 irq ready next CMD read
 PIC_READ_ISR    equ 0x0b    ; OCW3 irq service next CMD read
 
-KEYBOARD_VECTOR equ 0x21    ; interrupt vector to which IRQ1 will be remapped
-SYSCALL_VECTOR equ 0x80
-NUM_IDT_ENTRIES equ SYSCALL_VECTOR + 1
 KEYBOARD_BUFFER_SIZE equ 16
 KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
 USER_CODE_SELECTOR equ (3 << 3) | 3
 USER_DATA_SELECTOR equ (4 << 3) | 3
 KERNEL_DATA_SELECTOR equ (2 << 3)
 
-interrupts_init:
+zero_bss:
     ; zero out the BSS section
+    pushad
     mov edi, _bss_start
     mov ecx, _bss_end
     sub ecx, edi
     xor eax, eax
     rep stosb
+    popad
+    ret
 
-    ; Build the IDT first so protected mode has a valid destination for IRQ1
-    ; before we unmask anything.
-    call setup_idt
+interrupts_init:
+    pushad
     call remap_pic
-    ;call enable_keyboard_irq1
     call unmask_keyboard_irq
     sti
+    popad
     ret
 
 ; Enters ring 3 by returning through an interrupt frame built on the current
@@ -76,40 +76,6 @@ enter_user_mode:
     push USER_CODE_SELECTOR ; user CS
     push ecx                ; user eip
     iretd
-
-setup_idt:
-    pushad
-
-    ; Zero the IDT entries. Any unexpected interrupt will still
-    ; fault, but only IRQ1 is unmasked for now.
-    mov edi, idt
-    xor eax, eax
-    mov ecx, (NUM_IDT_ENTRIES * 8) / 4
-    rep stosd
-
-    ; Install a 32-bit interrupt gate for IRQ1 after PIC remapping.
-    mov edi, idt + (KEYBOARD_VECTOR * 8)
-    mov eax, keyboard_isr
-    mov word [edi + 0], ax              ; handler low 16 bits
-    mov word [edi + 2], cs              ; code segment selector (GDT)
-    mov byte [edi + 4], 0               ; 0 (reserved)
-    mov byte [edi + 5], 10001110b       ; attrs: present, dpl = 0, storage segment = 0, gate type = 1110 = 32-bit
-    shr eax, 16
-    mov word [edi + 6], ax              ; handler high 16 bits (32 bit handler)
-
-    ; Install a 32-bit interrupt gate for int 0x80 callable from user mode.
-    mov edi, idt + (SYSCALL_VECTOR * 8)
-    mov eax, syscall_isr
-    mov word [edi + 0], ax
-    mov word [edi + 2], cs
-    mov byte [edi + 4], 0
-    mov byte [edi + 5], 11101110b       ; attrs: present, dpl = 3, storage segment = 0, gate type = 1110 = 32-bit
-    shr eax, 16
-    mov word [edi + 6], ax
-
-    lidt [idt_descriptor]
-    popad
-    ret
 
 remap_pic:
     push eax
@@ -158,52 +124,15 @@ unmask_keyboard_irq:
     pop eax
     ret
 
-enable_keyboard_irq1:
-    ; NB: this routine is not necessary to enable the keyboard interrupt
-    push eax
-    push ebx
-
-    ; Update the 8042 command byte so the keyboard controller actually raises
-    ; IRQ1 instead of only buffering scancodes for polling.
-    call wait_8042_input_empty
-    mov al, 0x20
-    out 0x64, al
-
-    call wait_8042_output_full
-    in al, 0x60
-    or al, 0x01
-    mov bl, al
-
-    call wait_8042_input_empty
-    mov al, 0x60
-    out 0x64, al
-
-    call wait_8042_input_empty
-    mov al, bl
-    out 0x60, al
-
-    pop ebx
-    pop eax
-    ret
-
-wait_8042_input_empty:
-    in al, 0x64                 ; keyboard controller read status
-    test al, 0x02               ; input buffer full? can only write to 0x60/0x64 once this is clear
-    jnz wait_8042_input_empty
-    ret
-
-wait_8042_output_full:
-    in al, 0x64                 ; keyboard controller read status
-    test al, 0x01               ; output buffer full? -> port 0x60 has data
-    jz wait_8042_output_full
-    ret
-
+global keyboard_isr
 keyboard_isr:
     push ds
     push es
     push fs
     push gs
     pushad
+
+    xchg bx, bx
 
     mov ax, KERNEL_DATA_SELECTOR
     mov ds, ax
@@ -243,6 +172,7 @@ keyboard_isr:
     pop ds
     iretd
 
+global syscall_isr
 syscall_isr:
     push ds
     push es
@@ -283,11 +213,3 @@ keyboard_overflow_count: resd 1
 keyboard_scancode_head: resb 1
 keyboard_scancode_tail: resb 1
 keyboard_scancode_buffer: resb KEYBOARD_BUFFER_SIZE
-
-alignb 8
-idt: resq NUM_IDT_ENTRIES
-
-section .data
-idt_descriptor:
-    dw (NUM_IDT_ENTRIES * 8) - 1  ; total IDT bytes minus 1
-    dd idt                        ; address of IDT

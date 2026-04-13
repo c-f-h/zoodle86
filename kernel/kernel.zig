@@ -5,14 +5,31 @@ const fs = @import("fs.zig");
 const task = @import("task.zig");
 const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
+const idt = @import("idt.zig");
 
 const std = @import("std");
 
 const VGA_ATTR: u8 = 0x07;
 
+// GDT selectors
+pub const kernel_code_selector: u16 = 1 << 3;
+pub const kernel_data_selector: u16 = 2 << 3;
+pub const user_code_selector: u16 = (3 << 3) | 3;
+pub const user_data_selector: u16 = (4 << 3) | 3;
+pub const tss_selector: u16 = 5 << 3;
+
+// interrupt vectors
+pub const KEYBOARD_VECTOR = 0x21;
+pub const SYSCALL_VECTOR = 0x80;
+
 // External interrupt setup from interrupts.asm
+extern fn zero_bss() void;
 extern fn interrupts_init() void;
 extern fn enter_user_mode(user_eip: u32, user_esp: u32) noreturn;
+
+// Interrupt handler addresses from asm
+extern fn keyboard_isr() void;
+extern fn syscall_isr() void;
 
 // Keyboard handler
 pub const KeyboardHandler = struct {
@@ -159,6 +176,14 @@ const Task = task.Task;
 var current_task: Task = undefined;
 
 fn kernel_main() !void {
+    zero_bss();
+
+    idt.init();
+    idt.set(KEYBOARD_VECTOR, idt.GateType.InterruptGate32, @intFromPtr(&keyboard_isr), kernel_code_selector, 0);
+    idt.set(SYSCALL_VECTOR, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), kernel_code_selector, 3);
+    idt.load();
+
+    // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
     interrupts_init();
 
     console.console_init(VGA_ATTR);
