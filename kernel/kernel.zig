@@ -19,15 +19,27 @@ pub const user_data_selector: u16 = (4 << 3) | 3;
 pub const tss_selector: u16 = 5 << 3;
 
 // interrupt vectors
-pub const KEYBOARD_VECTOR = 0x21;
-pub const SYSCALL_VECTOR = 0x80;
+pub const VECTOR_DOUBLE_FAULT = 0x08;
+pub const VECTOR_INVALID_TSS = 0x0A;
+pub const VECTOR_NOSEGMENT = 0x0B; // Segment Not Present
+pub const VECTOR_SS_FAULT = 0x0C; // Stack Segment Fault
+pub const VECTOR_GPF = 0x0D; // General Protection Fault
+pub const VECTOR_PAGEFAULT = 0x0E; // Page Fault
+pub const VECTOR_KEYBOARD = 0x21;
+pub const VECTOR_SYSCALL = 0x80;
 
 // External interrupt setup from interrupts.asm
 extern fn zero_bss() void;
 extern fn interrupts_init() void;
 extern fn enter_user_mode(user_eip: u32, user_esp: u32) noreturn;
 
-// Interrupt handler addresses from asm
+// Interrupt handler addresses from interrupts.asm
+extern fn exception_isr_int08() void;
+extern fn exception_isr_int0A() void;
+extern fn exception_isr_int0B() void;
+extern fn exception_isr_int0C() void;
+extern fn exception_isr_int0D() void;
+extern fn exception_isr_int0E() void;
 extern fn keyboard_isr() void;
 extern fn syscall_isr() void;
 
@@ -79,6 +91,29 @@ export fn syscall_dispatch(nr: u32, arg1: u32, arg2: u32, arg3: u32) callconv(.c
             kernel_reenter();
         },
         else => return 0xffff_ffff,
+    }
+}
+
+export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) noreturn {
+    const err_template = "Exception: 00, error code: 00000000. Source: cs=0000 eip=00000000";
+    var err: [err_template.len]u8 = undefined;
+    @memcpy(&err, err_template);
+    console.formatHexU(1, vector, err[11..13]);
+    console.formatHexU(4, errcode, err[27..35]);
+    console.formatHexU(2, cs, err[48..52]);
+    console.formatHexU(4, eip, err[57..65]);
+
+    // The original cs tells us whether the fault happened in userspace (ring 3); in that
+    // case we should terminate only the userspace program and continue.
+    if ((cs & 3) == 3) {
+        console.setAttr(0x0f);
+        console.puts(&err);
+        console.setAttr(VGA_ATTR);
+        console.puts("\nTerminating program.\n");
+        kernel_reenter();
+    } else {
+        // The fault occurred in the kernel; panic!
+        @panic(&err);
     }
 }
 
@@ -178,10 +213,22 @@ var current_task: Task = undefined;
 fn kernel_main() !void {
     zero_bss();
 
-    idt.init();
-    idt.set(KEYBOARD_VECTOR, idt.GateType.InterruptGate32, @intFromPtr(&keyboard_isr), kernel_code_selector, 0);
-    idt.set(SYSCALL_VECTOR, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), kernel_code_selector, 3);
-    idt.load();
+    {
+        const cs = kernel_code_selector;
+        idt.init();
+
+        // exception handlers
+        idt.set(VECTOR_DOUBLE_FAULT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int08), cs, 0);
+        idt.set(VECTOR_INVALID_TSS, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0A), cs, 0);
+        idt.set(VECTOR_NOSEGMENT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0B), cs, 0);
+        idt.set(VECTOR_SS_FAULT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0C), cs, 0);
+        idt.set(VECTOR_GPF, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0D), cs, 0);
+        idt.set(VECTOR_PAGEFAULT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0E), cs, 0);
+
+        idt.set(VECTOR_KEYBOARD, idt.GateType.InterruptGate32, @intFromPtr(&keyboard_isr), cs, 0);
+        idt.set(VECTOR_SYSCALL, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), cs, 3);
+        idt.load();
+    }
 
     // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
     interrupts_init();

@@ -2,7 +2,7 @@
 section .text
 
 extern _bss_start, _bss_end
-extern syscall_dispatch
+extern syscall_dispatch, exception_handler
 
 ; exports
 global zero_bss
@@ -128,8 +128,6 @@ keyboard_isr:
     push es
     pushad
 
-    xchg bx, bx
-
     mov ax, KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
@@ -177,10 +175,10 @@ syscall_isr:
     ; restore eax from pushad (pushes all 8 main registers)
     mov eax, dword [esp + 28]
 
-    push edx
-    push ecx
-    push ebx
-    push eax
+    push edx    ; arg3
+    push ecx    ; arg2
+    push ebx    ; arg1
+    push eax    ; nr
     call syscall_dispatch
     add esp, 16
 
@@ -191,6 +189,36 @@ syscall_isr:
     pop es
     pop ds
     iretd
+
+%macro exception_isr 1
+global exception_isr_int%1
+exception_isr_int%1:
+    mov ebx, 0x%1
+    jmp general_exception_handler
+%endmacro
+
+exception_isr 08
+exception_isr 0A
+exception_isr 0B
+exception_isr 0C
+exception_isr 0D
+exception_isr 0E
+
+general_exception_handler:
+    ; We don't worry about returning from an exception for now: we either
+    ; panic or terminate the user program. So we can clobber everything.
+    mov ax, KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+
+    ; reusing arguments already on the stack:
+    ; - original CS
+    ; - original EIP
+    ; - error code
+    push ebx        ; interrupt vector
+    call exception_handler
+    ; stack here: interrupt vector, error code, eip, cs, eflags, [esp, ss]
+    jmp $   ; we should never reach this
 
 section .bss
 
