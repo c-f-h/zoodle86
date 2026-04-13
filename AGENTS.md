@@ -12,9 +12,11 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/shell.zig`: command loop and table-driven shell command dispatch.
 - `kernel/console.zig`, `kernel/vgatext.zig`: VGA text-mode output.
 - `kernel/keyboard.zig`, `kernel/readline.zig`: keyboard input and line editing.
-- `kernel/app.zig`, `kernel/app_keylog.zig`: app state and the keylog app.
+- `kernel/app_keylog.zig`: the keylog app state and implementation.
 - `kernel/fs.zig`, `kernel/fs_defs.zig`: fixed-layout extent-based filesystem for persistent whole-file storage.
 - `kernel/ide.zig`, `kernel/io.zig`: low-level IDE and port I/O helpers.
+- `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
+- `kernel/task.zig`: Task management, GDT initialization, and kernel/user-mode segment setup.
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `extract_fs.zig`, `compile_fs.zig`: tools for extracting files from a file system and compiling a file system image
 - `userspace.zig`, `userspace.ld`: freestanding userspace ELF binary and linker script that gets copied into the disk filesystem as `userspace.elf`.
@@ -48,7 +50,11 @@ The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stag
 
 The disk image uses a fixed layout: sector 0 is the boot sector, sectors 1-63 are reserved for stage 2, and the custom filesystem starts at sector 33. The filesystem uses a one-sector superblock, an eight-sector flat root directory, and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file.
 
-`kernel/kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `kernel/shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
+`kernel/kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `kernel/shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `run <executable>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
+
+Each `Task` owns a local GDT with segments for kernel code/data and user-mode code/data regions. The GDT also contains a TSS (Task State Segment) descriptor that defines the kernel stack entry point. All tasks currently share a single kernel stack; the current task pointer is stored in the first word of the stack.
+
+The kernel can execute userspace ELF binaries by loading their code and data segments, which are mapped into GDT selectors 0x18 and 0x20, respectively, and then invoking a mode switch into ring 3. Usermode supports syscalls via int 0x80 with syscall number in eax and further arguments in ebx, ecx, and edx.
 
 ## Style Guidelines
 
