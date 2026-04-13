@@ -97,6 +97,16 @@ pub fn puts(s: []const u8) void {
     }
 }
 
+pub fn formatHexU(comptime bytes: u8, value: @Int(.unsigned, 8 * bytes), out: *[2 * bytes]u8) void {
+    const hex = "0123456789ABCDEF";
+    var shift: i8 = 8 * bytes - 4;
+    var ofs: u8 = 0;
+    while (shift >= 0) : (shift -= 4) {
+        out.*[ofs] = hex[(value >> @intCast(shift)) & 0x0F];
+        ofs += 1;
+    }
+}
+
 pub fn putHexU8(value: u8) void {
     const hex = "0123456789ABCDEF";
     putch(hex[(value >> 4) & 0x0F]);
@@ -104,21 +114,15 @@ pub fn putHexU8(value: u8) void {
 }
 
 pub fn putHexU16(value: u16) void {
-    const hex = "0123456789ABCDEF";
-    var shift: u4 = 12;
-    while (true) {
-        putch(hex[(value >> shift) & 0x0F]);
-        if (shift == 0) break;
-        shift -= 4;
-    }
+    var str: [4]u8 = undefined;
+    formatHexU(2, value, &str);
+    puts(&str);
 }
 
 pub fn putHexU32(value: u32) void {
-    const hex = "0123456789ABCDEF";
-    var shift: i6 = 28;
-    while (shift >= 0) : (shift -= 4) {
-        putch(hex[(value >> @intCast(shift)) & 0x0F]);
-    }
+    var str: [8]u8 = undefined;
+    formatHexU(4, value, &str);
+    puts(&str);
 }
 
 pub fn putHexU64(value: u64) void {
