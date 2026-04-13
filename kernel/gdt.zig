@@ -85,6 +85,13 @@ pub const Tss = extern struct {
     _reserved10: u16 = 0,
     trap: u16 = 0,
     iomap_base: u16 = @sizeOf(Tss),
+
+    pub fn init(tss: *Tss, ss: u16, stack_top: usize) void {
+        tss.* = .{};
+        tss.esp0 = stack_top;
+        tss.ss0 = ss;
+        tss.iomap_base = @sizeOf(Tss);
+    }
 };
 
 comptime {

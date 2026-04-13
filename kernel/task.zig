@@ -15,6 +15,14 @@ const KernelStack = [KERNEL_STACK_SIZE]u8;
 // The first word in the kernel stack stores a pointer to the current Task.
 var kernel_stack: KernelStack align(KERNEL_STACK_SIZE) = undefined;
 
+var tss: gdt.Tss = undefined;
+
+/// Set up the global TSS for the single CPU. All tasks use the same TSS.
+pub fn initTss() void {
+    const stack_top = @intFromPtr(&kernel_stack) + @sizeOf(KernelStack);
+    tss.init(kernel_data_selector, stack_top);
+}
+
 /// Given a pointer which points to within a kernel stack, finds the pointer to the associated *Task
 pub fn getPointerToTaskPtr(sp: usize) **Task {
     const Kst = @TypeOf(kernel_stack);
@@ -35,13 +43,11 @@ pub inline fn getCurrentTask() *Task {
 }
 
 pub const Task = struct {
-    tss: gdt.Tss = undefined,
     gdt: [6]gdt.Descriptor = undefined,
     gdtr: gdt.GDTR = undefined,
 
     pub fn init(task: *Task) void {
         // initialize data members in code rather than via .data to reduce binary size
-        task.tss = .{};
         task.gdt = .{
             // 0: null descriptor - required
             @bitCast(@as(u64, 0)),
@@ -54,10 +60,9 @@ pub const Task = struct {
             // 4: user data segment
             @bitCast(@as(u64, 0)),
             // 5: task state segment (TSS) - describes entry point into kernel stack
-            @bitCast(@as(u64, 0)),
+            // access_byte 0x89 for system segment: present = 1, dpl = ring 0, S = 0 (system), type = 0x9 (32-bit TSS - available)
+            gdt.makeSystemSegment(@intFromPtr(&tss), @sizeOf(gdt.Tss) - 1, 0x89, gdt.Flags{ .size_flag = false, .granularity = false }),
         };
-
-        task.initTss();
     }
 
     /// Configures the user-mode code and data descriptors.
@@ -70,18 +75,6 @@ pub const Task = struct {
 
         task.gdt[3] = gdt.makeSegment(code_base, @truncate(code_pages - 1), gdt.AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, gdt.Flags{});
         task.gdt[4] = gdt.makeSegment(data_base, @truncate(data_pages - 1), gdt.AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, gdt.Flags{});
-    }
-
-    /// Initializes the task state segment used when ring-3 code traps into the kernel.
-    fn initTss(task: *Task) void {
-        task.tss = .{};
-        const stack_bot = @intFromPtr(&kernel_stack);
-        const stack_top = stack_bot + @sizeOf(KernelStack);
-        task.tss.esp0 = stack_top;
-        task.tss.ss0 = kernel_data_selector;
-        task.tss.iomap_base = @sizeOf(gdt.Tss);
-        // access_byte 0x89 for system segment: present = 1, dpl = ring 0, S = 0 (system), type = 0x9 (32-bit TSS - available)
-        task.gdt[5] = gdt.makeSystemSegment(@intFromPtr(&task.tss), @sizeOf(gdt.Tss) - 1, 0x89, gdt.Flags{ .size_flag = false, .granularity = false });
     }
 
     pub fn getKernelStack(task: *Task) *align(KERNEL_STACK_SIZE) KernelStack {

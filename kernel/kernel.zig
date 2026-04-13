@@ -181,6 +181,8 @@ fn kernel_main() !void {
     user_code_mem = all_mem[2 * MiB .. 4 * MiB];
     user_data_mem = all_mem[4 * MiB ..];
 
+    task.initTss();
+
     current_task.init();
     current_task.setUserSegments(user_code_mem, user_data_mem);
     current_task.set();
