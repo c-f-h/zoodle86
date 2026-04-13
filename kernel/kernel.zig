@@ -75,19 +75,22 @@ export fn consume_key_event(event: *const keyboard.KeyEvent) void {
     }
 }
 
-/// Dispatches the minimal int 0x80 syscall ABI used by the user-mode test stub.
-export fn syscall_dispatch(nr: u32, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
-    _ = arg1;
-    _ = arg2;
-    _ = arg3;
+fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
+    if (fd != 1)
+        return 0;
 
+    const data = task.getCurrentTask().getUserMem(ofs, count);
+    console.puts(data);
+    return count;
+}
+
+/// Dispatches the int 0x80 syscall ABI invoked by user-mode executables.
+export fn syscall_dispatch(nr: u32, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
     switch (nr) {
-        1 => {
-            console.puts("hello from syscall int 0x80");
-            console.newline();
-            return 42;
+        1 => { // write
+            return sys_write(arg1, arg2, arg3);
         },
-        60 => {
+        60 => { // exit
             kernel_reenter();
         },
         else => return 0xffff_ffff,

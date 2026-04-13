@@ -39,11 +39,14 @@ pub inline fn getCurrentTask() *Task {
 pub const Task = struct {
     gdt: [6]gdt.Descriptor = undefined,
     gdtr: gdt.GDTR = undefined,
+    user_mem: []u8 = undefined, // slice of user memory (starting at user_cs:0 = user_ds:0) in flat addressing
 
     /// Configures the GDT for the kernel and the given user-mode code and data descriptors.
     pub fn init(task: *Task, mem: []u8) void {
         const mem_base = @intFromPtr(mem.ptr);
         const mem_pages = @divExact(mem.len, 4 * 1024);
+
+        task.user_mem = mem;
 
         task.gdt = .{
             // 0: null descriptor - required
@@ -75,5 +78,10 @@ pub const Task = struct {
 
         task.gdtr.load();
         gdt.ltr(kernel.tss_selector);
+    }
+
+    /// Access a slice of memory within the task's user memory segment.
+    pub fn getUserMem(task: *Task, ofs: u32, len: u32) []u8 {
+        return task.user_mem[ofs .. ofs + len];
     }
 };
