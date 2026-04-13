@@ -55,8 +55,8 @@ esp = DF3C (at syscall 60 enter, standard iretd stack frame)
   21            ; eip (points directly after int 0x80 instruction in userspace code)
   1B            ; cs (user code seg)
   0202          ; eflags (IF + IO trap (unused))
-  01aefff0      ; esp
-  23            ; ss (user data seg)
+  01aefff0      ; esp                   (only on privilege level change)
+  23            ; ss (user data seg)    (only on privilege level change)
 
 esp = df50
   

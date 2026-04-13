@@ -193,8 +193,6 @@ protected_mode_entry:
     mov ax, DATA_SEL
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
     mov ss, ax
     mov esp, 0x90000
     cld

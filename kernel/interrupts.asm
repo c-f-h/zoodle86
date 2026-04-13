@@ -67,8 +67,6 @@ enter_user_mode:
     mov ax, USER_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
 
     push USER_DATA_SELECTOR ; user SS
     push edx                ; user esp
@@ -128,8 +126,6 @@ global keyboard_isr
 keyboard_isr:
     push ds
     push es
-    push fs
-    push gs
     pushad
 
     xchg bx, bx
@@ -137,8 +133,6 @@ keyboard_isr:
     mov ax, KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
 
     ; Reading port 0x60 both acknowledges the keyboard controller and fetches the raw
     ; scancode byte that triggered IRQ1.
@@ -166,8 +160,6 @@ keyboard_isr:
     ; NB: for IRQs >= 8, we have to send EOI to both PICs
 
     popad
-    pop gs
-    pop fs
     pop es
     pop ds
     iretd
@@ -176,15 +168,11 @@ global syscall_isr
 syscall_isr:
     push ds
     push es
-    push fs
-    push gs
     pushad
 
     mov ax, KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
 
     ; restore eax from pushad (pushes all 8 main registers)
     mov eax, dword [esp + 28]
@@ -200,8 +188,6 @@ syscall_isr:
     mov [esp + 28], eax
 
     popad
-    pop gs
-    pop fs
     pop es
     pop ds
     iretd
