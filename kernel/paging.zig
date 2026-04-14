@@ -34,34 +34,36 @@ pub const PTE = packed struct {
 pub const PageTable = [1024]PTE; // 4 KiB - covers 4 MiB of RAM
 pub const PageDirectory = [1024]PDE; // 4 KiB - covers the whole 4 GiB address space
 
-/// Static 4KB-aligned page directory
-var page_directory: PageDirectory align(4096) = undefined;
+/// Enable paging. page_dir_phys is the physical address of the Page Directory
+pub inline fn enable(page_dir_phys: u32) void {
+    asm volatile (
+        \\ mov %[pdir], %%cr3     // enable paging
+        \\ mov %%cr0, %%eax
+        \\ or $0x80000000, %%eax
+        \\ mov %%eax, %%cr0
+        :
+        : [pdir] "r" (page_dir_phys),
+        : .{ .eax = true });
+}
+
+const VirtualAddress = packed struct { ofs: u12, page: u10, table: u10 };
 
 /// 32 static 4KB-aligned page tables covering ~128 MB
-var page_tables: [32]PageTable align(4096) = undefined; // 128 KiB
+//var page_tables: [32]PageTable align(4096) = undefined; // 128 KiB
 
 /// Initialize identity mapping: all physical addresses map 1:1 to virtual addresses.
 /// max_addr is the highest physical address to map (in bytes).
 /// Returns the physical address of the page directory.
-pub fn initIdentityPaging(max_addr: u32) u32 {
-    const console = @import("console.zig");
+pub fn initIdentityPaging(page_dir: *PageDirectory, tables: *[32]PageTable, max_addr: u32) void {
     const page_dir_size = 4 * 1024 * 1024; // 4MiB covered per page directory
     // number of tables required to cover the desired physical memory space
-    const num_tables = @min((max_addr + page_dir_size - 1) / page_dir_size, page_tables.len);
-
-    console.puts("  Paging: max=0x");
-    console.putHexU32(max_addr);
-    console.puts(" tables=");
-    console.putDecU32(num_tables);
-    console.puts("/32 (");
-    console.putDecU32(num_tables * 4);
-    console.puts("MB)\n");
+    const num_tables: u32 = @min((max_addr + page_dir_size - 1) / page_dir_size, tables.len);
 
     // Initialize page directory: each entry points to a page table
     for (0..1024) |i| {
         if (i < num_tables) {
-            const pt_phys = @intFromPtr(&page_tables[i]);
-            page_directory[i] = PDE{
+            const pt_phys = @intFromPtr(&tables[i]); // physical page table address
+            page_dir[i] = PDE{
                 .present = true,
                 .writable = true,
                 .user = false,
@@ -71,8 +73,11 @@ pub fn initIdentityPaging(max_addr: u32) u32 {
                 .page_size = false,
                 .page_table_addr = @truncate(pt_phys >> 12),
             };
+        } else if (i >= 3 * 256 and i < 3 * 256 + num_tables) {
+            // second mapping from 0xC0000000 (virtual) -> 0 (physical)
+            page_dir[i] = page_dir[i - 3 * 256];
         } else {
-            page_directory[i] = @bitCast(@as(u32, 0));
+            page_dir[i] = @bitCast(@as(u32, 0));
         }
     }
 
@@ -83,7 +88,7 @@ pub fn initIdentityPaging(max_addr: u32) u32 {
             const phys_addr = page_index * 4096;
 
             if (phys_addr < max_addr) {
-                page_tables[t][p] = PTE{
+                tables[t][p] = PTE{
                     .present = true,
                     .writable = true,
                     .user = false,
@@ -95,38 +100,35 @@ pub fn initIdentityPaging(max_addr: u32) u32 {
                     .page_addr = @truncate(phys_addr >> 12),
                 };
             } else {
-                page_tables[t][p] = @bitCast(@as(u32, 0));
+                tables[t][p] = @bitCast(@as(u32, 0));
             }
         }
     }
-
-    return @intFromPtr(&page_directory);
 }
 
 /// Mark a physical memory range as user-accessible by setting the user bit (U/S) in both
 /// page directory entries and page table entries.
-pub fn markUserAccessible(start_addr: u32, end_addr: u32) void {
+pub fn markUserAccessible(page_dir: *PageDirectory, tables: *[32]PageTable, start_addr: u32, end_addr: u32) void {
     const start_page = start_addr >> 12;
     const end_page = (end_addr + 4095) >> 12;
 
-    var marked_pde_indices: [32]bool = undefined;
-    @memset(&marked_pde_indices, false);
+    var marked_pde_indices = [1]bool{false} ** 32;
 
     // Mark PTEs and track which PDEs we need to mark
     for (start_page..end_page) |page_index| {
         const table_index = page_index / 1024;
         const entry_index = page_index % 1024;
 
-        if (table_index < page_tables.len) {
-            page_tables[table_index][entry_index].user = true;
+        if (table_index < tables.len) {
+            tables[table_index][entry_index].user = true;
             marked_pde_indices[table_index] = true;
         }
     }
 
     // Mark the corresponding PDEs as user-accessible
-    for (0..page_tables.len) |table_index| {
+    for (0..tables.len) |table_index| {
         if (marked_pde_indices[table_index]) {
-            page_directory[table_index].user = true;
+            page_dir[table_index].user = true;
         }
     }
 }

@@ -194,7 +194,7 @@ protected_mode_entry:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov esp, 0x90000
+    mov esp, 0x90000    ; stack lives at end of conventional memory area (480k)
     cld
 
     ; Required before any SSE/xmm usage

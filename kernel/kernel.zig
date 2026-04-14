@@ -252,19 +252,13 @@ fn kernel_main() !void {
     // Initialize and enable paging (identity mapping)
     // Note: we use a fixed upper limit to ensure all low memory is mapped
     const max_physical = mem_base + mem_size;
-    const page_dir_phys = paging.initIdentityPaging(max_physical);
+    const page_dir_phys: u32 = 0x4_0000;
+    const page_tables = @as(*[32]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
+    paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
     // Mark user memory region as user-accessible (starting at 2MiB)
     const user_mem_start = mem_base + (2 * MiB);
-    paging.markUserAccessible(user_mem_start, max_physical);
-
-    asm volatile (
-        \\ mov %[pdir], %%cr3     // enable paging
-        \\ mov %%cr0, %%eax
-        \\ or $0x80000000, %%eax
-        \\ mov %%eax, %%cr0
-        :
-        : [pdir] "r" (page_dir_phys),
-        : .{ .eax = true });
+    paging.markUserAccessible(@ptrFromInt(page_dir_phys), page_tables, user_mem_start, max_physical);
+    paging.enable(page_dir_phys);
     console.puts("Paging enabled\n");
 
     console.puts("Usable memory: ");
