@@ -40,11 +40,20 @@ pub const Task = struct {
     gdt: [6]gdt.Descriptor = undefined,
     gdtr: gdt.GDTR = undefined,
     user_mem: []u8 = undefined, // slice of user memory (starting at user_cs:0 = user_ds:0) in flat addressing
+    stack_bottom: u32 = undefined, // virtual address of the beginning of the stack
+    stack_top: u32 = undefined, // virtual address of the end of the stack
+    heap_top: u32 = undefined, // virtual address of the end of the heap (page-aligned; can grow upwards)
+
+    // Memory layout: code - rodata - data - bss - stack - heap
 
     /// Configures the GDT for the kernel and the given user-mode code and data descriptors.
     pub fn init(task: *Task, mem: []u8) void {
         const mem_base = @intFromPtr(mem.ptr);
         const mem_pages = @divExact(mem.len, 4 * 1024);
+
+        if (mem.len < task.heap_top) {
+            @panic("Insufficient memory allocated for userspace program");
+        }
 
         task.user_mem = mem;
 

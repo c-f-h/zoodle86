@@ -210,7 +210,14 @@ var user_mem: []u8 = undefined;
 
 const Task = task.Task;
 
-var current_task: Task = undefined;
+pub var current_task: Task = undefined;
+
+const LINE = 0x10;
+const PAGE = 0x1000;
+
+pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
+    return (p + size - 1) & (~(size - 1));
+}
 
 fn kernel_main() !void {
     zero_bss();
@@ -258,9 +265,6 @@ fn kernel_main() !void {
 
     task.initTss();
 
-    current_task.init(user_mem);
-    current_task.set();
-
     try mountFs();
     //try launchUserspaceElf("userspace.elf");
     try shell.run(alloc, &disk_fs);
@@ -288,7 +292,7 @@ fn kernel_reenter() noreturn {
     };
 }
 
-pub fn launchUserspaceElf(fname: []const u8) !void {
+pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     var entry: u32 = 0;
     {
         console.puts("Loading ");
@@ -298,9 +302,24 @@ pub fn launchUserspaceElf(fname: []const u8) !void {
         defer alloc.free(elf_data);
 
         const ehdr: *elf32.Elf32_Ehdr = @ptrCast(@alignCast(elf_data.ptr));
+
+        // compute image extents and append stack and heap
+        const vstart, const vend = ehdr.computeImageExtents(elf_data.ptr);
         entry = ehdr.e_entry;
-        console.puts("Entry point: 0x");
+        ptask.stack_bottom = roundToNext(vend, LINE);
+        ptask.stack_top = ptask.stack_bottom + 16 * 1024; // 16 kib stack space
+        ptask.heap_top = roundToNext(ptask.stack_top, PAGE);
+
+        console.puts("Extents: ");
+        console.putHexU32(vstart);
+        console.puts(" - ");
+        console.putHexU32(vend);
+        console.puts(", entry point: 0x");
         console.putHexU32(entry);
+        console.puts("\nStack:   ");
+        console.putHexU32(ptask.stack_bottom);
+        console.puts(" - ");
+        console.putHexU32(ptask.stack_top);
         console.newline();
 
         var i: u32 = 0;
@@ -333,9 +352,18 @@ pub fn launchUserspaceElf(fname: []const u8) !void {
         // Here we can already free the kernel allocation with the file contents
     }
 
-    console.puts("Switching to user mode...");
-    console.newline();
-    enter_user_mode(entry, @intCast(user_mem.len));
+    // TODO: keep track of allocated user memory
+    const task_mem = user_mem[0..current_task.heap_top];
+    current_task.init(task_mem);
+    current_task.set();
+
+    console.puts("Allocated linear memory block: ");
+    console.putHexU32(@intFromPtr(task_mem.ptr));
+    console.puts(" - ");
+    console.putHexU32(@intFromPtr(task_mem.ptr) + task_mem.len);
+
+    console.puts("\nSwitching to user mode...\n");
+    enter_user_mode(entry, ptask.stack_top);
 }
 
 fn mountFs() !void {

@@ -155,7 +155,7 @@ fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     if (args.next()) |fname| {
-        try kernel.launchUserspaceElf(fname);
+        try kernel.launchUserspaceElf(fname, &kernel.current_task);
     } else {
         console.puts("Usage: run <executable>\n");
     }

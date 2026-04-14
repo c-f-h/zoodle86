@@ -52,9 +52,17 @@ The disk image uses a fixed layout: sector 0 is the boot sector, sectors 1-63 ar
 
 `kernel/kernel.zig` initializes the interrupt layer, sets up the VGA text console, builds a fixed-buffer allocator from the largest usable RAM region reported by E820, mounts the filesystem, and then starts the shell. `kernel/shell.zig` owns the table-driven command loop and dispatches built-in commands including `ls`, `cat <name>`, `write <name>`, `rm <name>`, `mv <old> <new>`, `run <executable>`, `mkfs`, `keylog`, `dumpmem <hex-address>`, and `shutdown`.
 
-Each `Task` owns a local GDT with segments for kernel code/data and user-mode code/data regions. The GDT also contains a TSS (Task State Segment) descriptor that defines the kernel stack entry point. All tasks currently share a single kernel stack; the current task pointer is stored in the first word of the stack.
+### Task Memory Handling
 
-The kernel can execute userspace ELF binaries by loading their code and data segments, which are mapped into GDT selectors 0x18 and 0x20, respectively, and then invoking a mode switch into ring 3. Usermode supports syscalls via int 0x80 with syscall number in eax and further arguments in ebx, ecx, and edx.
+Memory is partitioned into two main regions: a kernel allocator region (first 2 MiB) and a user memory region (remainder). User programs are loaded into and execute within flat-addressed segments backed by the user memory region, while kernel-mode code and data operate in the kernel memory region. The kernel uses a fixed-buffer allocator for all kernel allocations, while all user programs share a flat linear address space starting at 0.
+
+Each `Task` struct manages a private user-memory slice and tracks stack/heap boundaries. The task owns a local GDT (6 descriptors) with segments for kernel code/data and user-mode code/data regions. The GDT also contains a TSS (Task State Segment) descriptor that defines the kernel stack entry point for ring transitions. All tasks currently share a single global kernel stack (4096 bytes, power-of-2 aligned) because the system runs on a single CPU core; multithreading would require per-core kernel stacks.
+
+The current task pointer is stored in the first word of the kernel stack.
+
+The kernel can execute userspace ELF binaries by loading their code and data segments into the user memory region, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). The kernel then jumps to the image's entry point via `enter_user_mode()`.
+
+Usermode supports syscalls via int 0x80 with syscall number in eax and further arguments in ebx, ecx, and edx; `syscall_dispatch()` routes syscalls back to kernel functions like `sys_write()`.
 
 ## Style Guidelines
 
