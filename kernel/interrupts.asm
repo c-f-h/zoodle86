@@ -2,7 +2,7 @@
 section .text
 
 extern _bss_start, _bss_end
-extern syscall_dispatch, exception_handler
+extern syscall_dispatch, exception_handler, page_fault_handler
 
 ; exports
 global zero_bss
@@ -219,6 +219,21 @@ general_exception_handler:
     call exception_handler
     ; stack here: interrupt vector, error code, eip, cs, eflags, [esp, ss]
     jmp $   ; we should never reach this
+
+global page_fault_isr
+page_fault_isr:
+    mov ax, KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+
+    ; reusing arguments already on the stack:
+    ; - original CS
+    ; - original EIP
+    ; - error code
+    push 0x0e ; page fault
+    call page_fault_handler
+    jmp $
+
 
 section .bss
 

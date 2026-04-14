@@ -6,6 +6,7 @@ const task = @import("task.zig");
 const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
 const idt = @import("idt.zig");
+const paging = @import("paging.zig");
 
 const std = @import("std");
 
@@ -39,7 +40,7 @@ extern fn exception_isr_int0A() void;
 extern fn exception_isr_int0B() void;
 extern fn exception_isr_int0C() void;
 extern fn exception_isr_int0D() void;
-extern fn exception_isr_int0E() void;
+extern fn page_fault_isr() void;
 extern fn keyboard_isr() void;
 extern fn syscall_isr() void;
 
@@ -232,7 +233,7 @@ fn kernel_main() !void {
         idt.set(VECTOR_NOSEGMENT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0B), cs, 0);
         idt.set(VECTOR_SS_FAULT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0C), cs, 0);
         idt.set(VECTOR_GPF, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0D), cs, 0);
-        idt.set(VECTOR_PAGEFAULT, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0E), cs, 0);
+        idt.set(VECTOR_PAGEFAULT, idt.GateType.TrapGate32, @intFromPtr(&page_fault_isr), cs, 0);
 
         idt.set(VECTOR_KEYBOARD, idt.GateType.InterruptGate32, @intFromPtr(&keyboard_isr), cs, 0);
         idt.set(VECTOR_SYSCALL, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), cs, 3);
@@ -248,6 +249,24 @@ fn kernel_main() !void {
     const mem_base, const mem_size = findUsableMemoryWindow(false);
     const MiB = 1024 * 1024;
 
+    // Initialize and enable paging (identity mapping)
+    // Note: we use a fixed upper limit to ensure all low memory is mapped
+    const max_physical = mem_base + mem_size;
+    const page_dir_phys = paging.initIdentityPaging(max_physical);
+    // Mark user memory region as user-accessible (starting at 2MiB)
+    const user_mem_start = mem_base + (2 * MiB);
+    paging.markUserAccessible(user_mem_start, max_physical);
+
+    asm volatile (
+        \\ mov %[pdir], %%cr3     // enable paging
+        \\ mov %%cr0, %%eax
+        \\ or $0x80000000, %%eax
+        \\ mov %%eax, %%cr0
+        :
+        : [pdir] "r" (page_dir_phys),
+        : .{ .eax = true });
+    console.puts("Paging enabled\n");
+
     console.puts("Usable memory: ");
     console.putHexU32(mem_base);
     console.puts(" - ");
@@ -255,6 +274,7 @@ fn kernel_main() !void {
     console.puts(", size=");
     console.putDecU32(@divTrunc(mem_size, MiB));
     console.puts(" MiB");
+    console.newline();
     console.newline();
 
     var all_mem: []u8 = @as([*]u8, @ptrFromInt(mem_base))[0..mem_size];
@@ -266,7 +286,7 @@ fn kernel_main() !void {
     task.initTss();
 
     try mountFs();
-    //try launchUserspaceElf("userspace.elf");
+    //try launchUserspaceElf("userspace.elf", &current_task);
     try shell.run(alloc, &disk_fs);
 }
 
