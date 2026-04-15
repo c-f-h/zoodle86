@@ -200,8 +200,31 @@ fn panicOnError(err: anyerror) noreturn {
     });
 }
 
-/// Kernel entry point
-export fn _start() void {
+/// Kernel entry point.
+export fn _start() noreturn {
+    // This function is initially loaded and invoked at 0x8000 + ofs, even though the code is positioned at
+    // 0xC0008000 by the linker script. The initial paging code below does not depend on any data segment
+    // addresses or long jumps; therefore it is position independent. Its purpose is to set up paging:
+    // the physical lower 1MiB of memory is mapped both at 0x0 virtual and at 0xC0000000 virtual.
+    // Then, via assembly, we add 0xC0000000 to esp (which is essentially a no-op) and force a non-relative
+    // jump to an address beyond 0xC0000000 by loading it into eax and jumping to it.
+    // In other words, we also add 0xC0000000 to eip.
+    //
+    // All this achieves that the kernel then runs in the higher half, as intended by the linker script.
+    // We couldn't load the kernel there directly because paging has to be set up first.
+    {
+        const max_physical = 0x10_0000; // for now map only the low 1MiB
+        const page_tables = @as(*[32]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
+        paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
+        paging.enable(page_dir_phys);
+        asm volatile (
+            \\ add $0xC0000000, %%esp
+            \\ leal higher_half_jump_target, %%eax
+            \\ jmp *%%eax
+            \\ higher_half_jump_target:
+            ::: .{ .eax = true });
+    }
+
     kernel_main() catch |err| {
         panicOnError(err);
     };
@@ -215,6 +238,11 @@ pub var current_task: Task = undefined;
 
 const LINE = 0x10;
 const PAGE = 0x1000;
+
+// Preliminary physical memory location for initial Page Directory.
+// This is within conventional memory, with 256k of space until 0x80000.
+// The initial identity Page Table Entries for the first 1 MiB of RAM are stored immediately afterwards.
+const page_dir_phys: u32 = 0x4_0000;
 
 pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
     return (p + size - 1) & (~(size - 1));
@@ -252,7 +280,6 @@ fn kernel_main() !void {
     // Initialize and enable paging (identity mapping)
     // Note: we use a fixed upper limit to ensure all low memory is mapped
     const max_physical = mem_base + mem_size;
-    const page_dir_phys: u32 = 0x4_0000;
     const page_tables = @as(*[32]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
     paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
     // Mark user memory region as user-accessible (starting at 2MiB)
