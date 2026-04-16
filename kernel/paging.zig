@@ -1,3 +1,5 @@
+const pageallocator = @import("pageallocator.zig");
+
 // Identity-mapped paging module.
 // Provides minimal static page directory and pre-allocated page tables for identity mapping.
 // 32 page tables cover ~128MB of physical RAM.
@@ -38,13 +40,31 @@ pub const PageDirectory = [1024]PDE; // 4 KiB - covers the whole 4 GiB address s
 const mapped_pd = @as(*PageDirectory, @ptrFromInt(0xFFFFF000));
 const mapped_pts = @as(*[1024]PageTable, @ptrFromInt(0xFFC00000));
 
+/// Set the i-th entry of the Page Directory. This entry will point to the page table for the 4 MiB
+/// area starting at 0x400000 * i.
+pub fn setPde(i: u10, pde: PDE) void {
+    mapped_pd[i] = pde;
+}
+
+// Index of the page table in which the given address lies (0-1023)
+inline fn pageTableIndex(va: u32) u10 {
+    return @truncate((va >> 22) & 0x3FF);
+}
+
+// Index of the page within the page table (0-1023)
+inline fn pageIndex(va: u32) u10 {
+    return @truncate((va >> 12) & 0x3FF);
+}
+
+inline fn offset(va: u32) u12 {
+    return va & 0xFFF;
+}
+
 // Assumes that the current PD is recursively mapped.
 // Gets a pointer to the PTE within whose frame the given virtual address lives.
-fn getPte(va: u32) *PTE {
-    // virtual address: [ table (10 bits) | page (10 bits) | offset (12 bits) ]
-    const pd_index = (va >> 22) & 0x3FF;
-    const pt_index = (va >> 12) & 0x3FF;
-    return &mapped_pts[pd_index][pt_index];
+pub fn getPte(va: u32) *PTE {
+    // virtual address: [ page table index (10 bits) | page index (10 bits) | offset (12 bits) ]
+    return &mapped_pts[pageTableIndex(va)][pageIndex(va)];
 }
 
 /// Enable paging. page_dir_phys is the physical address of the Page Directory
@@ -52,7 +72,7 @@ pub inline fn enable(page_dir_phys: u32) void {
     asm volatile (
         \\ mov %[pdir], %%cr3     // enable paging
         \\ mov %%cr0, %%eax
-        \\ or $0x80000000, %%eax
+        \\ or $(1 << 31 | 1 << 16), %%eax   // enable paging and write-protect flags
         \\ mov %%eax, %%cr0
         :
         : [pdir] "r" (page_dir_phys),
@@ -139,6 +159,35 @@ pub fn markUserAccessible(page_dir: *PageDirectory, tables: *[32]PageTable, star
             page_dir[table_index].user = true;
         }
     }
+}
+
+pub fn invlpg(addr: usize) void {
+    asm volatile ("invlpg (%[addr])"
+        :
+        : [addr] "r" (addr),
+        : .{ .memory = true });
+}
+
+/// Allocate a number of pages at the given virtual address. Must fit into a single, 4MB aligned page table.
+/// Does not check for existing allocations at that location.
+pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool) []u8 {
+    const pti = pageTableIndex(addr);
+    var pg: u32 = pageIndex(addr);
+
+    const pt_addr = pageallocator.allocPage(); // Page Table - storage for 1024 PTEs
+    // PDEs are always set to writable so that our recursive mapping stays modifiable
+    setPde(pti, .{ .user = user, .writable = true, .page_table_addr = @truncate(pt_addr >> 12) });
+
+    const PAGE_MASK: u32 = 0xFFF;
+    var va: u32 = addr & ~PAGE_MASK;
+    while (pg < num_pages) : (pg += 1) {
+        // TODO: overflow into next PDE
+        getPte(va).* = .{ .user = user, .writable = writable, .page_addr = @truncate(pageallocator.allocPage() >> 12) };
+        va += 0x1000;
+    }
+
+    const page_start: [*]u8 = @ptrFromInt(addr);
+    return page_start[0 .. num_pages * 0x1000];
 }
 
 /// Simple page fault handler: print faulting address and error code, then halt.

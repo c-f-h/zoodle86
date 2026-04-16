@@ -143,6 +143,7 @@ def compile_zig(target, source, env):
 
 def link_stage2(target, source, env):
     output_path = pathlib.Path(str(target[0]))
+    linker_script = str(source[-1])
     ensure_parent(output_path)
     if output_path.exists():
         output_path.unlink()
@@ -154,7 +155,7 @@ def link_stage2(target, source, env):
             "-fentry=_start",
             "-fno-compiler-rt",
             "-fno-strip",
-            "-T", str(STAGE2_LINKER_SCRIPT),
+            "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
             str(ZIG_OBJ),
@@ -164,6 +165,7 @@ def link_stage2(target, source, env):
 def build_userspace_exe(target, source, env):
     output_path = pathlib.Path(str(target[0]))
     source_path = pathlib.Path(str(source[0]))
+    linker_script = str(source[1])
     ensure_parent(output_path)
     ensure_parent(ZIG_CACHE_DIR / "cache")
     ensure_parent(ZIG_GLOBAL_CACHE_DIR / "cache")
@@ -177,7 +179,7 @@ def build_userspace_exe(target, source, env):
             "-ofmt=elf",
             "-fentry=_start",
             "-fno-compiler-rt",
-            "-T", str(USERSPACE_LINKER_SCRIPT),
+            "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             str(source_path),
         ]
@@ -333,14 +335,14 @@ bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $
 interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
 # build always because zig imports are not correctly tracked by scons - let zig figure it out
 zig_obj = AlwaysBuild(env.Command(str(ZIG_OBJ), str(ZIG_KERNEL_SRC), Action(compile_zig, "Compiling $TARGET")))
-stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, zig_obj], Action(link_stage2, "Linking $TARGET"))
+stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, zig_obj, STAGE2_LINKER_SCRIPT], Action(link_stage2, "Linking $TARGET"))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,
     Action(build_stage2_payload, "Flattening $SOURCE"),
 )
-boot_bin = env.Command(str(BOOT_BIN), [str(BOOT_ASM), stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
-userspace_exe = env.Command(str(USERSPACE_EXE), str(USERSPACE_SRC), Action(build_userspace_exe, "Compiling $TARGET"))
+boot_bin = env.Command(str(BOOT_BIN), [BOOT_ASM, stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
+userspace_exe = env.Command(str(USERSPACE_EXE), [USERSPACE_SRC, USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET"))
 fsimage = env.Command(str(FS_IMAGE), [userspace_exe], Action(build_fs_image, "Building $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)

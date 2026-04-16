@@ -33,6 +33,7 @@ const commands = [_]Command{
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
     .{ .name = "run", .description = "Execute an ELF binary executable.", .handler = cmdRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
+    .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
 
 /// Run the interactive shell command loop.
@@ -167,6 +168,12 @@ fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {
     io.outw(0xB004, 0x2000); // Bochs specific
     io.outw(0x604, 0x2000); // QEMU specific
     // TODO: General ACPI shutdown is more involved...
+}
+
+fn cmdDebugBreak(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    _ = args;
+    kernel.bochsDebugBreak();
 }
 
 fn printUsage(name: []const u8) void {

@@ -2,7 +2,7 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0;
+    . = 0x400000;
 
     /DISCARD/ : { *(.eh_frame .eh_frame_hdr) }
 
@@ -11,7 +11,7 @@ SECTIONS
         *(.text .text.*)
     }
 
-    . = ALIGN(4096);
+    . = 0x10000000;
 
     .rodata : ALIGN(16)
     {
@@ -28,5 +28,11 @@ SECTIONS
         _bss_start = .;
         *(.bss .bss.* COMMON)
         _bss_end = .;
+
+        . = ALIGN(16);
+
+        _stack_bottom = .;
+        . = . + 0x4000;   /* 16 KB stack */
+        _stack_top = .;
     }
 }

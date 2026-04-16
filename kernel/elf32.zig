@@ -27,20 +27,29 @@ pub const Elf32_Ehdr = extern struct {
         return @ptrCast(elf + ehdr.e_phoff + i * ehdr.e_phentsize);
     }
 
-    /// Compute the start and end addresses of a contiguous virtual memory block into which the program image fits.
-    pub fn computeImageExtents(ehdr: *align(1) const Elf32_Ehdr, elf: [*]u8) struct { u32, u32 } {
-        var vstart: u32 = 0xffff_ffff;
-        var vend: u32 = 0;
+    /// Compute the start and end addresses of two contiguous virtual memory blocks (code, data) into which the program image fits.
+    pub fn computeImageExtents(ehdr: *align(1) const Elf32_Ehdr, elf: [*]u8) struct { u32, u32, u32, u32 } {
+        var code_start: u32 = 0xffff_ffff;
+        var code_end: u32 = 0;
+        var data_start: u32 = 0xffff_ffff;
+        var data_end: u32 = 0;
+
         var i: u32 = 0;
         while (i < ehdr.e_phnum) : (i += 1) {
             const phdr = ehdr.phdrPtr(elf, i);
             if (phdr.p_type == PT_LOAD) {
-                if (phdr.p_vaddr < vstart) vstart = phdr.p_vaddr;
                 const end = phdr.p_vaddr + phdr.p_memsz;
-                if (end > vend) vend = end;
+
+                if (phdr.p_flags & P_X != 0) {
+                    if (phdr.p_vaddr < code_start) code_start = phdr.p_vaddr;
+                    if (end > code_end) code_end = end;
+                } else {
+                    if (phdr.p_vaddr < data_start) data_start = phdr.p_vaddr;
+                    if (end > data_end) data_end = end;
+                }
             }
         }
-        return .{ vstart, vend };
+        return .{ code_start, code_end, data_start, data_end };
     }
 };
 

@@ -7,6 +7,7 @@ const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
 const idt = @import("idt.zig");
 const paging = @import("paging.zig");
+const pageallocator = @import("pageallocator.zig");
 
 const std = @import("std");
 
@@ -201,7 +202,7 @@ fn panicOnError(err: anyerror) noreturn {
 }
 
 /// Kernel entry point.
-export fn _start() noreturn {
+export fn _start() void {
     // This function is initially loaded and invoked at 0x8000 + ofs, even though the code is positioned at
     // 0xC0008000 by the linker script. The initial paging code below does not depend on any data segment
     // addresses or long jumps; therefore it is position independent. Its purpose is to set up paging:
@@ -244,6 +245,9 @@ const PAGE = 0x1000;
 // The initial identity Page Table Entries for the first 1 MiB of RAM are stored immediately afterwards.
 const page_dir_phys: u32 = 0x4_0000;
 
+pub inline fn roundDown(p: u32, comptime size: u32) u32 {
+    return p & (~(size - 1));
+}
 pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
     return (p + size - 1) & (~(size - 1));
 }
@@ -275,19 +279,15 @@ fn kernel_main() !void {
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow(false);
+    pageallocator.addMemory(mem_base, mem_base + mem_size);
+
+    // kernel data
+    const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, true, true);
+    @memset(kernel_data, 0xDD);
+    var fba = std.heap.FixedBufferAllocator.init(kernel_data);
+    alloc = fba.allocator();
+
     const MiB = 1024 * 1024;
-
-    // Initialize and enable paging (identity mapping)
-    // Note: we use a fixed upper limit to ensure all low memory is mapped
-    const max_physical = mem_base + mem_size;
-    const page_tables = @as(*[32]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
-    paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
-    // Mark user memory region as user-accessible (starting at 2MiB)
-    const user_mem_start = mem_base + (2 * MiB);
-    paging.markUserAccessible(@ptrFromInt(page_dir_phys), page_tables, user_mem_start, max_physical);
-    paging.enable(page_dir_phys);
-    console.puts("Paging enabled\n");
-
     console.puts("Usable memory: ");
     console.putHexU32(mem_base);
     console.puts(" - ");
@@ -297,12 +297,6 @@ fn kernel_main() !void {
     console.puts(" MiB");
     console.newline();
     console.newline();
-
-    var all_mem: []u8 = @as([*]u8, @ptrFromInt(mem_base))[0..mem_size];
-    var fba = std.heap.FixedBufferAllocator.init(all_mem[0 .. 2 * MiB]);
-    alloc = fba.allocator();
-
-    user_mem = all_mem[2 * MiB ..];
 
     task.initTss();
 
@@ -333,6 +327,12 @@ fn kernel_reenter() noreturn {
     };
 }
 
+fn numPagesBetween(va0: usize, va1: usize) u32 {
+    const va_begin = roundDown(va0, PAGE);
+    const va_end = roundToNext(va1, PAGE);
+    return @divExact(va_end - va_begin, PAGE);
+}
+
 pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     var entry: u32 = 0;
     {
@@ -344,26 +344,40 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
 
         const ehdr: *elf32.Elf32_Ehdr = @ptrCast(@alignCast(elf_data.ptr));
 
-        // compute image extents and append stack and heap
-        const vstart, const vend = ehdr.computeImageExtents(elf_data.ptr);
+        // compute image extents and locate stack and heap
+        const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
         entry = ehdr.e_entry;
-        ptask.stack_bottom = roundToNext(vend, LINE);
-        ptask.stack_top = ptask.stack_bottom + 16 * 1024; // 16 kib stack space
-        ptask.heap_top = roundToNext(ptask.stack_top, PAGE);
+        ptask.stack_top = data_end;
+        ptask.stack_bottom = ptask.stack_top - 16 * 1024; // 16 KiB stack space (guaranteed by linker script)
+        ptask.heap_top = roundToNext(ptask.stack_top, PAGE); // any remaining space in page can be used for heap
 
-        console.puts("Extents: ");
-        console.putHexU32(vstart);
+        // user code and data
+        const code_pages = numPagesBetween(code_start, code_end);
+        const data_pages = numPagesBetween(data_start, data_end);
+        const code_mem = paging.allocateMemoryAt(0x40_0000, code_pages, true, true);
+        const data_mem = paging.allocateMemoryAt(0x1000_0000, data_pages, true, true);
+
+        @memset(code_mem, 0xC0);
+        @memset(data_mem, 0x00);
+
+        console.puts("CODE:  ");
+        console.putHexU32(code_start);
         console.puts(" - ");
-        console.putHexU32(vend);
-        console.puts(", entry point: 0x");
+        console.putHexU32(code_end);
+        console.puts(", DATA: ");
+        console.putHexU32(data_start);
+        console.puts(" - ");
+        console.putHexU32(data_end);
+        console.puts("; entry: 0x");
         console.putHexU32(entry);
-        console.puts("\nStack:   ");
+        console.puts("\nStack: ");
         console.putHexU32(ptask.stack_bottom);
         console.puts(" - ");
         console.putHexU32(ptask.stack_top);
         console.newline();
 
         var i: u32 = 0;
+
         while (i < ehdr.e_phnum) : (i += 1) {
             const phdr = ehdr.phdrPtr(elf_data.ptr, i);
             if (phdr.p_type != elf32.PT_LOAD) continue;
@@ -372,7 +386,8 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
             const memsz = phdr.p_memsz;
             const filesz = phdr.p_filesz;
 
-            const dest: [*]u8 = user_mem.ptr + phdr.p_vaddr;
+            // TODO: needs bounds checking
+            const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
 
             @memcpy(dest[0..filesz], file_start[0..filesz]);
             @memset(dest[filesz..memsz], 0);
@@ -393,15 +408,8 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
         // Here we can already free the kernel allocation with the file contents
     }
 
-    // TODO: keep track of allocated user memory
-    const task_mem = user_mem[0..current_task.heap_top];
-    current_task.init(task_mem);
+    current_task.init();
     current_task.set();
-
-    console.puts("Allocated linear memory block: ");
-    console.putHexU32(@intFromPtr(task_mem.ptr));
-    console.puts(" - ");
-    console.putHexU32(@intFromPtr(task_mem.ptr) + task_mem.len);
 
     console.puts("\nSwitching to user mode...\n");
     enter_user_mode(entry, ptask.stack_top);

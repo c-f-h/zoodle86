@@ -39,7 +39,6 @@ pub inline fn getCurrentTask() *Task {
 pub const Task = struct {
     gdt: [6]gdt.Descriptor = undefined,
     gdtr: gdt.GDTR = undefined,
-    user_mem: []u8 = undefined, // slice of user memory (starting at user_cs:0 = user_ds:0) in flat addressing
     stack_bottom: u32 = undefined, // virtual address of the beginning of the stack
     stack_top: u32 = undefined, // virtual address of the end of the stack
     heap_top: u32 = undefined, // virtual address of the end of the heap (page-aligned; can grow upwards)
@@ -47,16 +46,7 @@ pub const Task = struct {
     // Memory layout: code - rodata - data - bss - stack - heap
 
     /// Configures the GDT for the kernel and the given user-mode code and data descriptors.
-    pub fn init(task: *Task, mem: []u8) void {
-        const mem_base = @intFromPtr(mem.ptr);
-        const mem_pages = @divExact(mem.len, 4 * 1024);
-
-        if (mem.len < task.heap_top) {
-            @panic("Insufficient memory allocated for userspace program");
-        }
-
-        task.user_mem = mem;
-
+    pub fn init(task: *Task) void {
         task.gdt = .{
             // 0: null descriptor - required
             @bitCast(@as(u64, 0)),
@@ -65,9 +55,9 @@ pub const Task = struct {
             // 2: kernel data segment
             gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = true, .executable = false }, gdt.Flags{}),
             // 3: user code segment
-            gdt.makeSegment(mem_base, @truncate(mem_pages - 1), gdt.AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, gdt.Flags{}),
+            gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, gdt.Flags{}),
             // 4: user data segment
-            gdt.makeSegment(mem_base, @truncate(mem_pages - 1), gdt.AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, gdt.Flags{}),
+            gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, gdt.Flags{}),
             // 5: task state segment (TSS) - describes entry point into kernel stack
             // access_byte 0x89 for system segment: present = 1, dpl = ring 0, S = 0 (system), type = 0x9 (32-bit TSS - available)
             gdt.makeSystemSegment(@intFromPtr(&tss), @sizeOf(gdt.Tss) - 1, 0x89, gdt.Flags{ .size_flag = false, .granularity = false }),
@@ -91,6 +81,8 @@ pub const Task = struct {
 
     /// Access a slice of memory within the task's user memory segment.
     pub fn getUserMem(task: *Task, ofs: u32, len: u32) []u8 {
-        return task.user_mem[ofs .. ofs + len];
+        _ = task;
+        const start: [*]u8 = @ptrFromInt(ofs);
+        return start[0..len];
     }
 };
