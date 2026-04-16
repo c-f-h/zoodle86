@@ -194,13 +194,7 @@ fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
 
     for (entries) |*entry| {
         if (verbose) {
-            console.puts("  ");
-            console.putHexU64(entry.base);
-            console.puts(" - ");
-            console.putHexU64(entry.base + entry.length);
-            console.puts(" - type ");
-            console.putDecU32(entry.type_);
-            console.newline();
+            console.put(.{ "  ", entry.base, " - ", entry.base + entry.length, " - type ", entry.type_, "\n" });
         }
 
         if (entry.type_ == 1) {
@@ -263,8 +257,6 @@ export fn _start() void {
     };
 }
 
-var user_mem: []u8 = undefined;
-
 const Task = task.Task;
 
 pub var current_task: Task = undefined;
@@ -321,15 +313,13 @@ fn kernel_main() !void {
     alloc = fba.allocator();
 
     const MiB = 1024 * 1024;
-    console.puts("Usable memory: ");
-    console.putHexU32(mem_base);
-    console.puts(" - ");
-    console.putHexU32(mem_base + mem_size);
-    console.puts(", size=");
+    console.put(.{
+        "Usable memory: ", mem_base,
+        " - ",             mem_base + mem_size,
+        ", size=",
+    });
     console.putDecU32(@divTrunc(mem_size, MiB));
-    console.puts(" MiB");
-    console.newline();
-    console.newline();
+    console.puts(" MiB\n\n");
 
     try mountFs();
     //try launchUserspaceElf("userspace.elf", &current_task);
@@ -367,9 +357,7 @@ fn numPagesBetween(va0: usize, va1: usize) u32 {
 pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     var entry: u32 = 0;
     {
-        console.puts("Loading ");
-        console.puts(fname);
-        console.puts("...\n");
+        console.put(.{ "Loading ", fname, "...\n" });
         const elf_data = try disk_fs.readFile(alloc, fname);
         defer alloc.free(elf_data);
 
@@ -391,21 +379,7 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
         @memset(code_mem, 0xC0);
         @memset(data_mem, 0x00);
 
-        console.puts("CODE:  ");
-        console.putHexU32(code_start);
-        console.puts(" - ");
-        console.putHexU32(code_end);
-        console.puts(", DATA: ");
-        console.putHexU32(data_start);
-        console.puts(" - ");
-        console.putHexU32(data_end);
-        console.puts("; entry: 0x");
-        console.putHexU32(entry);
-        console.puts("\nStack: ");
-        console.putHexU32(ptask.stack_bottom);
-        console.puts(" - ");
-        console.putHexU32(ptask.stack_top);
-        console.newline();
+        console.put(.{ "CODE:  ", code_start, " - ", code_end, ", DATA: ", data_start, " - ", data_end, "; entry: 0x", entry, "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, "\n" });
 
         var i: u32 = 0;
 
@@ -454,11 +428,9 @@ fn mountFs() !void {
     const drive_info = try ide.identifyDrive(drive);
     console.puts("Drive model:     ");
     console.puts(&drive_info.model);
-    console.newline();
-    console.puts("Drive serial:    ");
+    console.puts("\nDrive serial:    ");
     console.puts(&drive_info.serial);
-    console.newline();
-    console.puts("Sectors (LBA28): ");
+    console.puts("\nSectors (LBA28): ");
     console.putDecU32(drive_info.max_lba28);
     console.newline();
 
@@ -470,8 +442,6 @@ pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) no
     _ = return_address;
     console.setCursor(0, 0);
     console.setAttr(0x4F); // Red background, white text
-    console.puts("KERNEL PANIC:\n");
-    console.puts(message);
-    console.puts("\nSystem halted.");
+    console.put(.{ "KERNEL PANIC:\n", message, "\nSystem halted." });
     while (true) {}
 }

@@ -155,6 +155,18 @@ pub fn putDecU32(value: u32) void {
     }
 }
 
+pub inline fn put(multiple: anytype) void {
+    inline for (multiple) |val| {
+        if (@TypeOf(val) == u64) {
+            putHexU64(val);
+        } else if (@TypeOf(val) == u32) {
+            putHexU32(val);
+        } else {
+            puts(val);
+        }
+    }
+}
+
 /// Dump memory in hex viewer format showing address, hex bytes, and ASCII representation.
 /// Displays `num_lines` of 16 bytes each starting from the given address.
 pub fn dumpMem(addr: u32, num_lines: u32) void {
