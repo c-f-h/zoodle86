@@ -86,11 +86,14 @@ pub const Tss = extern struct {
     trap: u16 = 0,
     iomap_base: u16 = @sizeOf(Tss),
 
-    pub fn init(tss: *Tss, ss: u16, stack_top: usize) void {
+    pub fn init(tss: *Tss, ss: u16) void {
         tss.* = .{};
-        tss.esp0 = stack_top;
         tss.ss0 = ss;
         tss.iomap_base = @sizeOf(Tss);
+    }
+
+    pub fn setKernelStack(tss: *Tss, stack_top: usize) void {
+        tss.esp0 = stack_top;
     }
 };
 

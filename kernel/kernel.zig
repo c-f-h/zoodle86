@@ -2,6 +2,7 @@ const console = @import("console.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
+const gdt = @import("gdt.zig");
 const task = @import("task.zig");
 const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
@@ -18,7 +19,7 @@ pub const kernel_code_selector: u16 = 1 << 3;
 pub const kernel_data_selector: u16 = 2 << 3;
 pub const user_code_selector: u16 = (3 << 3) | 3;
 pub const user_data_selector: u16 = (4 << 3) | 3;
-pub const tss_selector: u16 = 5 << 3;
+pub const tss_selector_cpu0: u16 = 5 << 3;
 
 // interrupt vectors
 pub const VECTOR_DOUBLE_FAULT = 0x08;
@@ -75,6 +76,37 @@ export fn consume_key_event(event: *const keyboard.KeyEvent) void {
     if (cur_kb_handler) |handler| {
         _ = handler.handler(handler.ctx, event);
     }
+}
+
+// GDT can be global; should contain one TSS entry per CPU
+var the_gdt: [6]gdt.Descriptor = undefined;
+var gdtr: gdt.GDTR = undefined;
+
+// need one TSS per CPU - esp0 is updated on task switch
+var tss_cpu0: gdt.Tss = undefined;
+
+/// Set up the Global Descriptor Table
+/// The bootloader already set up a basic one with only the kernel segments.
+/// We extend it with user segments and a TSS for user->kernel switches.
+fn initGdt() void {
+    tss_cpu0.init(kernel_data_selector);
+    the_gdt = .{
+        // 0: null descriptor - required
+        @bitCast(@as(u64, 0)),
+        // 1: kernel code segment
+        gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = false, .executable = true }, gdt.Flags{}),
+        // 2: kernel data segment
+        gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = true, .executable = false }, gdt.Flags{}),
+        // 3: user code segment
+        gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = false, .executable = true, .dpl = 3 }, gdt.Flags{}),
+        // 4: user data segment
+        gdt.makeSegment(0, 0xFFFFF, gdt.AccessFlags{ .read_write = true, .executable = false, .dpl = 3 }, gdt.Flags{}),
+        // 5: task state segment (TSS) - contains entry point into kernel stack for first CPU
+        // access_byte 0x89 for system segment: present = 1, dpl = ring 0, S = 0 (system), type = 0x9 (32-bit TSS - available)
+        gdt.makeSystemSegment(@intFromPtr(&tss_cpu0), @sizeOf(gdt.Tss) - 1, 0x89, gdt.Flags{ .size_flag = false, .granularity = false }),
+    };
+    gdtr.init(&the_gdt);
+    gdtr.load();
 }
 
 fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
@@ -254,6 +286,7 @@ pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
 
 fn kernel_main() !void {
     zero_bss();
+    initGdt();
 
     {
         const cs = kernel_code_selector;
@@ -297,8 +330,6 @@ fn kernel_main() !void {
     console.puts(" MiB");
     console.newline();
     console.newline();
-
-    task.initTss();
 
     try mountFs();
     //try launchUserspaceElf("userspace.elf", &current_task);
@@ -409,7 +440,8 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     }
 
     current_task.init();
-    current_task.set();
+    current_task.updateTss(&tss_cpu0);
+    gdt.ltr(tss_selector_cpu0);
 
     console.puts("\nSwitching to user mode...\n");
     enter_user_mode(entry, ptask.stack_top);
