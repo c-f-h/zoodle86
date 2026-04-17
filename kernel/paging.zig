@@ -150,33 +150,6 @@ pub inline fn initIdentityPaging(page_dir: *PageDirectory, tables: [*]PageTable,
     }
 }
 
-/// Mark a physical memory range as user-accessible by setting the user bit (U/S) in both
-/// page directory entries and page table entries.
-pub fn markUserAccessible(page_dir: *PageDirectory, tables: *[32]PageTable, start_addr: u32, end_addr: u32) void {
-    const start_page = start_addr >> 12;
-    const end_page = (end_addr + 4095) >> 12;
-
-    var marked_pde_indices = [1]bool{false} ** 32;
-
-    // Mark PTEs and track which PDEs we need to mark
-    for (start_page..end_page) |page_index| {
-        const table_index = page_index / 1024;
-        const entry_index = page_index % 1024;
-
-        if (table_index < tables.len) {
-            tables[table_index][entry_index].user = true;
-            marked_pde_indices[table_index] = true;
-        }
-    }
-
-    // Mark the corresponding PDEs as user-accessible
-    for (0..tables.len) |table_index| {
-        if (marked_pde_indices[table_index]) {
-            page_dir[table_index].user = true;
-        }
-    }
-}
-
 pub fn invlpg(addr: usize) void {
     asm volatile ("invlpg (%[addr])"
         :
