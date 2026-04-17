@@ -241,9 +241,10 @@ export fn _start() void {
     // We couldn't load the kernel there directly because paging has to be set up first.
     {
         const max_physical = 0x10_0000; // for now map only the low 1MiB
-        const page_tables = @as(*[32]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
+        const page_tables = @as([*]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
         paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
-        paging.enable(page_dir_phys);
+        paging.loadPageDir(page_dir_phys);
+        paging.enable();
         asm volatile (
             \\ add $0xC0000000, %%esp
             \\ leal higher_half_jump_target, %%eax
@@ -356,6 +357,20 @@ fn numPagesBetween(va0: usize, va1: usize) u32 {
 
 pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     var entry: u32 = 0;
+
+    current_task.init();
+    // TODO: this should only get the kernel mappings, not any existing userspace mappings
+    @memcpy(&current_task.page_dir, paging.getMappedPageDirectory());
+
+    // fix the recursive mapping entry to point to the new page directory
+    const new_dir_phys = paging.virtualToPhysical(&current_task.page_dir);
+    current_task.page_dir[1023] = paging.PDE{
+        .writable = true,
+        .user = false,
+        .page_table_addr = @truncate(new_dir_phys >> 12),
+    };
+    paging.loadPageDir(new_dir_phys);
+
     {
         console.put(.{ "Loading ", fname, "...\n" });
         const elf_data = try disk_fs.readFile(alloc, fname);
@@ -413,7 +428,6 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
         // Here we can already free the kernel allocation with the file contents
     }
 
-    current_task.init();
     current_task.updateTss(&tss_cpu0);
     gdt.ltr(tss_selector_cpu0);
 

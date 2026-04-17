@@ -57,7 +57,7 @@ inline fn pageIndex(va: u32) u10 {
 }
 
 inline fn offset(va: u32) u12 {
-    return va & 0xFFF;
+    return @truncate(va & 0xFFF);
 }
 
 // Assumes that the current PD is recursively mapped.
@@ -67,28 +67,44 @@ pub fn getPte(va: u32) *PTE {
     return &mapped_pts[pageTableIndex(va)][pageIndex(va)];
 }
 
-/// Enable paging. page_dir_phys is the physical address of the Page Directory
-pub inline fn enable(page_dir_phys: u32) void {
+/// Get the physical address which the given (virtual) pointer points to.
+/// Uses the recursively mapped page directory.
+pub fn virtualToPhysical(ptr: *anyopaque) u32 {
+    const va = @intFromPtr(ptr);
+    return (getPte(va).page_addr << 12) + offset(va);
+}
+
+/// Return a pointer to the currently recursively mapped Page Directory
+pub fn getMappedPageDirectory() *PageDirectory {
+    return mapped_pd;
+}
+
+/// Enable paging and write-protect flags
+pub inline fn enable() void {
     asm volatile (
-        \\ mov %[pdir], %%cr3     // enable paging
         \\ mov %%cr0, %%eax
         \\ or $(1 << 31 | 1 << 16), %%eax   // enable paging and write-protect flags
         \\ mov %%eax, %%cr0
-        :
-        : [pdir] "r" (page_dir_phys),
-        : .{ .eax = true });
+        ::: .{ .eax = true });
 }
 
-/// 32 static 4KB-aligned page tables covering ~128 MB
-//var page_tables: [32]PageTable align(4096) = undefined; // 128 KiB
+/// Load the page directory at the given physical address
+pub inline fn loadPageDir(page_dir_phys: u32) void {
+    asm volatile (
+        \\ mov %[pdir], %%cr3     // enable paging
+        :
+        : [pdir] "r" (page_dir_phys),
+    );
+}
 
-/// Initialize identity mapping: all physical addresses map 1:1 to virtual addresses.
+/// Initialize identity mapping: physical addresses map 1:1 to virtual addresses.
 /// max_addr is the highest physical address to map (in bytes).
-/// Returns the physical address of the page directory.
-pub inline fn initIdentityPaging(page_dir: *PageDirectory, tables: *[32]PageTable, max_addr: u32) void {
+/// tables must have sufficient space to fit all required page tables
+/// A second, duplicate mapping is made from C0000000 (virtual) to 0..max_phys
+pub inline fn initIdentityPaging(page_dir: *PageDirectory, tables: [*]PageTable, max_addr: u32) void {
     const page_dir_size = 4 * 1024 * 1024; // 4MiB covered per page directory
     // number of tables required to cover the desired physical memory space
-    const num_tables: u32 = @min((max_addr + page_dir_size - 1) / page_dir_size, tables.len);
+    const num_tables: u32 = (max_addr + page_dir_size - 1) / page_dir_size;
 
     // Initialize page directory: each entry points to a page table
     for (0..1024) |i| {
@@ -194,23 +210,21 @@ pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool)
 pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) noreturn {
     _ = vector;
     _ = cs;
-    _ = eip;
-
-    const console = @import("console.zig");
-    console.puts("\n!!! PAGE FAULT !!!\n");
-    console.puts("Error code: ");
-    console.putHexU32(errcode);
-    console.puts("\n");
 
     // Read CR2 to get faulting address
     const cr2 = asm volatile ("mov %%cr2, %%eax"
         : [ret] "={eax}" (-> u32),
     );
-    console.puts("Faulting address: ");
-    console.putHexU32(cr2);
-    console.puts("\n");
 
-    console.puts("Halting.\n");
+    const console = @import("console.zig");
+
+    console.put(.{
+        "\n!!! PAGE FAULT !!!\nError code: ", errcode,
+        "\nAddress:    ",                     cr2,
+        "\neip:        ",                     eip,
+        "\nHalting.\n",
+    });
+
     while (true) {
         asm volatile ("hlt");
     }

@@ -159,7 +159,7 @@ pub inline fn put(multiple: anytype) void {
     inline for (multiple) |val| {
         if (@TypeOf(val) == u64) {
             putHexU64(val);
-        } else if (@TypeOf(val) == u32) {
+        } else if (@TypeOf(val) == u32 or @TypeOf(val) == usize) {
             putHexU32(val);
         } else {
             puts(val);

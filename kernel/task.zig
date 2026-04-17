@@ -1,4 +1,5 @@
 const gdt = @import("gdt.zig");
+const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 
 const KERNEL_STACK_SIZE = 4096;
@@ -25,7 +26,10 @@ pub inline fn getCurrentTask() *Task {
 pub const Task = struct {
     // Each process gets its own kernel stack.
     // The first word in the kernel stack stores a pointer to the current Task.
-    kernel_stack: KernelStack align(KERNEL_STACK_SIZE) = undefined,
+    kernel_stack: KernelStack align(4096) = undefined,
+
+    // Virtual memory mappings for this task
+    page_dir: paging.PageDirectory align(4096) = undefined,
 
     stack_bottom: u32 = undefined, // virtual address of the beginning of the stack
     stack_top: u32 = undefined, // virtual address of the end of the stack
