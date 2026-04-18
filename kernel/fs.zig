@@ -155,14 +155,14 @@ pub const FileSystem = struct {
         var entry = try self.readDirectoryEntry(index);
         entry.state = ENTRY_STATE_DELETED;
         entry.name_len = 0;
+        entry.flags = 0;
         entry.name = [_]u8{0} ** FILENAME_MAX_LEN;
         entry.start_lba = 0;
         entry.sector_count = 0;
         entry.size_bytes = 0;
         entry.created_ticks = 0;
         entry.modified_ticks = 0;
-        entry.flags = 0;
-        entry.reserved = [_]u8{0} ** 20;
+        entry.reserved = [_]u8{0} ** 24;
         try self.writeDirectoryEntry(index, &entry);
 
         self.superblock.file_count -= 1;
@@ -239,7 +239,7 @@ pub const FileSystem = struct {
 
         const start_lba = self.superblock.next_free_lba;
         const limit_lba = self.superblock.fs_start_lba + self.superblock.fs_sector_count;
-        if (start_lba < self.superblock.data_start_lba or start_lba + sector_count > limit_lba) {
+        if (start_lba < DATA_START_LBA or start_lba + sector_count > limit_lba) {
             return error.NoSpace;
         }
 
@@ -266,8 +266,8 @@ pub const FileSystem = struct {
     }
 
     fn readDirectoryEntry(self: *const FileSystem, index: usize) FsError!DirectoryEntry {
-        const sector_lba = self.superblock.directory_start_lba + @as(u32, @intCast(index / 8));
-        const entry_offset = (index % 8) * @sizeOf(DirectoryEntry);
+        const sector_lba = fs_defs.DIRECTORY_START_LBA + @as(u32, @intCast(index / fs_defs.DIR_ENTRIES_PER_SECTOR));
+        const entry_offset = (index % fs_defs.DIR_ENTRIES_PER_SECTOR) * @sizeOf(DirectoryEntry);
 
         var sector = [_]u8{0} ** 512;
         try ide.readSectorLba28(self.drive, sector_lba, &sector);
@@ -279,8 +279,8 @@ pub const FileSystem = struct {
     }
 
     fn writeDirectoryEntry(self: *const FileSystem, index: usize, entry: *const DirectoryEntry) FsError!void {
-        const sector_lba = self.superblock.directory_start_lba + @as(u32, @intCast(index / 8));
-        const entry_offset = (index % 8) * @sizeOf(DirectoryEntry);
+        const sector_lba = fs_defs.DIRECTORY_START_LBA + @as(u32, @intCast(index / fs_defs.DIR_ENTRIES_PER_SECTOR));
+        const entry_offset = (index % fs_defs.DIR_ENTRIES_PER_SECTOR) * @sizeOf(DirectoryEntry);
 
         var sector = [_]u8{0} ** 512;
         try ide.readSectorLba28(self.drive, sector_lba, &sector);
@@ -296,9 +296,6 @@ fn makeDefaultSuperblock(num_sectors: u32) Superblock {
         .directory_entry_count = @intCast(DIRECTORY_ENTRY_COUNT),
         .fs_start_lba = FS_START_LBA,
         .fs_sector_count = num_sectors,
-        .directory_start_lba = FS_START_LBA + SUPERBLOCK_SECTORS,
-        .directory_sector_count = DIRECTORY_SECTORS,
-        .data_start_lba = DATA_START_LBA,
         .next_free_lba = DATA_START_LBA,
         .file_count = 0,
         .reserved = [_]u8{0} ** 28,
@@ -309,14 +306,13 @@ fn zeroEntry() DirectoryEntry {
     return .{
         .state = ENTRY_STATE_FREE,
         .name_len = 0,
-        .reserved0 = 0,
+        .flags = 0,
         .name = [_]u8{0} ** FILENAME_MAX_LEN,
         .start_lba = 0,
         .sector_count = 0,
         .size_bytes = 0,
         .created_ticks = 0,
         .modified_ticks = 0,
-        .flags = 0,
-        .reserved = [_]u8{0} ** 20,
+        .reserved = [_]u8{0} ** 24,
     };
 }

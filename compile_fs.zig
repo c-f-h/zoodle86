@@ -30,7 +30,7 @@ fn writeSuperblock(ctx: *Context, io: std.Io) !void {
 }
 
 fn writeDirectoryEntry(ctx: *Context, io: std.Io, index: usize, entry: *const fs_defs.DirectoryEntry) !void {
-    const sector_lba = ctx.superblock.directory_start_lba + @as(u32, @intCast(index / 8));
+    const sector_lba = fs_defs.DIRECTORY_START_LBA + @as(u32, @intCast(index / 8));
     const entry_offset = (index % 8) * @sizeOf(fs_defs.DirectoryEntry);
 
     var sector: [512]u8 = [_]u8{0} ** 512;
@@ -43,15 +43,14 @@ fn zeroEntry() fs_defs.DirectoryEntry {
     return .{
         .state = fs_defs.ENTRY_STATE_FREE,
         .name_len = 0,
-        .reserved0 = 0,
+        .flags = 0,
         .name = [_]u8{0} ** fs_defs.FILENAME_MAX_LEN,
         .start_lba = 0,
         .sector_count = 0,
         .size_bytes = 0,
         .created_ticks = 0,
         .modified_ticks = 0,
-        .flags = 0,
-        .reserved = [_]u8{0} ** 20,
+        .reserved = [_]u8{0} ** 24,
     };
 }
 
@@ -161,9 +160,6 @@ pub fn main(init: std.process.Init) !void {
             .directory_entry_count = @intCast(fs_defs.DIRECTORY_ENTRY_COUNT),
             .fs_start_lba = fs_defs.FS_START_LBA,
             .fs_sector_count = fs_sector_count,
-            .directory_start_lba = fs_defs.FS_START_LBA + fs_defs.SUPERBLOCK_SECTORS,
-            .directory_sector_count = fs_defs.DIRECTORY_SECTORS,
-            .data_start_lba = fs_defs.DATA_START_LBA,
             .next_free_lba = fs_defs.DATA_START_LBA,
             .file_count = @intCast(file_count),
             .reserved = [_]u8{0} ** 28,

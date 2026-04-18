@@ -26,8 +26,8 @@ fn readSuperblock(ctx: *Context, io: std.Io) !void {
 }
 
 fn readDirectoryEntry(ctx: *Context, io: std.Io, index: usize) !fs_defs.DirectoryEntry {
-    const sector_lba = ctx.superblock.directory_start_lba + @as(u32, @intCast(index / 8));
-    const entry_offset = (index % 8) * @sizeOf(fs_defs.DirectoryEntry);
+    const sector_lba = fs_defs.DIRECTORY_START_LBA + @as(u32, @intCast(index / fs_defs.DIR_ENTRIES_PER_SECTOR));
+    const entry_offset = (index % fs_defs.DIR_ENTRIES_PER_SECTOR) * @sizeOf(fs_defs.DirectoryEntry);
 
     var sector: [512]u8 = undefined;
     try readSector(ctx, io, sector_lba, &sector);
@@ -92,7 +92,7 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout.print("Filesystem info:\n", .{});
     try stdout.print("  File count: {d}\n", .{ctx.superblock.file_count});
-    try stdout.print("  Data starts at LBA: {d}\n", .{ctx.superblock.data_start_lba});
+    try stdout.print("  Data starts at LBA: {d}\n", .{fs_defs.DATA_START_LBA});
 
     try std.Io.Dir.cwd().createDirPath(init.io, output_path);
     const output_dir = try std.Io.Dir.cwd().openDir(init.io, output_path, .{});
