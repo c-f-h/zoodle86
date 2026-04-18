@@ -23,6 +23,8 @@ pub inline fn getCurrentTask() *Task {
     return getPointerToTaskPtr(sp).*;
 }
 
+var next_pid: u32 = 1;
+
 pub const Task = struct {
     // Each process gets its own kernel stack.
     // The first word in the kernel stack stores a pointer to the current Task.
@@ -30,6 +32,8 @@ pub const Task = struct {
 
     // Virtual memory mappings for this task
     page_dir: paging.PageDirectory align(4096) = undefined,
+
+    pid: u32 = undefined, // unique process id
 
     stack_bottom: u32 = undefined, // virtual address of the beginning of the stack
     stack_top: u32 = undefined, // virtual address of the end of the stack
@@ -40,6 +44,8 @@ pub const Task = struct {
     pub fn init(task: *Task) void {
         // write *Task into the first word in the kernel stack
         @as(**Task, @ptrCast(&task.kernel_stack)).* = task;
+        task.pid = next_pid;
+        next_pid += 1;
     }
 
     /// Set up the TSS to point to the kernel stack associated to this task.

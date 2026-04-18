@@ -9,6 +9,7 @@ const shell = @import("shell.zig");
 const idt = @import("idt.zig");
 const paging = @import("paging.zig");
 const pageallocator = @import("pageallocator.zig");
+const syscall = @import("syscall.zig");
 
 const std = @import("std");
 
@@ -107,28 +108,7 @@ fn initGdt() void {
     };
     gdtr.init(&the_gdt);
     gdtr.load();
-}
-
-fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
-    if (fd != 1)
-        return 0;
-
-    const data = task.getCurrentTask().getUserMem(ofs, count);
-    console.puts(data);
-    return count;
-}
-
-/// Dispatches the int 0x80 syscall ABI invoked by user-mode executables.
-export fn syscall_dispatch(nr: u32, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
-    switch (nr) {
-        1 => { // write
-            return sys_write(arg1, arg2, arg3);
-        },
-        60 => { // exit
-            kernel_reenter();
-        },
-        else => return 0xffff_ffff,
-    }
+    gdt.ltr(tss_selector_cpu0); // load TSS for the first CPU and marks the TSS as busy
 }
 
 export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) noreturn {
@@ -256,6 +236,7 @@ export fn _start() void {
     kernel_main() catch |err| {
         panicOnError(err);
     };
+    _ = syscall.syscall_dispatch; // force compiler to emit function
 }
 
 const Task = task.Task;
@@ -339,7 +320,10 @@ pub inline fn getRegister(comptime reg: [3]u8) u32 {
     );
 }
 
-fn kernel_reenter() noreturn {
+pub fn kernel_reenter() noreturn {
+    // Switch back to the kernel page directory (without userspace mapping)
+    paging.loadPageDir(page_dir_phys);
+
     console.puts("Returned to kernel, esp = ");
     console.putHexU32(getRegister("esp".*));
     console.newline();
@@ -429,7 +413,6 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     }
 
     current_task.updateTss(&tss_cpu0);
-    gdt.ltr(tss_selector_cpu0);
 
     console.puts("\nSwitching to user mode...\n");
     enter_user_mode(entry, ptask.stack_top);
