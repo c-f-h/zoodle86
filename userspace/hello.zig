@@ -25,6 +25,6 @@ pub fn write(fd: u32, buf: []const u8) u32 {
 const STDOUT = 1;
 
 pub export fn _start() void {
-    _ = write(STDOUT, "Hello, world!\n");
+    _ = write(STDOUT, "Hello, world from process!\n");
     exit(0);
 }

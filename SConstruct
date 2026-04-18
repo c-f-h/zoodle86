@@ -24,7 +24,7 @@ INTERRUPTS_ASM = ROOT / "kernel" / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 USERSPACE_LINKER_SCRIPT = ROOT / "userspace.ld"
 ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
-USERSPACE_SRC = ROOT / "userspace.zig"
+USERSPACE_SRC = ROOT / "userspace" / "hello.zig"
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 
@@ -249,23 +249,19 @@ def build_fs_image(target, source, env):
     if BOOT_IMG.exists():
         run(
             [
-                str(ZIG_EXE),
-                "run",
-                str(ROOT / "extract_fs.zig"),
+                str(ZIG_EXE), "run", str(ROOT / "extract_fs.zig"),
                 "--",
                 str(BOOT_IMG.absolute()),
                 str(FS_IMAGE_DIR.absolute()),
             ]
         )
 
-    # inject the userspace.elf binary
-    shutil.copy2(USERSPACE_EXE, FS_IMAGE_DIR / USERSPACE_EXE.name)
+    # inject the userspace binary - drop the .elf extension
+    shutil.copy2(USERSPACE_EXE, FS_IMAGE_DIR / USERSPACE_EXE.stem)
 
     run(
         [
-            str(ZIG_EXE),
-            "run",
-            str(ROOT / "compile_fs.zig"),
+            str(ZIG_EXE), "run", str(ROOT / "compile_fs.zig"),
             "--",
             str(FS_IMAGE_DIR.absolute()),
             str(IMAGE_SIZE_SECTORS),
