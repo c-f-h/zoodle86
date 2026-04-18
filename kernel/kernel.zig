@@ -35,7 +35,7 @@ pub const VECTOR_SYSCALL = 0x80;
 // External interrupt setup from interrupts.asm
 extern fn zero_bss() void;
 extern fn interrupts_init() void;
-extern fn enter_user_mode(user_eip: u32, user_esp: u32) noreturn;
+extern fn task_switch() callconv(.naked) noreturn;
 
 // Interrupt handler addresses from interrupts.asm
 extern fn exception_isr_int08() void;
@@ -415,7 +415,8 @@ pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
     current_task.updateTss(&tss_cpu0);
 
     console.puts("\nSwitching to user mode...\n");
-    enter_user_mode(entry, ptask.stack_top);
+    current_task.setEntryPoint(entry, ptask.stack_top);
+    current_task.switchTo();
 }
 
 fn mountFs() !void {

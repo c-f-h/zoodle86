@@ -3,11 +3,12 @@ section .text
 
 extern _bss_start, _bss_end
 extern syscall_dispatch, exception_handler, page_fault_handler
+extern save_kernel_stack_ptr
 
 ; exports
 global zero_bss
 global interrupts_init
-global enter_user_mode
+global task_switch
 
 ; keyboard interrupt output: total IRQ count plus a raw scancode ring buffer
 global keyboard_irq_count
@@ -52,28 +53,6 @@ interrupts_init:
     sti
     popad
     ret
-
-; Enters ring 3 by returning through an interrupt frame built on the current
-; kernel stack. The provided EIP and ESP are offsets within the user code/data
-; segments, not linear addresses.
-;
-; cdecl arguments:
-;   [esp + 4] = user_eip
-;   [esp + 8] = user_esp
-enter_user_mode:
-    mov ecx, [esp + 4]
-    mov edx, [esp + 8]
-
-    mov ax, USER_DATA_SELECTOR
-    mov ds, ax
-    mov es, ax
-
-    push USER_DATA_SELECTOR ; user SS
-    push edx                ; user esp
-    pushfd                  ; user eflags
-    push USER_CODE_SELECTOR ; user CS
-    push ecx                ; user eip
-    iretd
 
 remap_pic:
     push eax
@@ -172,8 +151,16 @@ syscall_isr:
     mov ds, ax
     mov es, ax
 
-    ; restore eax from pushad (pushes all 8 main registers)
+    ; save kernel stack pointer for task switching
+    ; NB: this may clobber eax, ecx, and edx
+    push esp
+    call save_kernel_stack_ptr
+    add esp, 4
+
+    ; restore eax, ecx, edx from pushad
     mov eax, dword [esp + 28]
+    mov ecx, dword [esp + 24]
+    mov edx, dword [esp + 20]
 
     push edx    ; arg3
     push ecx    ; arg2
@@ -185,10 +172,16 @@ syscall_isr:
     ; move result into stack position from which popad will restore eax
     mov [esp + 28], eax
 
+return_to_userspace:
     popad
     pop es
     pop ds
     iretd
+
+task_switch:
+    mov esp, eax             ; caller puts desired kernel stack pointer into eax
+    jmp return_to_userspace
+
 
 %macro exception_isr 1
 global exception_isr_int%1
