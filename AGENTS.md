@@ -12,7 +12,9 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/pageallocator.zig`: page-level allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
-- `kernel/task.zig`: task/process management with per-task GDT entries, kernel stacks, user memory regions, and page directories.
+- `kernel/task.zig`: task/process management with per-task GDT entries, kernel stacks, user memory regions, and page directories. Includes `switchTo()` for low-level context switching and `terminate()` for freeing task resources.
+- `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) with round-robin scheduler; `getNextActiveTask()` finds the next runnable task for cooperative scheduling.
+- `kernel/syscall.zig`: syscall number enum and dispatch entry point; routes `int 0x80` calls from user mode into kernel handlers.
 
 ### Console & Input/Output
 - `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, and memory dumps.
@@ -84,9 +86,25 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Memory Management**: The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has its own 4 KB kernel stack (power-of-2 aligned), with the current task pointer stored at the stack base.
 
-**Task/Process Management**: Each `Task` struct manages a private user-memory slice, kernel stack, page directory, and GDT. User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3).
+**Task/Process Management**: Each `Task` struct holds a 4 KB kernel stack (first word stores a pointer back to the `Task` for `getCurrentTask()`), a 4 KB per-task page directory, a unique PID, a saved `kernel_esp` (0 = free slot), and user-mode stack/heap bounds. User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). A fixed pool of 8 task slots is managed by `taskman.zig`.
 
-**Syscall ABI**: User-mode programs support syscalls via `int 0x80` with syscall number in `eax` and arguments in `ebx`, `ecx`, `edx`. Currently implemented syscalls: `write` (1) for console output and `exit` (60) to terminate the task. The kernel's `syscall_dispatch()` routes calls back to appropriate handlers.
+**Cooperative Multitasking**: The kernel implements cooperative (non-preemptive) multitasking. Tasks voluntarily yield control via the `yield` syscall (24) or implicitly on `exit` (60) or a user-mode fault. The scheduler (`kernel.reschedule()`) uses `taskman.getNextActiveTask()` to perform round-robin selection over active slots. If no other task is runnable, the kernel reloads its own page directory and returns to the shell via `kernel_reenter()`. There is no timer-based preemption — tasks run until they yield.
+
+Context switch flow (user → kernel → user):
+1. User executes `int 0x80`; hardware loads kernel SS/ESP from TSS.
+2. `syscall_isr` (in `interrupts.asm`) saves the kernel ESP into the current `Task.kernel_esp` via `save_kernel_stack_ptr()`.
+3. `syscall_dispatch()` handles the call; for Exit/Yield it calls `reschedule()` (does not return).
+4. `reschedule()` calls `next_task.switchTo(&tss_cpu0)` which runs inline assembly: loads the new page directory into CR3, places the new task's `kernel_esp` in EAX, and jumps to `task_switch`.
+5. `task_switch` restores the stack pointer then falls through to `return_to_userspace` which executes `popad / pop es / pop ds / iretd` to resume user code.
+
+**Syscall ABI**: User-mode programs invoke syscalls via `int 0x80` with the syscall number in `eax` and up to three arguments in `ebx`, `ecx`, `edx`. The return value is placed in `eax`.
+
+| Syscall | Number | Arguments | Returns | Notes |
+|---------|--------|-----------|---------|-------|
+| `write` | 1 | fd, buf_offset, count | bytes written | Only FD 1 (stdout); calls `console.puts()` |
+| `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
+| `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
+| `exit` | 60 | — | — | Terminates task and reschedules; does not return |
 
 **Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–63 are reserved for the stage-2 loader. The custom filesystem begins at sector 64. The filesystem uses a one-sector superblock, an eight-sector flat root directory (64 entries × 64 bytes), and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file. Files are stored in contiguous extents with metadata (name, state, extent location, timestamps) tracked in the root directory.
 
@@ -94,7 +112,8 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **IDE & Storage**: The kernel uses LBA28 addressing (maximum 128 GB disks) and communicates with the primary IDE bus (I/O base 0x1F0, control base 0x3F6). Sector-level I/O with status polling and error handling (timeout, device fault, controller error).
 
-## Style Guidelines
+## General Guidelines
 
 - Every public Zig function should have at least a one-line doc comment explaining its function.
+- For debugging protection faults and other exceptions with kernel EIP information, you can use `objdump -S` to disassemble the kernel binary.
 - Whenever the design of the project changes, keep AGENTS.md up to date!

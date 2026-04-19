@@ -7,6 +7,7 @@ const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
+const task = @import("task.zig");
 
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
@@ -31,7 +32,7 @@ const commands = [_]Command{
     .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
-    .{ .name = "run", .description = "Execute an ELF binary executable.", .handler = cmdRun },
+    .{ .name = "run", .description = "Load one or several ELF binary executables and launch the first one.", .handler = cmdRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
@@ -155,11 +156,19 @@ fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
 
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
-    if (args.next()) |fname| {
-        try kernel.launchUserspaceElf(fname, &kernel.current_task);
-    } else {
-        console.puts("Usage: run <executable>\n");
+    var first_task: ?*task.Task = null;
+    if (args.peek() == null) {
+        console.puts("Usage: run <executable> [<executable> ...]\n");
+        return;
     }
+
+    while (args.next()) |fname| {
+        const ptask = try kernel.loadUserspaceElf(fname);
+        if (first_task == null) {
+            first_task = ptask;
+        }
+    }
+    kernel.run(first_task.?);
 }
 
 fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {

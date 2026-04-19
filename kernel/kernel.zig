@@ -4,6 +4,7 @@ const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const gdt = @import("gdt.zig");
 const task = @import("task.zig");
+const taskman = @import("taskman.zig");
 const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
 const idt = @import("idt.zig");
@@ -127,7 +128,8 @@ export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callcon
         console.puts(&err);
         console.setAttr(VGA_ATTR);
         console.puts("\nTerminating program.\n");
-        kernel_reenter();
+        task.getCurrentTask().terminate();
+        reschedule();
     } else {
         // The fault occurred in the kernel; panic!
         @panic(&err);
@@ -241,8 +243,6 @@ export fn _start() void {
 
 const Task = task.Task;
 
-pub var current_task: Task = undefined;
-
 const LINE = 0x10;
 const PAGE = 0x1000;
 
@@ -281,6 +281,7 @@ fn kernel_main() !void {
 
     // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
     interrupts_init();
+    taskman.init();
 
     console.console_init(VGA_ATTR);
     console.puts(" -------- zoodle86 loaded --------\n\n");
@@ -304,7 +305,7 @@ fn kernel_main() !void {
     console.puts(" MiB\n\n");
 
     try mountFs();
-    //try launchUserspaceElf("userspace.elf", &current_task);
+    //try launchUserspaceElf("userspace.elf");
     try shell.run(alloc, &disk_fs);
 }
 
@@ -320,7 +321,9 @@ pub inline fn getRegister(comptime reg: [3]u8) u32 {
     );
 }
 
-pub fn kernel_reenter() noreturn {
+// Re-run the kernel shell.
+// TODO/BUG: This may run in a terminated task's kernel stack, which could get overwritten.
+fn kernel_reenter() noreturn {
     // Switch back to the kernel page directory (without userspace mapping)
     paging.loadPageDir(page_dir_phys);
 
@@ -333,90 +336,85 @@ pub fn kernel_reenter() noreturn {
     };
 }
 
+/// Switch to the next active task, if any, or re-enter the kernel if no other task is runnable.
+pub fn reschedule() noreturn {
+    const current_task = task.getCurrentTask();
+    if (taskman.getNextActiveTask(current_task)) |next_task| {
+        next_task.switchTo(&tss_cpu0);
+    } else {
+        kernel_reenter();
+    }
+}
+
 fn numPagesBetween(va0: usize, va1: usize) u32 {
     const va_begin = roundDown(va0, PAGE);
     const va_end = roundToNext(va1, PAGE);
     return @divExact(va_end - va_begin, PAGE);
 }
 
-pub fn launchUserspaceElf(fname: []const u8, ptask: *Task) !void {
-    var entry: u32 = 0;
+pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
+    const ptask = taskman.newTask();
 
-    current_task.init();
-    // TODO: this should only get the kernel mappings, not any existing userspace mappings
-    @memcpy(&current_task.page_dir, paging.getMappedPageDirectory());
+    console.put(.{ "Loading ", fname, "...\n" });
+    const elf_data = try disk_fs.readFile(alloc, fname);
+    defer alloc.free(elf_data);
 
-    // fix the recursive mapping entry to point to the new page directory
-    const new_dir_phys = paging.virtualToPhysical(&current_task.page_dir);
-    current_task.page_dir[1023] = paging.PDE{
-        .writable = true,
-        .user = false,
-        .page_table_addr = @truncate(new_dir_phys >> 12),
-    };
-    paging.loadPageDir(new_dir_phys);
+    const ehdr: *elf32.Elf32_Ehdr = @ptrCast(@alignCast(elf_data.ptr));
 
-    {
-        console.put(.{ "Loading ", fname, "...\n" });
-        const elf_data = try disk_fs.readFile(alloc, fname);
-        defer alloc.free(elf_data);
+    // compute image extents and locate stack and heap
+    const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
+    ptask.stack_top = data_end;
+    ptask.stack_bottom = ptask.stack_top - 16 * 1024; // 16 KiB stack space (guaranteed by linker script)
+    ptask.heap_top = roundToNext(ptask.stack_top, PAGE); // any remaining space in page can be used for heap
 
-        const ehdr: *elf32.Elf32_Ehdr = @ptrCast(@alignCast(elf_data.ptr));
+    // user code and data
+    ptask.loadPageDir();
+    const code_pages = numPagesBetween(code_start, code_end);
+    const data_pages = numPagesBetween(data_start, data_end);
+    const code_mem = paging.allocateMemoryAt(0x40_0000, code_pages, true, true);
+    const data_mem = paging.allocateMemoryAt(0x1000_0000, data_pages, true, true);
 
-        // compute image extents and locate stack and heap
-        const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
-        entry = ehdr.e_entry;
-        ptask.stack_top = data_end;
-        ptask.stack_bottom = ptask.stack_top - 16 * 1024; // 16 KiB stack space (guaranteed by linker script)
-        ptask.heap_top = roundToNext(ptask.stack_top, PAGE); // any remaining space in page can be used for heap
+    @memset(code_mem, 0x00);
+    @memset(data_mem, 0x00);
 
-        // user code and data
-        const code_pages = numPagesBetween(code_start, code_end);
-        const data_pages = numPagesBetween(data_start, data_end);
-        const code_mem = paging.allocateMemoryAt(0x40_0000, code_pages, true, true);
-        const data_mem = paging.allocateMemoryAt(0x1000_0000, data_pages, true, true);
+    console.put(.{ "CODE:  ", code_start, " - ", code_end, ", DATA: ", data_start, " - ", data_end, "; entry: 0x", ehdr.e_entry, "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, "\n" });
 
-        @memset(code_mem, 0xC0);
-        @memset(data_mem, 0x00);
+    var i: u32 = 0;
 
-        console.put(.{ "CODE:  ", code_start, " - ", code_end, ", DATA: ", data_start, " - ", data_end, "; entry: 0x", entry, "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, "\n" });
+    while (i < ehdr.e_phnum) : (i += 1) {
+        const phdr = ehdr.phdrPtr(elf_data.ptr, i);
+        if (phdr.p_type != elf32.PT_LOAD) continue;
 
-        var i: u32 = 0;
+        const file_start = elf_data.ptr + phdr.p_offset;
+        const memsz = phdr.p_memsz;
+        const filesz = phdr.p_filesz;
 
-        while (i < ehdr.e_phnum) : (i += 1) {
-            const phdr = ehdr.phdrPtr(elf_data.ptr, i);
-            if (phdr.p_type != elf32.PT_LOAD) continue;
+        // TODO: needs bounds checking
+        const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
 
-            const file_start = elf_data.ptr + phdr.p_offset;
-            const memsz = phdr.p_memsz;
-            const filesz = phdr.p_filesz;
+        @memcpy(dest[0..filesz], file_start[0..filesz]);
+        @memset(dest[filesz..memsz], 0);
 
-            // TODO: needs bounds checking
-            const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
-
-            @memcpy(dest[0..filesz], file_start[0..filesz]);
-            @memset(dest[filesz..memsz], 0);
-
-            if (phdr.p_flags & elf32.P_X != 0) {
-                console.puts("Loaded code segment: ");
-            } else {
-                console.puts("Loaded data segment: ");
-            }
-            console.putHexU32(phdr.p_vaddr);
-            console.puts(" (");
-            console.putDecU32(filesz);
-            console.puts(" + ");
-            console.putDecU32(memsz - filesz);
-            console.puts(" bss bytes)");
-            console.newline();
+        if (phdr.p_flags & elf32.P_X != 0) {
+            console.puts("Loaded code segment: ");
+        } else {
+            console.puts("Loaded data segment: ");
         }
-        // Here we can already free the kernel allocation with the file contents
+        console.putHexU32(phdr.p_vaddr);
+        console.puts(" (");
+        console.putDecU32(filesz);
+        console.puts(" + ");
+        console.putDecU32(memsz - filesz);
+        console.puts(" bss bytes)");
+        console.newline();
     }
 
-    current_task.updateTss(&tss_cpu0);
+    ptask.setEntryPoint(ehdr.e_entry, ptask.stack_top);
+    return ptask;
+}
 
-    console.puts("\nSwitching to user mode...\n");
-    current_task.setEntryPoint(entry, ptask.stack_top);
-    current_task.switchTo();
+pub fn run(ptask: *task.Task) void {
+    ptask.switchTo(&tss_cpu0);
 }
 
 fn mountFs() !void {

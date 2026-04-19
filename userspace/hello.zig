@@ -41,6 +41,10 @@ pub fn getpid() pid_t {
     return syscall(39, 0, 0, 0);
 }
 
+pub fn yield() void {
+    _ = syscall(24, 0, 0, 0);
+}
+
 pub fn exit(exitcode: u32) noreturn {
     _ = syscall(60, exitcode, 0, 0);
     unreachable;
@@ -50,7 +54,12 @@ const STDOUT = 1;
 
 fn main() !void {
     var buf: [80]u8 = undefined;
-    _ = write(STDOUT, try std.fmt.bufPrint(&buf, "Hello, world from process {0}!\n", .{getpid()}));
+    const msg = try std.fmt.bufPrint(&buf, "Hello, world from process {0}!\n", .{getpid()});
+    var count: u32 = 10;
+    while (count > 0) : (count -= 1) {
+        _ = write(STDOUT, msg);
+        yield();
+    }
 }
 
 pub export fn _start() void {

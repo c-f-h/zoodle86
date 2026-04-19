@@ -32,9 +32,10 @@ pub const Task = struct {
 
     // Virtual memory mappings for this task
     page_dir: paging.PageDirectory align(4096) = undefined,
+    page_dir_phys_addr: u32 = undefined,
 
     pid: u32 = undefined, // unique process id
-    kernel_esp: usize = undefined, // kernel stack pointer on entry
+    kernel_esp: usize = 0, // kernel stack pointer on entry
 
     stack_bottom: u32 = undefined, // virtual address of the beginning of the stack
     stack_top: u32 = undefined, // virtual address of the end of the stack
@@ -64,10 +65,36 @@ pub const Task = struct {
         regs[9] = kernel.user_data_selector;
 
         task.kernel_esp = @intFromPtr(regs);
+
+        task.initPaging();
+    }
+
+    fn initPaging(task: *Task) void {
+        // TODO: this should only get the kernel mappings, not any existing userspace mappings
+        @memcpy(&task.page_dir, paging.getMappedPageDirectory());
+
+        // fix the recursive mapping entry to point to the new page directory
+        task.page_dir_phys_addr = paging.virtualToPhysical(&task.page_dir);
+        task.page_dir[1023] = paging.PDE{
+            .writable = true,
+            .user = false,
+            .page_table_addr = @truncate(task.page_dir_phys_addr >> 12),
+        };
+    }
+
+    /// Make this task's page directory the active one for the current CPU.
+    pub fn loadPageDir(task: *Task) void {
+        paging.loadPageDir(task.page_dir_phys_addr);
+    }
+
+    pub fn terminate(task: *Task) void {
+        // TODO: free allocated pages
+        task.pid = 0;
+        task.kernel_esp = 0;
     }
 
     /// Set up the TSS to point to the kernel stack associated to this task.
-    pub fn updateTss(task: *Task, tss: *gdt.Tss) void {
+    fn updateTss(task: *Task, tss: *gdt.Tss) void {
         const stack_top = @intFromPtr(&task.kernel_stack) + @sizeOf(KernelStack);
         tss.setKernelStack(stack_top);
     }
@@ -79,7 +106,9 @@ pub const Task = struct {
         stack_frame[0] = eip;
     }
 
-    pub inline fn switchTo(task: *Task) noreturn {
+    pub inline fn switchTo(task: *Task, tss: *gdt.Tss) noreturn {
+        task.updateTss(tss);
+        paging.loadPageDir(task.page_dir_phys_addr);
         asm volatile (
             \\ jmp task_switch
             :
