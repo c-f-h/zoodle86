@@ -17,6 +17,10 @@ pub const PDE = packed struct {
     page_size: bool = false, // 0 = 4KB pages, 1 = 4MB pages
     _ignored: u4 = 0,
     page_table_addr: u20, // physical address of page table >> 12
+
+    pub inline fn getPhysicalTableAddress(self: *const PDE) u32 {
+        return self.page_table_addr << 12;
+    }
 };
 
 /// Page Table Entry (32 bits)
@@ -32,6 +36,10 @@ pub const PTE = packed struct {
     global: bool = false,
     _ignored: u3 = 0,
     page_addr: u20, // physical address >> 12
+
+    pub inline fn getPhysicalPageAddress(self: *const PTE) u32 {
+        return self.page_addr << 12;
+    }
 };
 
 pub const PageTable = [1024]PTE; // 4 KiB - covers 4 MiB of RAM
@@ -211,3 +219,52 @@ pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) ca
         asm volatile ("hlt");
     }
 }
+
+/// Convenience struct to allocate/modify/free a contiguous range of virtual memory pages.
+pub const VMemRange = struct {
+    base: u32 = 0,
+    num_pages: u32 = 0,
+
+    /// Initialize the struct and allocate a contiguous range of virtual memory pages starting at the given virtual address.
+    pub fn allocate(range: *VMemRange, va: u32, num_pages: u32, user: bool, writable: bool) []u8 {
+        if (va & 0xFFF != 0) {
+            @panic("Virtual address must be page-aligned");
+        }
+        range.base = va;
+        range.num_pages = num_pages;
+        return allocateMemoryAt(va, num_pages, user, writable);
+    }
+
+    /// Change the user/supervisor and read/write permissions for this range.
+    pub fn changePermissions(range: *VMemRange, user: bool, writable: bool) void {
+        for (0..range.num_pages) |i| {
+            const va = range.base + i * 0x1000;
+            const pte = getPte(va);
+            pte.user = user;
+            pte.writable = writable;
+            invlpg(va);
+        }
+    }
+
+    /// Free all pages allocated by this range and clear the corresponding page directory/table entries.
+    pub fn freePages(range: *VMemRange) void {
+        for (0..range.num_pages) |i| {
+            const va = range.base + i * 0x1000;
+            const pte = getPte(va);
+            pageallocator.freePage(pte.getPhysicalPageAddress());
+            pte.* = @bitCast(@as(u32, 0));
+            invlpg(va);
+
+            // After the last page in a table or the range is freed, deallocate the page table itself.
+            const page_idx = pageIndex(va);
+            if (page_idx == 1023 or i == range.num_pages - 1) {
+                // Deallocate the full page table.
+                // NB: This makes the assumption that every page table is owned by a single VMemRange.
+                const pde = &mapped_pd[pageTableIndex(va)];
+                pageallocator.freePage(pde.getPhysicalTableAddress());
+                pde.* = @bitCast(@as(u32, 0));
+            }
+        }
+        range.* = .{};
+    }
+};

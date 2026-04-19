@@ -85,12 +85,6 @@ pub fn getFileSystem() *fs.FileSystem {
     return &disk_fs;
 }
 
-/// Terminates a task after first releasing any kernel resources associated with its descriptors.
-pub fn terminateTask(ptask: *task.Task) void {
-    filedesc.closeTaskFiles(ptask);
-    ptask.deactivate();
-}
-
 /// Keyboard event consumer called by interrupt handler
 export fn consume_key_event(event: *const keyboard.KeyEvent) void {
     if (cur_kb_handler) |handler| {
@@ -394,13 +388,13 @@ pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
     ptask.stack_bottom = ptask.stack_top - 16 * 1024; // 16 KiB stack space (guaranteed by linker script)
     ptask.heap_top = roundToNext(ptask.stack_top, PAGE); // any remaining space in page can be used for heap
 
-    // user code and data
-    ptask.loadPageDir();
     const code_pages = numPagesBetween(code_start, code_end);
     const data_pages = numPagesBetween(data_start, data_end);
-    const code_mem = paging.allocateMemoryAt(0x40_0000, code_pages, true, true);
-    const data_mem = paging.allocateMemoryAt(0x1000_0000, data_pages, true, true);
 
+    // user code and data
+    ptask.loadPageDir();
+    const code_mem = ptask.code_mem.allocate(0x0040_0000, code_pages, true, true);
+    const data_mem = ptask.data_mem.allocate(0x1000_0000, data_pages, true, true);
     @memset(code_mem, 0x00);
     @memset(data_mem, 0x00);
 
@@ -435,6 +429,9 @@ pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
         console.puts(" bss bytes)");
         console.newline();
     }
+
+    // mark code segment read-only after initialization
+    ptask.code_mem.changePermissions(true, false);
 
     ptask.setEntryPoint(ehdr.e_entry, ptask.stack_top);
     return ptask;

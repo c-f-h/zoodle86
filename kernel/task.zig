@@ -1,6 +1,7 @@
 const gdt = @import("gdt.zig");
 const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
+const filedesc = @import("filedesc.zig");
 
 const KERNEL_STACK_SIZE = 4096;
 const KernelStack = [KERNEL_STACK_SIZE]u8;
@@ -47,6 +48,8 @@ pub const Task = struct {
     stack_bottom: u32 = undefined,
     stack_top: u32 = undefined,
     heap_top: u32 = undefined,
+    code_mem: paging.VMemRange = .{},
+    data_mem: paging.VMemRange = .{},
     fd_table: [MAX_FDS]FdSlot = [_]FdSlot{.{}} ** MAX_FDS,
 
     /// Initializes a fresh task slot and its initial userspace context.
@@ -96,16 +99,14 @@ pub const Task = struct {
         paging.loadPageDir(task.page_dir_phys_addr);
     }
 
-    /// Terminates a task and releases any descriptor state owned by it.
+    /// Terminates a task and releases any resources owned by it.
     pub fn terminate(task: *Task) void {
-        kernel.terminateTask(task);
-    }
-
-    /// Clears the task slot so it can be reused by the task manager.
-    pub fn deactivate(task: *Task) void {
+        filedesc.closeTaskFiles(task);
         task.initFdTable();
         task.pid = 0;
         task.kernel_esp = 0;
+        task.code_mem.freePages();
+        task.data_mem.freePages();
     }
 
     /// Finds the first free userspace-visible file descriptor slot.

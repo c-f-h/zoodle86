@@ -16,3 +16,8 @@ pub fn allocPage() usize {
         @panic("Ran out of allocable pages");
     return page;
 }
+
+pub fn freePage(page: usize) void {
+    // TODO
+    _ = page;
+}
