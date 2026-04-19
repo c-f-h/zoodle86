@@ -1,8 +1,10 @@
-﻿const vga = @import("vgatext.zig");
+﻿const serial = @import("serial.zig");
+const vga = @import("vgatext.zig");
 
 var console_row: u32 = 0;
 var console_col: u32 = 0;
 var console_attr: u8 = 0x07;
+var serial_mirror_enabled: bool = false;
 
 fn syncCursor() void {
     vga.setCursorPos(console_row, console_col);
@@ -64,7 +66,20 @@ pub fn setAttr(attr: u8) void {
     console_attr = attr;
 }
 
+/// Enable or disable mirroring console output to the serial port.
+pub fn setSerialMirrorEnabled(enabled: bool) void {
+    serial_mirror_enabled = enabled;
+}
+
+/// Return whether console output is currently mirrored to serial.
+pub fn isSerialMirrorEnabled() bool {
+    return serial_mirror_enabled;
+}
+
 pub fn newline() void {
+    if (serial_mirror_enabled and serial.isInitialized()) {
+        serial.putch('\n');
+    }
     advanceLine();
     syncCursor();
 }
@@ -76,6 +91,9 @@ pub fn putch(ch: u8) void {
             return;
         },
         '\r' => {
+            if (serial_mirror_enabled and serial.isInitialized()) {
+                serial.putch(ch);
+            }
             console_col = 0;
             syncCursor();
             return;
@@ -83,6 +101,9 @@ pub fn putch(ch: u8) void {
         else => {},
     }
 
+    if (serial_mirror_enabled and serial.isInitialized()) {
+        serial.putch(ch);
+    }
     vga.putCharAt(console_row, console_col, ch, console_attr);
     console_col += 1;
     if (console_col >= vga.TEXT_WIDTH) {

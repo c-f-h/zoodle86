@@ -37,7 +37,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ### Applications & Tools
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, run, mkfs, dumpmem, keylog, shutdown, break).
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, serial, run, mkfs, dumpmem, keylog, shutdown, break).
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `extract_fs.zig`, `compile_fs.zig`: tools for extracting and compiling filesystem images.
 - `userspace/hello.zig`: freestanding userspace hello-world/yield smoke-test binary.
@@ -131,5 +131,5 @@ Context switch flow (user → kernel → user):
 - Debugging tips:
   - Use `objdump -S` to disassemble the kernel binary for resolving crash addresses
   - Use `initial_shell_commands` in `shell.zig` to automatically execute a sequence of commands on startup
-  - Make use the the Bochs serial output logging to `build/serial.txt` for tracing exceptions and program state
+  - Make use the the Bochs serial output logging to `build/serial.txt` for tracing exceptions and program state. Use the `serial on` shell command to mirror console output to the serial output.
 - Whenever the design of the project changes, keep AGENTS.md up to date!

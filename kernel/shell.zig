@@ -39,6 +39,7 @@ const commands = [_]Command{
     .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
+    .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Load one or several ELF binary executables and launch the first one.", .handler = cmdRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
@@ -172,6 +173,27 @@ fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
+fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+
+    const state = args.next() orelse {
+        console.puts("Serial mirroring is ");
+        console.puts(if (console.isSerialMirrorEnabled()) "on.\n" else "off.\n");
+        printUsage("serial");
+        return;
+    };
+
+    if (std.mem.eql(u8, state, "on")) {
+        console.setSerialMirrorEnabled(true);
+        console.puts("Serial mirroring enabled.\n");
+    } else if (std.mem.eql(u8, state, "off")) {
+        console.setSerialMirrorEnabled(false);
+        console.puts("Serial mirroring disabled.\n");
+    } else {
+        printUsage("serial");
+    }
+}
+
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     var first_task: ?*task.Task = null;
@@ -217,6 +239,8 @@ fn printUsage(name: []const u8) void {
             console.puts(" <old> <new>");
         } else if (std.mem.eql(u8, command.name, "dumpmem")) {
             console.puts(" <hex-address>");
+        } else if (std.mem.eql(u8, command.name, "serial")) {
+            console.puts(" <on|off>");
         }
         console.puts("\n");
     }
