@@ -24,7 +24,10 @@ INTERRUPTS_ASM = ROOT / "kernel" / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 USERSPACE_LINKER_SCRIPT = ROOT / "userspace.ld"
 ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
-USERSPACE_SRC = ROOT / "userspace" / "hello.zig"
+USERSPACE_SOURCES = [
+    ROOT / "userspace" / "hello.zig",
+    ROOT / "userspace" / "fs_stress.zig",
+]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 SERIALOUT = BUILD_DIR / "serial.txt"
@@ -71,7 +74,7 @@ BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 SERIALOUT_PATH = SERIALOUT
 ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
-USERSPACE_EXE = build_artifact(USERSPACE_SRC, ".elf")
+USERSPACE_EXES = [build_artifact(path, ".elf") for path in USERSPACE_SOURCES]
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 IMAGE_SIZE_SECTORS = IMAGE_SIZE // 512
@@ -259,8 +262,10 @@ def build_fs_image(target, source, env):
             ]
         )
 
-    # inject the userspace binary - drop the .elf extension
-    shutil.copy2(USERSPACE_EXE, FS_IMAGE_DIR / USERSPACE_EXE.stem)
+    # Inject each userspace binary into the filesystem image, dropping the .elf extension.
+    for userspace_exe in source:
+        userspace_path = pathlib.Path(str(userspace_exe))
+        shutil.copy2(userspace_path, FS_IMAGE_DIR / userspace_path.stem)
 
     run(
         [
@@ -341,8 +346,11 @@ stage2_payload = env.Command(
     Action(build_stage2_payload, "Flattening $SOURCE"),
 )
 boot_bin = env.Command(str(BOOT_BIN), [BOOT_ASM, stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
-userspace_exe = env.Command(str(USERSPACE_EXE), [USERSPACE_SRC, USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET"))
-fsimage = env.Command(str(FS_IMAGE), [userspace_exe], Action(build_fs_image, "Building $TARGET"))
+userspace_exes = [
+    env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET"))
+    for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
+]
+fsimage = env.Command(str(FS_IMAGE), userspace_exes, Action(build_fs_image, "Building $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)
 

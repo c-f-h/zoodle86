@@ -40,7 +40,9 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, run, mkfs, dumpmem, keylog, shutdown, break).
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `extract_fs.zig`, `compile_fs.zig`: tools for extracting and compiling filesystem images.
-- `userspace/hello.zig`, `userspace.ld`: freestanding userspace ELF smoke-test binary and linker script.
+- `userspace/hello.zig`: freestanding userspace hello-world/yield smoke-test binary.
+- `userspace/fs_stress.zig`: freestanding userspace filesystem stress test that keeps two file descriptors open and alternates writes.
+- `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers and linker script.
 
 ### Build Configuration
 - `stage2.ld`, `userspace.ld`: linker scripts for stage-2 and userspace.
@@ -50,7 +52,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ## Build, Test, and Development Commands
 
-- `scons`: build the boot sector, stage-2 payload, userspace ELF, filesystem image, and final `build/image.img`.
+- `scons`: build the boot sector, stage-2 payload, userspace ELFs, filesystem image, and final `build/image.img`.
 - `scons run`: build and run the image in Bochs.
 - `scons debug`: build and run the image in Bochs with the debugger attached.
 - `scons qemu`: build and run the image in QEMU.
@@ -58,7 +60,8 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 Build pipeline overview:
 - `build/stage2.elf`: linked from `kernel/kernel.zig` and `interrupts.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
-- `build/userspace.elf`: linked from `userspace.zig` and copied into the filesystem image.
+- `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.
+- `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.
 
