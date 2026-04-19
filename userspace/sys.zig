@@ -18,11 +18,19 @@ const FileOpenFlags = packed struct(u32) {
     reserved2: u21 = 0, // 11-31
 };
 
+/// Selects the reference point used by the `lseek` syscall.
+pub const SeekWhence = enum(u32) {
+    Set = 0, // offset from beginning of file
+    Cur = 1, // offset from current position
+    End = 2, // offset from end of file
+};
+
 const Syscall = enum(u32) {
     Read = 0,
     Write = 1,
     Open = 2,
     Close = 3,
+    Seek = 8,
     Yield = 24,
     GetPid = 39,
     Exit = 60,
@@ -81,6 +89,11 @@ pub fn open(path: []const u8, flags: FileOpenFlags) u32 {
 /// Closes a userspace-visible file descriptor.
 pub fn close(fd: u32) u32 {
     return syscall(.Close, fd, 0, 0);
+}
+
+/// Repositions a userspace-visible file descriptor and returns the new offset.
+pub fn lseek(fd: u32, offset: i32, whence: SeekWhence) u32 {
+    return syscall(.Seek, fd, @bitCast(offset), @intFromEnum(whence));
 }
 
 /// Unlinks a filesystem path by name.

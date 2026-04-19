@@ -8,6 +8,8 @@ EXPECTED_FILES = {
     "fdstrs_a.txt": b"A",
     "fdstrs_b.txt": b"B",
 }
+SEEK_FILE = "seek.txt"
+SEEK_EXPECTED = b"01234AB789XY\x00\x00Z"
 
 
 def fill_chunk(file_tag: int, iteration: int) -> bytes:
@@ -67,6 +69,18 @@ def main() -> int:
             return 1
 
         print(f"Verified {name}: {len(data)} bytes")
+
+    seek_path = root / SEEK_FILE
+    if not seek_path.is_file():
+        print(f"Missing expected file: {seek_path}")
+        return 1
+
+    seek_data = seek_path.read_bytes()
+    if seek_data != SEEK_EXPECTED:
+        print(f"Content mismatch for {SEEK_FILE}")
+        return 1
+
+    print(f"Verified {SEEK_FILE}: {len(seek_data)} bytes")
 
     return 0
 

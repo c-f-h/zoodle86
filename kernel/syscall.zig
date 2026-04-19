@@ -7,6 +7,7 @@ const Syscall = enum(u32) {
     Write = 1,
     Open = 2,
     Close = 3,
+    Lseek = 8,
     Yield = 24,
     GetPid = 39,
     Exit = 60,
@@ -46,6 +47,7 @@ fn mapError(err: anyerror) u32 {
         error.InvalidFlags => ERRNO_EINVAL,
         error.InvalidLba => ERRNO_EIO,
         error.InvalidName => ERRNO_EINVAL,
+        error.InvalidSeek => ERRNO_EINVAL,
         error.InvalidSuperblock => ERRNO_EIO,
         error.NoDevice => ERRNO_EIO,
         error.NoSpace => ERRNO_ENOSPC,
@@ -84,6 +86,11 @@ fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
     return @intCast(filedesc.writeFile(kernel.getFileSystem(), kernel.getAllocator(), task.getCurrentTask(), fd, data) catch |err| return mapError(err));
 }
 
+fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {
+    const offset: i32 = @bitCast(offset_bits);
+    return filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence) catch |err| mapError(err);
+}
+
 /// Dispatches the int 0x80 syscall ABI invoked by user-mode executables.
 pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
     return switch (nr) {
@@ -93,6 +100,7 @@ pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) cal
             kernel.reschedule();
         },
         .GetPid => task.getCurrentTask().pid,
+        .Lseek => sys_lseek(arg1, arg2, arg3),
         .Open => sys_open(arg1, arg2, arg3),
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),

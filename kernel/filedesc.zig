@@ -10,6 +10,9 @@ pub const O_ACCMODE: u32 = 3;
 pub const O_CREAT: u32 = 1 << 6;
 pub const O_TRUNC: u32 = 1 << 9;
 pub const O_APPEND: u32 = 1 << 10;
+pub const SEEK_SET: u32 = 0;
+pub const SEEK_CUR: u32 = 1;
+pub const SEEK_END: u32 = 2;
 
 pub const MAX_OPEN_FILES = 32;
 
@@ -18,8 +21,15 @@ pub const FiledescError = fs.WriteFileError || error{
     BadFd,
     FileInUse,
     InvalidFlags,
+    InvalidSeek,
     ProcessFileTableFull,
     SystemFileTableFull,
+};
+
+const SeekWhence = enum(u32) {
+    Set = SEEK_SET,
+    Cur = SEEK_CUR,
+    End = SEEK_END,
 };
 
 const OpenFile = struct {
@@ -113,6 +123,32 @@ pub fn writeFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *
             const written = try disk_fs.writeFileAt(allocator, open_file.entry_index, write_offset, src);
             open_file.offset = std.math.add(u32, write_offset, written) catch return error.NoSpace;
             break :blk written;
+        },
+        else => error.BadFd,
+    };
+}
+
+/// Repositions a task-owned file descriptor and returns the resulting byte offset.
+pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32, whence_raw: u32) FiledescError!u32 {
+    const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
+    return switch (slot.kind) {
+        .file => blk: {
+            const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
+            const whence = switch (whence_raw) {
+                SEEK_SET => SeekWhence.Set,
+                SEEK_CUR => SeekWhence.Cur,
+                SEEK_END => SeekWhence.End,
+                else => return error.InvalidSeek,
+            };
+            const base: i64 = switch (whence) {
+                .Set => 0,
+                .Cur => open_file.offset,
+                .End => try disk_fs.getFileSize(open_file.entry_index),
+            };
+            const next_offset = std.math.add(i64, base, @as(i64, offset)) catch return error.InvalidSeek;
+            if (next_offset < 0 or next_offset > std.math.maxInt(u32)) return error.InvalidSeek;
+            open_file.offset = @intCast(next_offset);
+            break :blk open_file.offset;
         },
         else => error.BadFd,
     };

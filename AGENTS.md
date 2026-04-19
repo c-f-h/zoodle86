@@ -14,7 +14,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
 - `kernel/task.zig`: task/process management with per-task GDT entries, kernel stacks, user memory regions, page directories, and per-task file descriptor mappings. Includes `switchTo()` for low-level context switching and `terminate()` for freeing task resources.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) with round-robin scheduler; `getNextActiveTask()` finds the next runnable task for cooperative scheduling.
-- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close` descriptor semantics layered over the filesystem and console streams.
+- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over the filesystem and console streams.
 - `kernel/syscall.zig`: syscall number enum and dispatch entry point; routes `int 0x80` calls from user mode into kernel handlers for stdout, file descriptors, process control, and scheduling.
 
 ### Console & Input/Output
@@ -41,7 +41,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `extract_fs.zig`, `compile_fs.zig`: tools for extracting and compiling filesystem images.
 - `userspace/hello.zig`: freestanding userspace hello-world/yield smoke-test binary.
-- `userspace/fs_stress.zig`: freestanding userspace filesystem stress test that keeps two file descriptors open and alternates writes.
+- `userspace/fs_stress.zig`: freestanding userspace filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
 - `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers and linker script.
 
 ### Build Configuration
@@ -113,6 +113,7 @@ Context switch flow (user → kernel → user):
 | `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to stdout/stderr or filesystem-backed fds |
 | `open` | 2 | path_offset, path_len, flags | fd or `FAIL` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
 | `close` | 3 | fd | 0 or `FAIL` | Closes stdio or filesystem-backed fds |
+| `lseek` | 8 | fd, signed_offset, whence | new offset or `FAIL` | Supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`; may seek past EOF |
 | `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
 | `exit` | 60 | — | — | Terminates task, closes descriptors, and reschedules; does not return |

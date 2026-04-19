@@ -10,11 +10,13 @@ fn expectSyscall(rc: u32) !u32 {
 
 const stress_file_a = "fdstrs_a.txt";
 const stress_file_b = "fdstrs_b.txt";
+const seek_file = "seek.txt";
 const unlink_file = "unlink.txt";
 const nonexistent_file = "nonexistent.txt";
 const chunk_size = 640;
 const chunk_count = 6;
 const total_bytes = chunk_size * chunk_count;
+const seek_expected = "01234AB789XY\x00\x00Z";
 
 fn writeAll(fd: u32, buf: []const u8) !void {
     const written = try expectSyscall(sys.write(fd, buf));
@@ -34,6 +36,14 @@ fn expectEof(fd: u32) !void {
     var buf: [1]u8 = undefined;
     const bytes_read = try expectSyscall(sys.read(fd, &buf));
     if (bytes_read != 0) return error.ExpectedEof;
+}
+
+fn expectOffset(actual: u32, expected: u32) !void {
+    if (actual != expected) return error.UnexpectedOffset;
+}
+
+fn expectBytes(actual: []const u8, expected: []const u8) !void {
+    if (!std.mem.eql(u8, actual, expected)) return error.DataMismatch;
 }
 
 fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
@@ -62,6 +72,41 @@ fn verifyFileContents(path: []const u8, expected: []const u8) !void {
     try readExact(fd, &actual);
     try expectEof(fd);
     if (!std.mem.eql(u8, &actual, expected)) return error.DataMismatch;
+}
+
+fn verifySeekSemantics() !void {
+    const fd = try expectSyscall(sys.open(seek_file, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+    errdefer _ = sys.close(fd);
+
+    try writeAll(fd, "0123456789");
+    try expectOffset(try expectSyscall(sys.lseek(fd, 4, .Set)), 4);
+
+    var window: [3]u8 = undefined;
+    const bytes_read = try expectSyscall(sys.read(fd, &window));
+    if (bytes_read != window.len) return error.ShortRead;
+    try expectBytes(&window, "456");
+
+    try expectOffset(try expectSyscall(sys.lseek(fd, -2, .Cur)), 5);
+    try writeAll(fd, "AB");
+
+    try expectOffset(try expectSyscall(sys.lseek(fd, 0, .End)), 10);
+    try writeAll(fd, "XY");
+
+    try expectOffset(try expectSyscall(sys.lseek(fd, 2, .End)), 14);
+    try writeAll(fd, "Z");
+
+    if (sys.lseek(fd, -100, .Cur) != FAIL) return error.ExpectedFailure;
+    if (sys.lseek(sys.STDOUT, 0, .Set) != FAIL) return error.ExpectedFailure;
+
+    if (sys.close(fd) == FAIL) return error.SyscallFailed;
+
+    const verify_fd = try expectSyscall(sys.open(seek_file, .{ .open_mode = .ReadOnly }));
+    defer _ = sys.close(verify_fd);
+
+    var actual: [seek_expected.len]u8 = undefined;
+    try readExact(verify_fd, &actual);
+    try expectEof(verify_fd);
+    try expectBytes(&actual, seek_expected);
 }
 
 fn verifyUnlinkSemantics() !void {
@@ -126,6 +171,7 @@ fn main() !void {
 
     try verifyFileContents(stress_file_a, &expected_a);
     try verifyFileContents(stress_file_b, &expected_b);
+    try verifySeekSemantics();
     try verifyUnlinkSemantics();
 
     _ = sys.write(sys.STDOUT, "filesystem alternating descriptor stress test OK\n");
