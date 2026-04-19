@@ -10,6 +10,7 @@ const shell = @import("shell.zig");
 const idt = @import("idt.zig");
 const paging = @import("paging.zig");
 const pageallocator = @import("pageallocator.zig");
+const serial = @import("serial.zig");
 const syscall = @import("syscall.zig");
 
 const std = @import("std");
@@ -120,6 +121,8 @@ export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callcon
     console.formatHexU(4, errcode, err[27..35]);
     console.formatHexU(2, cs, err[48..52]);
     console.formatHexU(4, eip, err[57..65]);
+    serial.puts(&err);
+    serial.puts("\n");
 
     // The original cs tells us whether the fault happened in userspace (ring 3); in that
     // case we should terminate only the userspace program and continue.
@@ -260,6 +263,8 @@ pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
 
 fn kernel_main() !void {
     zero_bss();
+    serial.init();
+    serial.puts("zoodle86 serial online\n");
     initGdt();
 
     {
@@ -436,6 +441,9 @@ fn mountFs() !void {
 pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
     _ = trace;
     _ = return_address;
+    serial.puts("KERNEL PANIC:\n");
+    serial.puts(message);
+    serial.puts("\nSystem halted.\n");
     console.setCursor(0, 0);
     console.setAttr(0x4F); // Red background, white text
     console.put(.{ "KERNEL PANIC:\n", message, "\nSystem halted." });

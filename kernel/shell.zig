@@ -9,6 +9,13 @@ const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
 const task = @import("task.zig");
 
+// For debugging: automatically execute shell commands at boot time
+const initial_shell_commands = [_][]const u8{
+    //"run hello hello",
+    //"shutdown",
+};
+var cur_initial_cmd_idx: usize = 0;
+
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
 const Shell = struct {
@@ -37,6 +44,19 @@ const commands = [_]Command{
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
 
+fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
+    var args = std.mem.tokenizeAny(u8, cmdline, " \t");
+    const cmd_name = args.next() orelse return;
+
+    if (findCommand(cmd_name)) |command| {
+        try command.handler(shell, &args);
+    } else {
+        console.puts("Unknown command ");
+        console.puts(cmd_name);
+        console.newline();
+    }
+}
+
 /// Run the interactive shell command loop.
 pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
     var shell = Shell{
@@ -44,19 +64,17 @@ pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
         .disk_fs = disk_fs,
     };
 
+    // process startup commands
+    if (cur_initial_cmd_idx < initial_shell_commands.len) {
+        const cmd = initial_shell_commands[cur_initial_cmd_idx];
+        cur_initial_cmd_idx += 1;
+        try handleCommand(&shell, cmd);
+    }
+
     while (true) {
         var cmdline_buf = [1]u8{0} ** 128;
         const cmdline = try readLineInto(&cmdline_buf);
-        var args = std.mem.tokenizeAny(u8, cmdline, " \t");
-        const cmd_name = args.next() orelse continue;
-
-        if (findCommand(cmd_name)) |command| {
-            try command.handler(&shell, &args);
-        } else {
-            console.puts("Unknown command ");
-            console.puts(cmd_name);
-            console.newline();
-        }
+        try handleCommand(&shell, cmdline);
     }
 }
 

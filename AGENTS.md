@@ -18,6 +18,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ### Console & Input/Output
 - `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, and memory dumps.
+- `kernel/serial.zig`: COM1 serial driver for debug output and exception logging to the host via Bochs.
 - `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write, cursor control.
 - `kernel/keyboard.zig`: scancode-to-keycode conversion, extended key support, modifier tracking, ASCII conversion.
 - `kernel/readline.zig`: line editing with cursor navigation, character insertion/deletion, line clearing.
@@ -44,6 +45,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `stage2.ld`, `userspace.ld`: linker scripts for stage-2 and userspace.
 - `SConstruct`: SCons build and run entrypoints.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
+- Bochs serial output is captured to `build/serial.txt` via the generated `build/bochsrc.txt`.
 
 ## Build, Test, and Development Commands
 
@@ -84,6 +86,8 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Exception Handling**: The kernel handles multiple exception types including Page Fault (0x0E), General Protection Fault (0x0D), and others. User-mode faults (such as page faults) terminate the offending task without crashing the kernel.
 
+**Serial Debug Output**: The kernel initializes COM1 early in boot and writes exception and panic diagnostics to the serial port. Bochs is configured with `com1: enabled=1, mode=file` so this output is captured in `build/serial.txt` on the host.
+
 **Memory Management**: The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has its own 4 KB kernel stack (power-of-2 aligned), with the current task pointer stored at the stack base.
 
 **Task/Process Management**: Each `Task` struct holds a 4 KB kernel stack (first word stores a pointer back to the `Task` for `getCurrentTask()`), a 4 KB per-task page directory, a unique PID, a saved `kernel_esp` (0 = free slot), and user-mode stack/heap bounds. User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). A fixed pool of 8 task slots is managed by `taskman.zig`.
@@ -115,5 +119,8 @@ Context switch flow (user → kernel → user):
 ## General Guidelines
 
 - Every public Zig function should have at least a one-line doc comment explaining its function.
-- For debugging protection faults and other exceptions with kernel EIP information, you can use `objdump -S` to disassemble the kernel binary.
+- Debugging tips:
+  - Use `objdump -S` to disassemble the kernel binary for resolving crash addresses
+  - Use `initial_shell_commands` in `shell.zig` to automatically execute a sequence of commands on startup
+  - Make use the the Bochs serial output logging to `build/serial.txt` for tracing exceptions and program state
 - Whenever the design of the project changes, keep AGENTS.md up to date!

@@ -1,4 +1,5 @@
 const pageallocator = @import("pageallocator.zig");
+const serial = @import("serial.zig");
 
 // Identity-mapped paging module.
 // Provides minimal static page directory and pre-allocated page tables for identity mapping.
@@ -190,6 +191,14 @@ pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) ca
     );
 
     const console = @import("console.zig");
+
+    serial.puts("\n!!! PAGE FAULT !!!\nError code: ");
+    serial.putHexU32(errcode);
+    serial.puts("\nAddress:    ");
+    serial.putHexU32(cr2);
+    serial.puts("\neip:        ");
+    serial.putHexU32(eip);
+    serial.puts("\nHalting.\n");
 
     console.put(.{
         "\n!!! PAGE FAULT !!!\nError code: ", errcode,

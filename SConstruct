@@ -27,6 +27,7 @@ ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 USERSPACE_SRC = ROOT / "userspace" / "hello.zig"
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
+SERIALOUT = BUILD_DIR / "serial.txt"
 
 IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
@@ -68,6 +69,7 @@ FS_IMAGE = BUILD_DIR / "fsimage.img"   # file system image, without bootloader a
 BOOT_IMG = BUILD_DIR / "image.img"     # final image with bootloader/stage 2/filesystem
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
+SERIALOUT_PATH = SERIALOUT
 ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
 USERSPACE_EXE = build_artifact(USERSPACE_SRC, ".elf")
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
@@ -87,6 +89,7 @@ def write_bochsrc(target, source, env):
                 "boot: c",
                 f'ata0-master: type=disk, path="{BOOT_IMG.relative_to(ROOT)}", mode=flat',
                 f'log: {BOCHSOUT_PATH.relative_to(ROOT)}',
+                f'com1: enabled=1, mode=file, dev="{SERIALOUT_PATH.relative_to(ROOT).as_posix()}"',
                 'display_library: win32, options="autoscale, gui_debug"',
                 "panic: action=ask",
                 "error: action=report",
