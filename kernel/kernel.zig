@@ -346,7 +346,11 @@ pub fn reschedule() noreturn {
     const current_task = task.getCurrentTask();
     if (taskman.getNextActiveTask(current_task)) |next_task| {
         next_task.switchTo(&tss_cpu0);
+    } else if (current_task.kernel_esp != 0) {
+        // If no other task is runnable, switch back to the current one if it's still running
+        current_task.switchTo(&tss_cpu0);
     } else {
+        // No more active tasks; return to the kernel shell
         kernel_reenter();
     }
 }

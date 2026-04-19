@@ -20,15 +20,14 @@ pub fn newTask() *task.Task {
     @panic("No free task slots");
 }
 
+/// Return the next runnable task after `ptask`, or null if none exists.
 pub fn getNextActiveTask(ptask: *task.Task) ?*task.Task {
     const cur_idx = ptask - &tasks[0];
-    var idx = cur_idx + 1;
-    while (idx != cur_idx) {
-        if (idx >= tasks.len) idx = 0;
+    var idx = (cur_idx + 1) % tasks.len;
+    while (idx != cur_idx) : (idx = (idx + 1) % tasks.len) {
         if (tasks[idx].kernel_esp != 0) {
             return &tasks[idx];
         }
-        idx += 1;
     }
     return null;
 }
