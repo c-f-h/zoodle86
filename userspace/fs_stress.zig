@@ -1,13 +1,16 @@
 const std = @import("std");
 const sys = @import("sys.zig");
 
-fn expectSyscall(rc: i32) !u32 {
-    if (rc < 0) return error.SyscallFailed;
-    return @intCast(rc);
+const FAIL = 0xFFFFFFFF;
+
+fn expectSyscall(rc: u32) !u32 {
+    if (rc == FAIL) return error.SyscallFailed;
+    return rc;
 }
 
 const stress_file_a = "fdstrs_a.txt";
 const stress_file_b = "fdstrs_b.txt";
+const nonexistent_file = "nonexistent.txt";
 const chunk_size = 640;
 const chunk_count = 6;
 const total_bytes = chunk_size * chunk_count;
@@ -51,7 +54,7 @@ fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
 }
 
 fn verifyFileContents(path: []const u8, expected: []const u8) !void {
-    const fd = try expectSyscall(sys.open(path, sys.O_RDONLY));
+    const fd = try expectSyscall(sys.open(path, .{ .open_mode = .ReadOnly }));
     defer _ = sys.close(fd);
 
     var actual: [total_bytes]u8 = undefined;
@@ -61,12 +64,18 @@ fn verifyFileContents(path: []const u8, expected: []const u8) !void {
 }
 
 fn main() !void {
-    var banner: [96]u8 = undefined;
-    const msg = try std.fmt.bufPrint(&banner, "Hello from process {d}, stress-testing filesystem syscalls...\n", .{sys.getpid()});
-    _ = sys.write(sys.STDOUT, msg);
+    var buf: [96]u8 = undefined;
+    _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
 
-    const fd_a = try expectSyscall(sys.open(stress_file_a, sys.O_CREAT | sys.O_TRUNC | sys.O_RDWR));
-    const fd_b = try expectSyscall(sys.open(stress_file_b, sys.O_CREAT | sys.O_TRUNC | sys.O_RDWR));
+    const fd_a = try expectSyscall(sys.open(stress_file_a, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+    const fd_b = try expectSyscall(sys.open(stress_file_b, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+
+    const fd_c = sys.open(nonexistent_file, .{ .open_mode = .ReadOnly });
+    if (fd_c != FAIL) {
+        _ = sys.write(sys.STDOUT, "unexpectedly opened nonexistent file\n");
+        _ = sys.close(fd_c);
+        return error.SyscallFailed;
+    }
 
     var expected_a: [total_bytes]u8 = undefined;
     var expected_b: [total_bytes]u8 = undefined;
@@ -86,17 +95,14 @@ fn main() !void {
         try writeAll(fd_b, &chunk_b);
     }
 
-    if (sys.close(fd_a) < 0) return error.SyscallFailed;
-    if (sys.close(fd_b) < 0) return error.SyscallFailed;
+    if (sys.close(fd_a) == FAIL) return error.SyscallFailed;
+    if (sys.close(fd_b) == FAIL) return error.SyscallFailed;
 
     try verifyFileContents(stress_file_a, &expected_a);
     try verifyFileContents(stress_file_b, &expected_b);
 
     _ = sys.write(sys.STDOUT, "filesystem alternating descriptor stress test OK\n");
     sys.yield();
-    _ = sys.write(sys.STDOUT, "stdout still works after file I/O\n");
-    _ = sys.STDERR;
-    _ = sys.STDIN;
 }
 
 pub export fn _start() void {

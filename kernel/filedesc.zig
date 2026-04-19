@@ -7,9 +7,9 @@ pub const O_RDONLY: u32 = 0;
 pub const O_WRONLY: u32 = 1;
 pub const O_RDWR: u32 = 2;
 pub const O_ACCMODE: u32 = 3;
-pub const O_CREAT: u32 = 64;
-pub const O_TRUNC: u32 = 512;
-pub const O_APPEND: u32 = 1024;
+pub const O_CREAT: u32 = 1 << 6;
+pub const O_TRUNC: u32 = 1 << 9;
+pub const O_APPEND: u32 = 1 << 10;
 
 pub const MAX_OPEN_FILES = 32;
 

@@ -347,7 +347,7 @@ stage2_payload = env.Command(
 )
 boot_bin = env.Command(str(BOOT_BIN), [BOOT_ASM, stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
 userspace_exes = [
-    env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET"))
+    AlwaysBuild(env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET")))
     for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
 ]
 fsimage = env.Command(str(FS_IMAGE), userspace_exes, Action(build_fs_image, "Building $TARGET"))

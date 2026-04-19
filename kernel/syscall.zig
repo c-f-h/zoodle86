@@ -25,7 +25,9 @@ const ERRNO_EINVAL: u32 = 22;
 const ERRNO_ENOSPC: u32 = 28;
 
 fn errnoResult(errno: u32) u32 {
-    return @bitCast(-@as(i32, @intCast(errno)));
+    _ = errno;
+    // TODO: set errno
+    return 0xFFFF_FFFF;
 }
 
 fn mapError(err: anyerror) u32 {
