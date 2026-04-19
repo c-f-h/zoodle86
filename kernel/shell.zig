@@ -11,7 +11,7 @@ const task = @import("task.zig");
 
 // For debugging: automatically execute shell commands at boot time
 const initial_shell_commands = [_][]const u8{
-    //"run hello hello",
+    //"run hello",
     //"shutdown",
 };
 var cur_initial_cmd_idx: usize = 0;
@@ -64,8 +64,8 @@ pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
         .disk_fs = disk_fs,
     };
 
-    // process startup commands
-    if (cur_initial_cmd_idx < initial_shell_commands.len) {
+    // Process all queued startup commands before switching to the interactive loop.
+    while (cur_initial_cmd_idx < initial_shell_commands.len) {
         const cmd = initial_shell_commands[cur_initial_cmd_idx];
         cur_initial_cmd_idx += 1;
         try handleCommand(&shell, cmd);
