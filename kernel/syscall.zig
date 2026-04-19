@@ -10,6 +10,7 @@ const Syscall = enum(u32) {
     Yield = 24,
     GetPid = 39,
     Exit = 60,
+    Unlink = 87,
     _,
 };
 
@@ -21,6 +22,7 @@ const ERRNO_EEXIST: u32 = 17;
 const ERRNO_ENFILE: u32 = 23;
 const ERRNO_EMFILE: u32 = 24;
 const ERRNO_EBADF: u32 = 9;
+const ERRNO_EBUSY: u32 = 16;
 const ERRNO_EINVAL: u32 = 22;
 const ERRNO_ENOSPC: u32 = 28;
 
@@ -34,6 +36,7 @@ fn mapError(err: anyerror) u32 {
     return errnoResult(switch (err) {
         error.AccessDenied => ERRNO_EACCES,
         error.BadFd => ERRNO_EBADF,
+        error.FileInUse => ERRNO_EBUSY,
         error.ControllerError => ERRNO_EIO,
         error.Corrupt => ERRNO_EIO,
         error.DeviceFault => ERRNO_EIO,
@@ -65,6 +68,12 @@ fn sys_close(fd: u32) u32 {
     return 0;
 }
 
+fn sys_unlink(path_ofs: u32, path_len: u32) u32 {
+    const path = task.getCurrentTask().getUserMem(path_ofs, path_len);
+    filedesc.unlinkFile(kernel.getFileSystem(), path) catch |err| return mapError(err);
+    return 0;
+}
+
 fn sys_read(fd: u32, ofs: u32, count: u32) u32 {
     const dest = task.getCurrentTask().getUserMem(ofs, count);
     return @intCast(filedesc.readFile(kernel.getFileSystem(), task.getCurrentTask(), fd, dest) catch |err| return mapError(err));
@@ -87,6 +96,7 @@ pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) cal
         .Open => sys_open(arg1, arg2, arg3),
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),
+        .Unlink => sys_unlink(arg1, arg2),
         .Yield => kernel.reschedule(),
         else => errnoResult(ERRNO_EINVAL),
     };

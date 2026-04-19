@@ -105,21 +105,22 @@ Context switch flow (user → kernel → user):
 4. `reschedule()` calls `next_task.switchTo(&tss_cpu0)` which runs inline assembly: loads the new page directory into CR3, places the new task's `kernel_esp` in EAX, and jumps to `task_switch`.
 5. `task_switch` restores the stack pointer then falls through to `return_to_userspace` which executes `popad / pop es / pop ds / iretd` to resume user code.
 
-**Syscall ABI**: User-mode programs invoke syscalls via `int 0x80` with the syscall number in `eax` and up to three arguments in `ebx`, `ecx`, `edx`. The return value is placed in `eax`.
+**Syscall ABI**: User-mode programs invoke syscalls via `int 0x80` with the syscall number in `eax` and up to three arguments in `ebx`, `ecx`, `edx`. The return value is placed in `eax`. On failure, syscalls return `FAIL = 0xFFFFFFFF`.
 
 | Syscall | Number | Arguments | Returns | Notes |
 |---------|--------|-----------|---------|-------|
-| `read` | 0 | fd, buf_offset, count | bytes read or `-errno` | Reads from filesystem-backed fds |
-| `write` | 1 | fd, buf_offset, count | bytes written or `-errno` | Writes to stdout/stderr or filesystem-backed fds |
-| `open` | 2 | path_offset, path_len, flags | fd or `-errno` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
-| `close` | 3 | fd | 0 or `-errno` | Closes stdio or filesystem-backed fds |
+| `read` | 0 | fd, buf_offset, count | bytes read or `FAIL` | Reads from filesystem-backed fds |
+| `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to stdout/stderr or filesystem-backed fds |
+| `open` | 2 | path_offset, path_len, flags | fd or `FAIL` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
+| `close` | 3 | fd | 0 or `FAIL` | Closes stdio or filesystem-backed fds |
 | `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
 | `exit` | 60 | — | — | Terminates task, closes descriptors, and reschedules; does not return |
+| `unlink` | 87 | path_offset, path_len | 0 or `FAIL` | Removes a filesystem entry; fails if the file is still open by any task |
 
 **Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–63 are reserved for the stage-2 loader. The custom filesystem begins at sector 64. The filesystem uses a one-sector superblock, an eight-sector flat root directory (64 entries × 64 bytes), and contiguous file extents allocated from reusable gaps with a first-fit scan. Directory slot 0 is reserved for a future bootable kernel file. Files are stored in contiguous extents with metadata (name, state, extent location, timestamps) tracked in the root directory.
 
-**Filesystem**: The ZOD1 filesystem is fixed-layout with extent-based allocation. Files support read, write (create/overwrite), offset-based descriptor I/O, delete, and rename operations. Writes still rewrite whole contiguous extents under the hood, but allocation can now reuse gaps left by deleted or superseded extents. Directory entries track file state (FREE, FILE, RESERVED, DELETED), name (16 bytes max), extent info, and timestamps. Maximum 16-byte filenames and 64 directory entries.
+**Filesystem**: The ZOD1 filesystem is fixed-layout with extent-based allocation. Files support read, write (create/overwrite), offset-based descriptor I/O, delete, rename, and userspace `unlink` operations. Writes still rewrite whole contiguous extents under the hood, but allocation can now reuse gaps left by deleted or superseded extents. Because open descriptors currently track directory-entry indices directly, `unlink` rejects files that are still open rather than emulating POSIX delete-on-last-close semantics. Directory entries track file state (FREE, FILE, RESERVED, DELETED), name (16 bytes max), extent info, and timestamps. Maximum 16-byte filenames and 64 directory entries.
 
 **IDE & Storage**: The kernel uses LBA28 addressing (maximum 128 GB disks) and communicates with the primary IDE bus (I/O base 0x1F0, control base 0x3F6). Sector-level I/O with status polling and error handling (timeout, device fault, controller error).
 

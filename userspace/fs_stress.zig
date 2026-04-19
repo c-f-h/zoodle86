@@ -10,6 +10,7 @@ fn expectSyscall(rc: u32) !u32 {
 
 const stress_file_a = "fdstrs_a.txt";
 const stress_file_b = "fdstrs_b.txt";
+const unlink_file = "unlink.txt";
 const nonexistent_file = "nonexistent.txt";
 const chunk_size = 640;
 const chunk_count = 6;
@@ -63,6 +64,31 @@ fn verifyFileContents(path: []const u8, expected: []const u8) !void {
     if (!std.mem.eql(u8, &actual, expected)) return error.DataMismatch;
 }
 
+fn verifyUnlinkSemantics() !void {
+    const fd = try expectSyscall(sys.open(unlink_file, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+
+    try writeAll(fd, "temporary contents");
+
+    if (sys.unlink(unlink_file) != FAIL) {
+        _ = sys.write(sys.STDOUT, "unexpectedly unlinked open file\n");
+        _ = sys.close(fd);
+        return error.SyscallFailed;
+    }
+
+    if (sys.close(fd) == FAIL) return error.SyscallFailed;
+    if (sys.unlink(unlink_file) == FAIL) return error.SyscallFailed;
+
+    if (sys.open(unlink_file, .{ .open_mode = .ReadOnly }) != FAIL) {
+        _ = sys.write(sys.STDOUT, "unexpectedly reopened unlinked file\n");
+        return error.SyscallFailed;
+    }
+
+    if (sys.unlink(unlink_file) != FAIL) {
+        _ = sys.write(sys.STDOUT, "unexpectedly unlinked missing file\n");
+        return error.SyscallFailed;
+    }
+}
+
 fn main() !void {
     var buf: [96]u8 = undefined;
     _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
@@ -100,6 +126,7 @@ fn main() !void {
 
     try verifyFileContents(stress_file_a, &expected_a);
     try verifyFileContents(stress_file_b, &expected_b);
+    try verifyUnlinkSemantics();
 
     _ = sys.write(sys.STDOUT, "filesystem alternating descriptor stress test OK\n");
     sys.yield();

@@ -26,6 +26,7 @@ const Syscall = enum(u32) {
     Yield = 24,
     GetPid = 39,
     Exit = 60,
+    Unlink = 87,
 };
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
@@ -80,6 +81,11 @@ pub fn open(path: []const u8, flags: FileOpenFlags) u32 {
 /// Closes a userspace-visible file descriptor.
 pub fn close(fd: u32) u32 {
     return syscall(.Close, fd, 0, 0);
+}
+
+/// Unlinks a filesystem path by name.
+pub fn unlink(path: []const u8) u32 {
+    return syscall(.Unlink, @intFromPtr(path.ptr), @intCast(path.len), 0);
 }
 
 /// Returns the current process identifier.

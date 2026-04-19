@@ -16,6 +16,7 @@ pub const MAX_OPEN_FILES = 32;
 pub const FiledescError = fs.WriteFileError || error{
     AccessDenied,
     BadFd,
+    FileInUse,
     InvalidFlags,
     ProcessFileTableFull,
     SystemFileTableFull,
@@ -64,6 +65,13 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
     };
     ptask.setFileFd(fd, open_index);
     return fd;
+}
+
+/// Unlinks a filesystem path unless it is still referenced by an open descriptor.
+pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
+    const entry_index = (try disk_fs.getFileIndex(path)) orelse return error.FileNotFound;
+    if (isEntryOpen(entry_index)) return error.FileInUse;
+    try disk_fs.deleteFile(path);
 }
 
 /// Reads from a task-owned descriptor into a user buffer.
@@ -166,4 +174,13 @@ fn getOpenFile(index: u8) ?*OpenFile {
     if (index >= open_files.len) return null;
     if (!open_files[index].in_use) return null;
     return &open_files[index];
+}
+
+fn isEntryOpen(entry_index: usize) bool {
+    for (&open_files) |open_file| {
+        if (open_file.in_use and open_file.entry_index == entry_index) {
+            return true;
+        }
+    }
+    return false;
 }
