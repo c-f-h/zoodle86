@@ -1,4 +1,5 @@
 const console = @import("console.zig");
+const filedesc = @import("filedesc.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
@@ -73,6 +74,22 @@ pub fn clearKeyboardHandler() void {
 
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
+
+/// Returns the kernel allocator used for filesystem-backed syscall scratch buffers.
+pub fn getAllocator() std.mem.Allocator {
+    return alloc;
+}
+
+/// Returns the mounted filesystem instance.
+pub fn getFileSystem() *fs.FileSystem {
+    return &disk_fs;
+}
+
+/// Terminates a task after first releasing any kernel resources associated with its descriptors.
+pub fn terminateTask(ptask: *task.Task) void {
+    filedesc.closeTaskFiles(ptask);
+    ptask.deactivate();
+}
 
 /// Keyboard event consumer called by interrupt handler
 export fn consume_key_event(event: *const keyboard.KeyEvent) void {
@@ -287,6 +304,7 @@ fn kernel_main() !void {
     // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
     interrupts_init();
     taskman.init();
+    filedesc.init();
 
     console.console_init(VGA_ATTR);
     console.puts(" -------- zoodle86 loaded --------\n\n");

@@ -12,9 +12,10 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/pageallocator.zig`: page-level allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
-- `kernel/task.zig`: task/process management with per-task GDT entries, kernel stacks, user memory regions, and page directories. Includes `switchTo()` for low-level context switching and `terminate()` for freeing task resources.
+- `kernel/task.zig`: task/process management with per-task GDT entries, kernel stacks, user memory regions, page directories, and per-task file descriptor mappings. Includes `switchTo()` for low-level context switching and `terminate()` for freeing task resources.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) with round-robin scheduler; `getNextActiveTask()` finds the next runnable task for cooperative scheduling.
-- `kernel/syscall.zig`: syscall number enum and dispatch entry point; routes `int 0x80` calls from user mode into kernel handlers.
+- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close` descriptor semantics layered over the filesystem and console streams.
+- `kernel/syscall.zig`: syscall number enum and dispatch entry point; routes `int 0x80` calls from user mode into kernel handlers for stdout, file descriptors, process control, and scheduling.
 
 ### Console & Input/Output
 - `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, and memory dumps.
@@ -24,7 +25,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/readline.zig`: line editing with cursor navigation, character insertion/deletion, line clearing.
 
 ### Storage & Filesystem
-- `kernel/fs.zig`: extent-based filesystem with mount, format, read, write, delete, and rename operations.
+- `kernel/fs.zig`: extent-based filesystem with mount, format, whole-file helpers, offset-based entry I/O, reusable contiguous extent allocation, delete, and rename operations.
 - `kernel/fs_defs.zig`: filesystem constants, superblock and directory entry structures, fixed layout definitions.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
 - `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O.
@@ -39,7 +40,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, run, mkfs, dumpmem, keylog, shutdown, break).
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `extract_fs.zig`, `compile_fs.zig`: tools for extracting and compiling filesystem images.
-- `userspace.zig`, `userspace.ld`: freestanding userspace ELF binary and linker script.
+- `userspace/hello.zig`, `userspace.ld`: freestanding userspace ELF smoke-test binary and linker script.
 
 ### Build Configuration
 - `stage2.ld`, `userspace.ld`: linker scripts for stage-2 and userspace.
@@ -90,7 +91,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Memory Management**: The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has its own 4 KB kernel stack (power-of-2 aligned), with the current task pointer stored at the stack base.
 
-**Task/Process Management**: Each `Task` struct holds a 4 KB kernel stack (first word stores a pointer back to the `Task` for `getCurrentTask()`), a 4 KB per-task page directory, a unique PID, a saved `kernel_esp` (0 = free slot), and user-mode stack/heap bounds. User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). A fixed pool of 8 task slots is managed by `taskman.zig`.
+**Task/Process Management**: Each `Task` struct holds a 4 KB kernel stack (first word stores a pointer back to the `Task` for `getCurrentTask()`), a 4 KB per-task page directory, a unique PID, a saved `kernel_esp` (0 = free slot), user-mode stack/heap bounds, and a small per-task fd table (with stdio preinstalled plus mappings into the kernel global open-file table). User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). A fixed pool of 8 task slots is managed by `taskman.zig`.
 
 **Cooperative Multitasking**: The kernel implements cooperative (non-preemptive) multitasking. Tasks voluntarily yield control via the `yield` syscall (24) or implicitly on `exit` (60) or a user-mode fault. The scheduler (`kernel.reschedule()`) uses `taskman.getNextActiveTask()` to perform round-robin selection over active slots. If no other task is runnable, the kernel reloads its own page directory and returns to the shell via `kernel_reenter()`. There is no timer-based preemption — tasks run until they yield.
 
@@ -105,14 +106,17 @@ Context switch flow (user → kernel → user):
 
 | Syscall | Number | Arguments | Returns | Notes |
 |---------|--------|-----------|---------|-------|
-| `write` | 1 | fd, buf_offset, count | bytes written | Only FD 1 (stdout); calls `console.puts()` |
+| `read` | 0 | fd, buf_offset, count | bytes read or `-errno` | Reads from filesystem-backed fds |
+| `write` | 1 | fd, buf_offset, count | bytes written or `-errno` | Writes to stdout/stderr or filesystem-backed fds |
+| `open` | 2 | path_offset, path_len, flags | fd or `-errno` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
+| `close` | 3 | fd | 0 or `-errno` | Closes stdio or filesystem-backed fds |
 | `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
-| `exit` | 60 | — | — | Terminates task and reschedules; does not return |
+| `exit` | 60 | — | — | Terminates task, closes descriptors, and reschedules; does not return |
 
-**Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–63 are reserved for the stage-2 loader. The custom filesystem begins at sector 64. The filesystem uses a one-sector superblock, an eight-sector flat root directory (64 entries × 64 bytes), and append-only contiguous file extents. Directory slot 0 is reserved for a future bootable kernel file. Files are stored in contiguous extents with metadata (name, state, extent location, timestamps) tracked in the root directory.
+**Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–63 are reserved for the stage-2 loader. The custom filesystem begins at sector 64. The filesystem uses a one-sector superblock, an eight-sector flat root directory (64 entries × 64 bytes), and contiguous file extents allocated from reusable gaps with a first-fit scan. Directory slot 0 is reserved for a future bootable kernel file. Files are stored in contiguous extents with metadata (name, state, extent location, timestamps) tracked in the root directory.
 
-**Filesystem**: The ZOD1 filesystem is fixed-layout with extent-based allocation. Files support read, write (create/overwrite), delete, and rename operations. Directory entries track file state (FREE, FILE, RESERVED, DELETED), name (16 bytes max), extent info, and timestamps. Maximum 16-byte filenames and 64 directory entries.
+**Filesystem**: The ZOD1 filesystem is fixed-layout with extent-based allocation. Files support read, write (create/overwrite), offset-based descriptor I/O, delete, and rename operations. Writes still rewrite whole contiguous extents under the hood, but allocation can now reuse gaps left by deleted or superseded extents. Directory entries track file state (FREE, FILE, RESERVED, DELETED), name (16 bytes max), extent info, and timestamps. Maximum 16-byte filenames and 64 directory entries.
 
 **IDE & Storage**: The kernel uses LBA28 addressing (maximum 128 GB disks) and communicates with the primary IDE bus (I/O base 0x1F0, control base 0x3F6). Sector-level I/O with status polling and error handling (timeout, device fault, controller error).
 

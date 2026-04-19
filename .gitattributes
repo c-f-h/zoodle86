@@ -1,0 +1,2 @@
+# Keep all tracked text files as LF, including on Windows.
+* text=auto eol=lf

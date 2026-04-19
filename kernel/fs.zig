@@ -31,6 +31,7 @@ pub const FsError = error{
 } || ide.IdeError;
 
 pub const ReadFileError = FsError || error{OutOfMemory};
+pub const WriteFileError = FsError || error{OutOfMemory};
 
 pub const FileSystem = struct {
     drive: ide.Drive,
@@ -94,30 +95,110 @@ pub const FileSystem = struct {
         };
     }
 
-    /// Reads an entire file into allocator-owned memory.
-    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, name: []const u8) ReadFileError![]u8 {
-        const entry = try self.findFileEntry(name);
-        if (entry.size_bytes == 0) {
-            return allocator.alloc(u8, 0);
-        }
-        if (entry.sector_count == 0 or entry.size_bytes > entry.sector_count * 512) {
-            return error.Corrupt;
-        }
+    /// Looks up the directory slot for a named file.
+    pub fn getFileIndex(self: *const FileSystem, name: []const u8) FsError!?usize {
+        return self.findFileIndex(name);
+    }
 
-        var data = try allocator.alloc(u8, @intCast(entry.size_bytes));
+    /// Creates a new empty file and returns its directory slot.
+    pub fn createFile(self: *FileSystem, name: []const u8) FsError!usize {
+        if (!validateName(name)) return error.InvalidName;
+        if ((try self.findFileIndex(name)) != null) return error.FileExists;
+
+        const target_index = try self.findReusableEntryIndex();
+        var entry = zeroEntry();
+        entry.state = ENTRY_STATE_FILE;
+        entry.name_len = @intCast(name.len);
+        @memcpy(entry.name[0..name.len], name);
+        try self.writeDirectoryEntry(target_index, &entry);
+
+        self.superblock.file_count += 1;
+        self.superblock.next_free_lba = try self.computeNextFreeLba();
+        try self.writeSuperblock();
+        return target_index;
+    }
+
+    /// Returns the current size in bytes for a file identified by directory slot.
+    pub fn getFileSize(self: *const FileSystem, index: usize) FsError!u32 {
+        const entry = try self.readLiveFileEntry(index);
+        return entry.size_bytes;
+    }
+
+    /// Reads a byte range from an already-opened file entry.
+    pub fn readFileAt(self: *const FileSystem, index: usize, offset: u32, dest: []u8) FsError!usize {
+        if (dest.len == 0) return 0;
+
+        const entry = try self.readLiveFileEntry(index);
+        if (offset >= entry.size_bytes) return 0;
+        try validateDataExtent(&entry);
+
+        const available: usize = @intCast(entry.size_bytes - offset);
+        var remaining: usize = @min(dest.len, available);
+        var lba = entry.start_lba + offset / 512;
+        var sector_offset: usize = @intCast(offset % 512);
+        var out_offset: usize = 0;
         var sector = [_]u8{0} ** 512;
-        var remaining: usize = @intCast(entry.size_bytes);
-        var offset: usize = 0;
-        var lba = entry.start_lba;
 
         while (remaining > 0) : (lba += 1) {
             try ide.readSectorLba28(self.drive, lba, &sector);
-            const chunk_len: usize = @min(remaining, sector.len);
-            @memcpy(data[offset .. offset + chunk_len], sector[0..chunk_len]);
+            const chunk_len: usize = @min(remaining, sector.len - sector_offset);
+            @memcpy(dest[out_offset .. out_offset + chunk_len], sector[sector_offset .. sector_offset + chunk_len]);
             remaining -= chunk_len;
-            offset += chunk_len;
+            out_offset += chunk_len;
+            sector_offset = 0;
         }
 
+        return out_offset;
+    }
+
+    /// Writes a byte range to an already-opened file entry, growing the file as needed.
+    pub fn writeFileAt(self: *FileSystem, allocator: std.mem.Allocator, index: usize, offset: u32, data: []const u8) WriteFileError!usize {
+        if (data.len == 0) return 0;
+
+        const entry = try self.readLiveFileEntry(index);
+        try validateDataExtent(&entry);
+
+        const data_len_u32: u32 = @intCast(data.len);
+        const required_size = std.math.add(u32, offset, data_len_u32) catch return error.NoSpace;
+        const new_size = @max(entry.size_bytes, required_size);
+
+        const merged = try allocator.alloc(u8, new_size);
+        defer allocator.free(merged);
+
+        @memset(merged, 0);
+        if (entry.size_bytes > 0) {
+            _ = try self.readFileAt(index, 0, merged[0..entry.size_bytes]);
+        }
+        @memcpy(merged[offset..required_size], data);
+
+        try self.replaceEntryContents(index, &entry, merged);
+        return data.len;
+    }
+
+    /// Truncates a file to zero length while preserving its directory slot and name.
+    pub fn truncateFile(self: *FileSystem, index: usize) FsError!void {
+        var entry = try self.readLiveFileEntry(index);
+        entry.start_lba = 0;
+        entry.sector_count = 0;
+        entry.size_bytes = 0;
+        try self.writeDirectoryEntry(index, &entry);
+
+        self.superblock.next_free_lba = try self.computeNextFreeLba();
+        try self.writeSuperblock();
+    }
+
+    /// Reads an entire file into allocator-owned memory.
+    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, name: []const u8) ReadFileError![]u8 {
+        const index = (try self.findFileIndex(name)) orelse return error.FileNotFound;
+        const entry = try self.readLiveFileEntry(index);
+        try validateDataExtent(&entry);
+        if (entry.size_bytes == 0) {
+            return allocator.alloc(u8, 0);
+        }
+
+        const data = try allocator.alloc(u8, @intCast(entry.size_bytes));
+        errdefer allocator.free(data);
+        _ = try self.readFileAt(index, 0, data);
         return data;
     }
 
@@ -126,46 +207,34 @@ pub const FileSystem = struct {
         if (!validateName(name)) return error.InvalidName;
 
         const existing_index = try self.findFileIndex(name);
-        const target_index = existing_index orelse (try self.findReusableEntryIndex());
-        const sector_count = sectorsForBytes(data.len);
-        const start_lba = try self.allocateExtent(sector_count);
+        const target_index = existing_index orelse try self.findReusableEntryIndex();
+        var entry = if (existing_index) |index|
+            try self.readLiveFileEntry(index)
+        else blk: {
+            var created = zeroEntry();
+            created.state = ENTRY_STATE_FILE;
+            created.name_len = @intCast(name.len);
+            @memcpy(created.name[0..name.len], name);
+            break :blk created;
+        };
 
-        try self.writeDataExtent(start_lba, sector_count, data);
-
-        var entry = zeroEntry();
-        entry.state = ENTRY_STATE_FILE;
-        entry.name_len = @intCast(name.len);
-        @memcpy(entry.name[0..name.len], name);
-        entry.start_lba = start_lba;
-        entry.sector_count = sector_count;
-        entry.size_bytes = @intCast(data.len);
-
-        try self.writeDirectoryEntry(target_index, &entry);
+        try self.replaceEntryContents(target_index, &entry, data);
 
         if (existing_index == null) {
             self.superblock.file_count += 1;
+            try self.writeSuperblock();
         }
-        self.superblock.next_free_lba = start_lba + sector_count;
-        try self.writeSuperblock();
     }
 
-    /// Deletes a file from the directory without reclaiming its data extent.
+    /// Deletes a file from the directory and makes its old extent reusable.
     pub fn deleteFile(self: *FileSystem, name: []const u8) FsError!void {
         const index = (try self.findFileIndex(name)) orelse return error.FileNotFound;
         var entry = try self.readDirectoryEntry(index);
-        entry.state = ENTRY_STATE_DELETED;
-        entry.name_len = 0;
-        entry.flags = 0;
-        entry.name = [_]u8{0} ** FILENAME_MAX_LEN;
-        entry.start_lba = 0;
-        entry.sector_count = 0;
-        entry.size_bytes = 0;
-        entry.created_ticks = 0;
-        entry.modified_ticks = 0;
-        entry.reserved = [_]u8{0} ** 24;
+        markEntryDeleted(&entry);
         try self.writeDirectoryEntry(index, &entry);
 
         self.superblock.file_count -= 1;
+        self.superblock.next_free_lba = try self.computeNextFreeLba();
         try self.writeSuperblock();
     }
 
@@ -203,7 +272,7 @@ pub const FileSystem = struct {
 
     fn findFileEntry(self: *const FileSystem, name: []const u8) FsError!DirectoryEntry {
         const index = (try self.findFileIndex(name)) orelse return error.FileNotFound;
-        return self.readDirectoryEntry(index);
+        return self.readLiveFileEntry(index);
     }
 
     fn findFileIndex(self: *const FileSystem, name: []const u8) FsError!?usize {
@@ -234,16 +303,76 @@ pub const FileSystem = struct {
         return error.DirectoryFull;
     }
 
-    fn allocateExtent(self: *const FileSystem, sector_count: u32) FsError!u32 {
+    fn readLiveFileEntry(self: *const FileSystem, index: usize) FsError!DirectoryEntry {
+        if (index >= DIRECTORY_ENTRY_COUNT) return error.FileNotFound;
+        const entry = try self.readDirectoryEntry(index);
+        if (entry.state != ENTRY_STATE_FILE) return error.FileNotFound;
+        return entry;
+    }
+
+    fn replaceEntryContents(self: *FileSystem, index: usize, existing_entry: *const DirectoryEntry, data: []const u8) FsError!void {
+        var entry = existing_entry.*;
+        entry.state = ENTRY_STATE_FILE;
+
+        const sector_count = sectorsForBytes(data.len);
+        const start_lba = try self.allocateExtent(sector_count, index);
+
+        try self.writeDataExtent(start_lba, sector_count, data);
+
+        entry.start_lba = start_lba;
+        entry.sector_count = sector_count;
+        entry.size_bytes = @intCast(data.len);
+        try self.writeDirectoryEntry(index, &entry);
+
+        self.superblock.next_free_lba = try self.computeNextFreeLba();
+        try self.writeSuperblock();
+    }
+
+    // Find a starting LBA for a new or expanded file extent that has enough space to fit sector_count contiguous sectors.
+    // exclude_index is a directory slot index to ignore when checking for free space.
+    fn allocateExtent(self: *const FileSystem, sector_count: u32, exclude_index: usize) FsError!u32 {
         if (sector_count == 0) return 0;
 
-        const start_lba = self.superblock.next_free_lba;
         const limit_lba = self.superblock.fs_start_lba + self.superblock.fs_sector_count;
-        if (start_lba < DATA_START_LBA or start_lba + sector_count > limit_lba) {
-            return error.NoSpace;
+        var candidate = DATA_START_LBA;
+        while (candidate + sector_count <= limit_lba) {
+            var next_candidate: ?u32 = null;
+
+            var index: usize = 0;
+            while (index < DIRECTORY_ENTRY_COUNT) : (index += 1) {
+                if (index == exclude_index) continue;
+
+                const entry = try self.readDirectoryEntry(index);
+                if (!entryOccupiesData(&entry)) continue;
+
+                const entry_end = entry.start_lba + entry.sector_count;
+                if (entry.start_lba < candidate + sector_count and candidate < entry_end) {
+                    next_candidate = if (next_candidate) |current|
+                        @max(current, entry_end)
+                    else
+                        entry_end;
+                }
+            }
+
+            if (next_candidate) |next| {
+                candidate = next;
+                continue;
+            }
+            return candidate;
         }
 
-        return start_lba;
+        return error.NoSpace;
+    }
+
+    fn computeNextFreeLba(self: *const FileSystem) FsError!u32 {
+        var highest = DATA_START_LBA;
+        var index: usize = 0;
+        while (index < DIRECTORY_ENTRY_COUNT) : (index += 1) {
+            const entry = try self.readDirectoryEntry(index);
+            if (!entryOccupiesData(&entry)) continue;
+            highest = @max(highest, entry.start_lba + entry.sector_count);
+        }
+        return highest;
     }
 
     fn writeDataExtent(self: *FileSystem, start_lba: u32, sector_count: u32, data: []const u8) FsError!void {
@@ -315,4 +444,34 @@ fn zeroEntry() DirectoryEntry {
         .modified_ticks = 0,
         .reserved = [_]u8{0} ** 24,
     };
+}
+
+fn entryOccupiesData(entry: *const DirectoryEntry) bool {
+    return (entry.state == ENTRY_STATE_FILE or entry.state == ENTRY_STATE_RESERVED) and
+        entry.sector_count > 0 and
+        entry.start_lba >= DATA_START_LBA;
+}
+
+fn validateDataExtent(entry: *const DirectoryEntry) FsError!void {
+    if (entry.size_bytes == 0) {
+        if (entry.sector_count != 0 or entry.start_lba != 0) {
+            return error.Corrupt;
+        }
+        return;
+    }
+    if (entry.sector_count == 0 or entry.start_lba < DATA_START_LBA) return error.Corrupt;
+    if (entry.size_bytes > entry.sector_count * 512) return error.Corrupt;
+}
+
+fn markEntryDeleted(entry: *DirectoryEntry) void {
+    entry.state = ENTRY_STATE_DELETED;
+    entry.name_len = 0;
+    entry.flags = 0;
+    entry.name = [_]u8{0} ** FILENAME_MAX_LEN;
+    entry.start_lba = 0;
+    entry.sector_count = 0;
+    entry.size_bytes = 0;
+    entry.created_ticks = 0;
+    entry.modified_ticks = 0;
+    entry.reserved = [_]u8{0} ** 24;
 }
