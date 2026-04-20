@@ -215,17 +215,28 @@ general_exception_handler:
 
 global page_fault_isr
 page_fault_isr:
+    push ds
+    push es
+    pushad
+
     mov ax, KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
 
-    ; reusing arguments already on the stack:
-    ; - original CS
-    ; - original EIP
-    ; - error code
-    push 0x0e ; page fault
+    ; call handler with (0x0e, error code, original EIP, original CS)
+    mov ebp, esp
+    push dword [ebp + 48]   ; original CS
+    push dword [ebp + 44]   ; original EIP
+    push dword [ebp + 40]   ; error code
+    push 0x0e               ; page fault
     call page_fault_handler
-    jmp $
+    add esp, 4 * 4          ; drop handler arguments
+
+    popad
+    pop es
+    pop ds
+    add esp, 4              ; drop error code
+    iretd
 
 
 section .bss

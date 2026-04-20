@@ -1,9 +1,9 @@
 const pageallocator = @import("pageallocator.zig");
 const serial = @import("serial.zig");
+const task = @import("task.zig");
 
 // Identity-mapped paging module.
 // Provides minimal static page directory and pre-allocated page tables for identity mapping.
-// 32 page tables cover ~128MB of physical RAM.
 
 /// Page Directory Entry (32 bits) - each one points to 1024 Page Table Entries (or is 0)
 pub const PDE = packed struct {
@@ -42,6 +42,12 @@ pub const PTE = packed struct {
     }
 };
 
+// One page directory covers the whole 4 GiB address space, and
+// each page table covers 4 MiB of that space (1024 entries * 4 KiB pages).
+// The page directory and page tables are sparse, i.e., some of their entries may be unused (0).
+//
+// virtual address = [ page table index (10 bits) | page index (10 bits) | offset (12 bits) ]
+
 pub const PageTable = [1024]PTE; // 4 KiB - covers 4 MiB of RAM
 pub const PageDirectory = [1024]PDE; // 4 KiB - covers the whole 4 GiB address space
 
@@ -55,24 +61,24 @@ pub fn setPde(i: u10, pde: PDE) void {
     mapped_pd[i] = pde;
 }
 
-// Index of the page table in which the given address lies (0-1023)
+/// Index of the page table in which the given address lies (0-1023)
 inline fn pageTableIndex(va: u32) u10 {
     return @truncate((va >> 22) & 0x3FF);
 }
 
-// Index of the page within the page table (0-1023)
+/// Index of the page within the page table (0-1023)
 inline fn pageIndex(va: u32) u10 {
     return @truncate((va >> 12) & 0x3FF);
 }
 
+/// Offset within the page (0-4095)
 inline fn offset(va: u32) u12 {
     return @truncate(va & 0xFFF);
 }
 
-// Assumes that the current PD is recursively mapped.
-// Gets a pointer to the PTE within whose frame the given virtual address lives.
+/// Assumes that the current PD is recursively mapped.
+/// Gets a pointer to the PTE within whose frame the given virtual address lives.
 pub fn getPte(va: u32) *PTE {
-    // virtual address: [ page table index (10 bits) | page index (10 bits) | offset (12 bits) ]
     return &mapped_pts[pageTableIndex(va)][pageIndex(va)];
 }
 
@@ -166,6 +172,22 @@ pub fn invlpg(addr: usize) void {
         : .{ .memory = true });
 }
 
+fn allocatePageTableAt(pti: u10, user: bool) void {
+    const pt_addr = pageallocator.allocPage(); // Page Table - storage for 1024 PTEs
+    // PDEs are always set to writable so that our recursive mapping stays modifiable
+    setPde(pti, .{ .user = user, .writable = true, .page_table_addr = @truncate(pt_addr >> 12) });
+    // zero out the new page table
+    @memset(&mapped_pts[pti], @bitCast(@as(u32, 0)));
+}
+
+// Allocate a number of pages within an already allocated page table.
+fn allocatePagesAt(pti: u10, start_pg: u10, num_pages: u32, user: bool, writable: bool) void {
+    const pt = &mapped_pts[pti];
+    for (0..num_pages) |i| {
+        pt[start_pg + i] = .{ .user = user, .writable = writable, .page_addr = @truncate(pageallocator.allocPage() >> 12) };
+    }
+}
+
 /// Allocate a number of pages at the given virtual address. Must fit into a single, 4MB aligned page table.
 /// Does not check for existing allocations at that location.
 pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool) []u8 {
@@ -175,47 +197,53 @@ pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool)
         @panic("Virtual range crosses page-table boundary");
     }
 
-    const pt_addr = pageallocator.allocPage(); // Page Table - storage for 1024 PTEs
-    // PDEs are always set to writable so that our recursive mapping stays modifiable
-    setPde(pti, .{ .user = user, .writable = true, .page_table_addr = @truncate(pt_addr >> 12) });
-    // zero out the new page table
-    @memset(&mapped_pts[pti], @bitCast(@as(u32, 0)));
-
-    const PAGE_MASK: u32 = 0xFFF;
-    var va: u32 = addr & ~PAGE_MASK;
-    var allocated_pages: u32 = 0;
-    while (allocated_pages < num_pages) : (allocated_pages += 1) {
-        getPte(va).* = .{ .user = user, .writable = writable, .page_addr = @truncate(pageallocator.allocPage() >> 12) };
-        va += 0x1000;
-    }
+    allocatePageTableAt(pti, user);
+    allocatePagesAt(pti, @truncate(start_pg), num_pages, user, writable);
 
     const page_start: [*]u8 = @ptrFromInt(addr);
-    return page_start[0 .. num_pages * 0x1000];
+    return page_start[0 .. num_pages * PAGE];
+}
+
+fn handlePageFault(va: usize, errcode: u32) bool {
+    if (errcode != 6) {
+        // 6 = page not present, write access, user mode - for stack growth
+        return false;
+    }
+    const ptask = task.getCurrentTask();
+    if (roundDown(va, PAGE) == ptask.stack_mem.base - PAGE) {
+        // Accessing one page below the current stack base - grow the stack by one page
+        ptask.stack_mem.growDown(1);
+        return true;
+    }
+    return false;
 }
 
 /// Simple page fault handler: print faulting address and error code, then halt.
-pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) noreturn {
+pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) void {
     _ = vector;
     _ = cs;
 
     // Read CR2 to get faulting address
-    const cr2 = asm volatile ("mov %%cr2, %%eax"
+    const fault_va = asm volatile ("mov %%cr2, %%eax"
         : [ret] "={eax}" (-> u32),
     );
+
+    if (handlePageFault(fault_va, errcode))
+        return;
 
     const console = @import("console.zig");
 
     serial.puts("\n!!! PAGE FAULT !!!\nError code: ");
     serial.putHexU32(errcode);
     serial.puts("\nAddress:    ");
-    serial.putHexU32(cr2);
+    serial.putHexU32(fault_va);
     serial.puts("\neip:        ");
     serial.putHexU32(eip);
     serial.puts("\nHalting.\n");
 
     console.put(.{
         "\n!!! PAGE FAULT !!!\nError code: ", errcode,
-        "\nAddress:    ",                     cr2,
+        "\nAddress:    ",                     fault_va,
         "\neip:        ",                     eip,
         "\nHalting.\n",
     });
@@ -244,16 +272,20 @@ fn numPagesBetween(va0: usize, va1: usize) u32 {
 pub const VMemRange = struct {
     base: u32 = 0,
     num_pages: u32 = 0,
+    user: bool = false,
+    writable: bool = false,
 
     /// Initialize the struct and allocate a contiguous range of virtual memory pages starting at the given virtual address.
-    pub fn allocate(range: *VMemRange, va: u32, va_end: u32, user: bool, writable: bool) []u8 {
+    pub fn allocate(range: *VMemRange, va: u32, va_end: u32, is_user: bool, is_writable: bool) []u8 {
         if (va & 0xFFF != 0) {
             @panic("Virtual address must be page-aligned");
         }
         range.base = va;
         const num_pages = numPagesBetween(va, va_end);
         range.num_pages = num_pages;
-        const mem = allocateMemoryAt(va, num_pages, user, writable);
+        range.user = is_user;
+        range.writable = is_writable;
+        const mem = allocateMemoryAt(va, num_pages, is_user, is_writable);
         @memset(mem, 0x00);
         return mem;
     }
@@ -267,6 +299,23 @@ pub const VMemRange = struct {
             pte.writable = writable;
             invlpg(va);
         }
+    }
+
+    pub fn growDown(range: *VMemRange, additional_pages: u32) void {
+        if (additional_pages == 0) return;
+        if (additional_pages > 1024) {
+            @panic("Cannot grow more than one page table at a time");
+        }
+
+        const new_base = range.base - additional_pages * PAGE;
+        const new_pti = pageTableIndex(new_base);
+        if (new_pti != pageTableIndex(range.base)) {
+            // entered a new page table - need to allocate it first
+            allocatePageTableAt(new_pti, range.user);
+        }
+        allocatePagesAt(new_pti, pageIndex(new_base), additional_pages, range.user, range.writable);
+        range.base = new_base;
+        range.num_pages += additional_pages;
     }
 
     /// Free all pages allocated by this range and clear the corresponding page directory/table entries.
