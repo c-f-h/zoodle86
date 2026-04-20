@@ -40,7 +40,9 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, serial, run, mkfs, dumpmem, keylog, shutdown, break).
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
-- `extract_fs.zig`, `compile_fs.zig`: tools for extracting and compiling filesystem images.
+- `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.Io.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `kernel/fs.zig` directly.
+- `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`) and extracts all files to a directory.
+- `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`) and writes a directory of input files into it using `fs.FileSystem.writeFile()`.
 - `userspace/hello.zig`: freestanding userspace hello-world/yield smoke-test binary.
 - `userspace/fs_stress.zig`: freestanding userspace filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
 - `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers and linker script.
@@ -128,6 +130,7 @@ Context switch flow (user → kernel → user):
 
 ## General Guidelines
 
+- Use Zig 0.16.
 - Every public Zig function should have at least a one-line doc comment explaining its function.
 - Debugging tips:
   - Use `objdump -S` to disassemble the kernel binary for resolving crash addresses

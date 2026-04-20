@@ -56,6 +56,16 @@ pub const FileSystem = struct {
         return fs;
     }
 
+    /// Mounts an existing filesystem. Returns an error if the superblock is missing or invalid.
+    pub fn mount(bd: *BlockDevice) FsError!FileSystem {
+        var fs = FileSystem{
+            .block_dev = bd,
+            .superblock = undefined,
+        };
+        try fs.readSuperblock();
+        return fs;
+    }
+
     /// Formats the fixed filesystem region and initializes the reserved directory slot.
     pub fn format(self: *FileSystem) FsError!void {
         const fs_sector_count: u32 = self.block_dev.block_count - FS_START_LBA;
