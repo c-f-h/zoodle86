@@ -48,8 +48,11 @@ pub const Task = struct {
     stack_bottom: u32 = undefined,
     stack_top: u32 = undefined,
     heap_top: u32 = undefined,
+
     code_mem: paging.VMemRange = .{},
     data_mem: paging.VMemRange = .{},
+    stack_mem: paging.VMemRange = .{},
+
     fd_table: [MAX_FDS]FdSlot = [_]FdSlot{.{}} ** MAX_FDS,
 
     /// Initializes a fresh task slot and its initial userspace context.
@@ -107,6 +110,7 @@ pub const Task = struct {
         task.kernel_esp = 0;
         task.code_mem.freePages();
         task.data_mem.freePages();
+        task.stack_mem.freePages();
     }
 
     /// Finds the first free userspace-visible file descriptor slot.

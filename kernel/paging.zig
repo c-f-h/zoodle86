@@ -170,16 +170,21 @@ pub fn invlpg(addr: usize) void {
 /// Does not check for existing allocations at that location.
 pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool) []u8 {
     const pti = pageTableIndex(addr);
-    var pg: u32 = pageIndex(addr);
+    const start_pg: u32 = pageIndex(addr);
+    if (start_pg + num_pages > 1024) {
+        @panic("Virtual range crosses page-table boundary");
+    }
 
     const pt_addr = pageallocator.allocPage(); // Page Table - storage for 1024 PTEs
     // PDEs are always set to writable so that our recursive mapping stays modifiable
     setPde(pti, .{ .user = user, .writable = true, .page_table_addr = @truncate(pt_addr >> 12) });
+    // zero out the new page table
+    @memset(&mapped_pts[pti], @bitCast(@as(u32, 0)));
 
     const PAGE_MASK: u32 = 0xFFF;
     var va: u32 = addr & ~PAGE_MASK;
-    while (pg < num_pages) : (pg += 1) {
-        // TODO: overflow into next PDE
+    var allocated_pages: u32 = 0;
+    while (allocated_pages < num_pages) : (allocated_pages += 1) {
         getPte(va).* = .{ .user = user, .writable = writable, .page_addr = @truncate(pageallocator.allocPage() >> 12) };
         va += 0x1000;
     }
@@ -220,19 +225,37 @@ pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) ca
     }
 }
 
+pub const PAGE = 4096;
+
+pub inline fn roundDown(p: u32, comptime size: u32) u32 {
+    return p & (~(size - 1));
+}
+pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
+    return (p + size - 1) & (~(size - 1));
+}
+
+fn numPagesBetween(va0: usize, va1: usize) u32 {
+    const va_begin = roundDown(va0, PAGE);
+    const va_end = roundToNext(va1, PAGE);
+    return @divExact(va_end - va_begin, PAGE);
+}
+
 /// Convenience struct to allocate/modify/free a contiguous range of virtual memory pages.
 pub const VMemRange = struct {
     base: u32 = 0,
     num_pages: u32 = 0,
 
     /// Initialize the struct and allocate a contiguous range of virtual memory pages starting at the given virtual address.
-    pub fn allocate(range: *VMemRange, va: u32, num_pages: u32, user: bool, writable: bool) []u8 {
+    pub fn allocate(range: *VMemRange, va: u32, va_end: u32, user: bool, writable: bool) []u8 {
         if (va & 0xFFF != 0) {
             @panic("Virtual address must be page-aligned");
         }
         range.base = va;
+        const num_pages = numPagesBetween(va, va_end);
         range.num_pages = num_pages;
-        return allocateMemoryAt(va, num_pages, user, writable);
+        const mem = allocateMemoryAt(va, num_pages, user, writable);
+        @memset(mem, 0x00);
+        return mem;
     }
 
     /// Change the user/supervisor and read/write permissions for this range.

@@ -159,6 +159,21 @@ pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
     return dest;
 }
 
+/// Like memcpy but handles overlapping source and destination regions.
+pub export fn memmove(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
+    if (@intFromPtr(dest) < @intFromPtr(src) or @intFromPtr(dest) >= @intFromPtr(src) + len) {
+        var i: usize = 0;
+        while (i < len) : (i += 1) dest[i] = src[i];
+    } else {
+        var i: usize = len;
+        while (i > 0) {
+            i -= 1;
+            dest[i] = src[i];
+        }
+    }
+    return dest;
+}
+
 pub export fn memset(dest: [*]u8, val: u8, len: usize) [*]u8 {
     var i: usize = 0;
     while (i < len) : (i += 1) {
@@ -259,19 +274,11 @@ export fn _start() void {
 const Task = task.Task;
 
 const LINE = 0x10;
-const PAGE = 0x1000;
 
 // Preliminary physical memory location for initial Page Directory.
 // This is within conventional memory, with 256k of space until 0x80000.
 // The initial identity Page Table Entries for the first 1 MiB of RAM are stored immediately afterwards.
 const page_dir_phys: u32 = 0x4_0000;
-
-pub inline fn roundDown(p: u32, comptime size: u32) u32 {
-    return p & (~(size - 1));
-}
-pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
-    return (p + size - 1) & (~(size - 1));
-}
 
 fn kernel_main() !void {
     zero_bss();
@@ -368,12 +375,6 @@ pub fn reschedule() noreturn {
     }
 }
 
-fn numPagesBetween(va0: usize, va1: usize) u32 {
-    const va_begin = roundDown(va0, PAGE);
-    const va_end = roundToNext(va1, PAGE);
-    return @divExact(va_end - va_begin, PAGE);
-}
-
 pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
     const ptask = taskman.newTask();
 
@@ -385,19 +386,16 @@ pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
 
     // compute image extents and locate stack and heap
     const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
-    ptask.stack_top = data_end;
-    ptask.stack_bottom = ptask.stack_top - 16 * 1024; // 16 KiB stack space (guaranteed by linker script)
-    ptask.heap_top = roundToNext(ptask.stack_top, PAGE); // any remaining space in page can be used for heap
-
-    const code_pages = numPagesBetween(code_start, code_end);
-    const data_pages = numPagesBetween(data_start, data_end);
+    ptask.heap_top = paging.roundToNext(data_end, paging.PAGE); // any remaining space in last data page can be used for heap
 
     // user code and data
     ptask.loadPageDir();
-    const code_mem = ptask.code_mem.allocate(0x0040_0000, code_pages, true, true);
-    const data_mem = ptask.data_mem.allocate(0x1000_0000, data_pages, true, true);
-    @memset(code_mem, 0x00);
-    @memset(data_mem, 0x00);
+    _ = ptask.code_mem.allocate(0x0040_0000, code_end, true, true);
+    _ = ptask.data_mem.allocate(0x1000_0000, data_end, true, true);
+    // set up stack page at fixed high address
+    ptask.stack_top = 0x8000_0000; // stack will grow downwards from 2GB
+    ptask.stack_bottom = ptask.stack_top - paging.PAGE;
+    _ = ptask.stack_mem.allocate(ptask.stack_bottom, ptask.stack_top, true, true);
 
     console.put(.{ "CODE:  ", code_start, " - ", code_end, ", DATA: ", data_start, " - ", data_end, "; entry: 0x", ehdr.e_entry, "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, "\n" });
 

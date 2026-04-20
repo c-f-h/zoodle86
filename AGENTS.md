@@ -80,8 +80,10 @@ There is no separate unit-test suite yet. A successful build is the current base
 |---|---|---|
 | 0x00000000 - 0x00100000 | 1 MB | Identity-mapped low memory (boot, real-mode data) |
 | 0x00400000 - 0x10000000 | ~252 MB | User-mode text (code) |
-| 0x10000000 - 0x40000000 | ~768 MB | User-mode rodata/data/stack/heap (per-process) |
-| 0x40000000 - 0xC0000000 | 2 GB | Unused |
+| 0x10000000 - 0x40000000 | ~768 MB | User-mode rodata/data/heap (per-process) |
+| 0x40000000 - 0x7FFFF000 | ~1 GB | Unused |
+| 0x7FFFF000 - 0x80000000 | 4 KB | User-mode stack (grows downward from 0x80000000, per-process) |
+| 0x80000000 - 0xC0000000 | 1 GB | Unused |
 | 0xC0008000 - 0xC0200000 | ~2 MB | Kernel code and data (stage-2) |
 | 0xE0000000 - 0xE0400000 | 4 MB | Kernel heap (fixed-buffer allocator) |
 | 0xFFC00000 - 0xFFFFF000 | ~4 MB | Recursively mapped page tables (PD[1023] entry points to PD) |
