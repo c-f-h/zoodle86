@@ -73,7 +73,6 @@ BOOT_IMG = BUILD_DIR / "image.img"     # final image with bootloader/stage 2/fil
 BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 SERIALOUT_PATH = SERIALOUT
-ZIG_OBJ = build_artifact(ZIG_KERNEL_SRC, ".o")
 USERSPACE_EXES = [build_artifact(path, ".elf") for path in USERSPACE_SOURCES]
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
@@ -119,35 +118,15 @@ COMMON_ZIG_OPTS = [
     "--global-cache-dir", str(ZIG_GLOBAL_CACHE_DIR),
     "-I", str(ROOT),
     "-target", "x86-freestanding-none",
-    "-O",
-    "ReleaseSmall",
+    "-O", "ReleaseSmall",
     "-fno-stack-protector",
 ]
 
-def compile_zig(target, source, env):
-    output_path = pathlib.Path(str(target[0]))
-    source_path = pathlib.Path(str(source[0]))
-    ensure_parent(output_path)
-    ensure_parent(ZIG_CACHE_DIR / "cache")
-    ensure_parent(ZIG_GLOBAL_CACHE_DIR / "cache")
-    if output_path.exists():
-        output_path.unlink()
-    run(
-        [
-            str(ZIG_EXE),
-            "build-obj",
-            str(source_path),
-            *COMMON_ZIG_OPTS,
-            "-ofmt=elf",
-            "-fno-entry",
-            f"-femit-bin={output_path}",
-        ]
-    )
-    if not output_path.exists():
-        raise RuntimeError(f"Zig did not produce {output_path.name}.")
-
-
-def link_stage2(target, source, env):
+def build_stage2(target, source, env):
+    """Compile kernel.zig and link it with interrupts.o into stage2.elf in one
+    build-exe step.  Using build-exe with a .zig source file (rather than a
+    pre-compiled .o) causes Zig's LLVM backend to emit local STT_FUNC symbol
+    table entries for every non-inlined internal function; useful for debugging."""
     output_path = pathlib.Path(str(target[0]))
     linker_script = str(source[-1])
     ensure_parent(output_path)
@@ -164,7 +143,7 @@ def link_stage2(target, source, env):
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
-            str(ZIG_OBJ),
+            str(ZIG_KERNEL_SRC),
         ]
     )
 
@@ -337,9 +316,8 @@ env = Environment(ENV=os.environ)
 
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
 interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
-# build always because zig imports are not correctly tracked by scons - let zig figure it out
-zig_obj = AlwaysBuild(env.Command(str(ZIG_OBJ), str(ZIG_KERNEL_SRC), Action(compile_zig, "Compiling $TARGET")))
-stage2_exe = env.Command(str(STAGE2_EXE), [interrupts_obj, zig_obj, STAGE2_LINKER_SCRIPT], Action(link_stage2, "Linking $TARGET"))
+# Always rebuild: zig imports are not tracked by scons, let zig handle caching.
+stage2_exe = AlwaysBuild(env.Command(str(STAGE2_EXE), [interrupts_obj, str(ZIG_KERNEL_SRC), STAGE2_LINKER_SCRIPT], Action(build_stage2, "Compiling and linking $TARGET")))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,
