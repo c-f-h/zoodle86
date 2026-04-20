@@ -363,11 +363,8 @@ fn printFsError(err: fs.FsError) void {
         error.InvalidName => console.puts("Invalid filename.\n"),
         error.InvalidSuperblock => console.puts("Filesystem superblock is invalid.\n"),
         error.NoSpace => console.puts("Filesystem is out of space.\n"),
-        error.Timeout => console.puts("IDE timed out.\n"),
-        error.DeviceFault => console.puts("IDE device fault.\n"),
-        error.ControllerError => console.puts("IDE controller error.\n"),
-        error.NoDevice => console.puts("IDE device not present.\n"),
-        error.NotAtaDevice => console.puts("IDE device is not ATA.\n"),
-        error.InvalidLba => console.puts("Invalid disk LBA.\n"),
+        error.ReadError => console.puts("Disk read error.\n"),
+        error.WriteError => console.puts("Disk write error.\n"),
+        error.InvalidBlock => console.puts("Invalid disk block address.\n"),
     }
 }

@@ -1,4 +1,5 @@
-const ide = @import("ide.zig");
+const block_device = @import("block_device.zig");
+const BlockDevice = block_device.BlockDevice;
 const fs_defs = @import("fs_defs.zig");
 const std = @import("std");
 
@@ -28,19 +29,19 @@ pub const FsError = error{
     InvalidName,
     InvalidSuperblock,
     NoSpace,
-} || ide.IdeError;
+} || block_device.BlockError;
 
 pub const ReadFileError = FsError || error{OutOfMemory};
 pub const WriteFileError = FsError || error{OutOfMemory};
 
 pub const FileSystem = struct {
-    drive: ide.Drive,
+    block_dev: *BlockDevice,
     superblock: Superblock,
 
     /// Mounts the filesystem, formatting a fresh one if the superblock is missing.
-    pub fn mountOrFormat(drive: ide.Drive) FsError!FileSystem {
+    pub fn mountOrFormat(bd: *BlockDevice) FsError!FileSystem {
         var fs = FileSystem{
-            .drive = drive,
+            .block_dev = bd,
             .superblock = undefined,
         };
 
@@ -57,15 +58,14 @@ pub const FileSystem = struct {
 
     /// Formats the fixed filesystem region and initializes the reserved directory slot.
     pub fn format(self: *FileSystem) FsError!void {
-        const drive_info = try ide.identifyDrive(self.drive);
-        const fs_sector_count: u32 = drive_info.max_lba28 - FS_START_LBA;
+        const fs_sector_count: u32 = self.block_dev.block_count - FS_START_LBA;
 
         self.superblock = makeDefaultSuperblock(fs_sector_count);
 
         var zero_sector = [_]u8{0} ** 512;
         var sector_lba: u32 = FS_START_LBA;
         while (sector_lba < DATA_START_LBA) : (sector_lba += 1) {
-            try ide.writeSectorLba28(self.drive, sector_lba, &zero_sector);
+            try self.block_dev.writeBlock(sector_lba, &zero_sector);
         }
 
         var reserved_entry = zeroEntry();
@@ -140,7 +140,7 @@ pub const FileSystem = struct {
         var sector = [_]u8{0} ** 512;
 
         while (remaining > 0) : (lba += 1) {
-            try ide.readSectorLba28(self.drive, lba, &sector);
+            try self.block_dev.readBlock(lba, &sector);
             const chunk_len: usize = @min(remaining, sector.len - sector_offset);
             @memcpy(dest[out_offset .. out_offset + chunk_len], sector[sector_offset .. sector_offset + chunk_len]);
             remaining -= chunk_len;
@@ -253,7 +253,7 @@ pub const FileSystem = struct {
 
     fn readSuperblock(self: *FileSystem) FsError!void {
         var sector = [_]u8{0} ** 512;
-        try ide.readSectorLba28(self.drive, FS_START_LBA, &sector);
+        try self.block_dev.readBlock(FS_START_LBA, &sector);
 
         var superblock: Superblock = undefined;
         @memcpy(std.mem.asBytes(&superblock), sector[0..@sizeOf(Superblock)]);
@@ -267,7 +267,7 @@ pub const FileSystem = struct {
     fn writeSuperblock(self: *const FileSystem) FsError!void {
         var sector = [_]u8{0} ** 512;
         @memcpy(sector[0..@sizeOf(Superblock)], std.mem.asBytes(&self.superblock));
-        try ide.writeSectorLba28(self.drive, FS_START_LBA, &sector);
+        try self.block_dev.writeBlock(FS_START_LBA, &sector);
     }
 
     fn findFileEntry(self: *const FileSystem, name: []const u8) FsError!DirectoryEntry {
@@ -390,7 +390,7 @@ pub const FileSystem = struct {
                 @memcpy(sector[0..chunk_len], data[offset .. offset + chunk_len]);
                 offset += chunk_len;
             }
-            try ide.writeSectorLba28(self.drive, start_lba + sector_index, &sector);
+            try self.block_dev.writeBlock(start_lba + sector_index, &sector);
         }
     }
 
@@ -399,7 +399,7 @@ pub const FileSystem = struct {
         const entry_offset = (index % fs_defs.DIR_ENTRIES_PER_SECTOR) * @sizeOf(DirectoryEntry);
 
         var sector = [_]u8{0} ** 512;
-        try ide.readSectorLba28(self.drive, sector_lba, &sector);
+        try self.block_dev.readBlock(sector_lba, &sector);
 
         var entry: DirectoryEntry = undefined;
         @memcpy(std.mem.asBytes(&entry), sector[entry_offset .. entry_offset + @sizeOf(DirectoryEntry)]);
@@ -412,9 +412,9 @@ pub const FileSystem = struct {
         const entry_offset = (index % fs_defs.DIR_ENTRIES_PER_SECTOR) * @sizeOf(DirectoryEntry);
 
         var sector = [_]u8{0} ** 512;
-        try ide.readSectorLba28(self.drive, sector_lba, &sector);
+        try self.block_dev.readBlock(sector_lba, &sector);
         @memcpy(sector[entry_offset .. entry_offset + @sizeOf(DirectoryEntry)], std.mem.asBytes(entry));
-        try ide.writeSectorLba28(self.drive, sector_lba, &sector);
+        try self.block_dev.writeBlock(sector_lba, &sector);
     }
 };
 

@@ -1,4 +1,7 @@
 const io = @import("io.zig");
+const block_device = @import("block_device.zig");
+const BlockDevice = block_device.BlockDevice;
+const BlockError = block_device.BlockError;
 
 pub const Bus = struct {
     io_base: u16,
@@ -285,3 +288,35 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
     io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_CACHE_FLUSH);
     try waitUntilReady(PRIMARY);
 }
+
+/// Concrete BlockDevice implementation backed by an ATA IDE drive.
+///
+/// Embeds a `BlockDevice` as its first field so that vtable functions can
+/// recover the outer struct via `@fieldParentPtr("block_dev", ptr)`.
+pub const IdeBlockDevice = struct {
+    block_dev: BlockDevice,
+    drive: Drive,
+
+    const vtable = BlockDevice.VTable{
+        .readBlock = readBlock,
+        .writeBlock = writeBlock,
+    };
+
+    /// Initializes an IdeBlockDevice for `drive` with `sector_count` total blocks.
+    pub fn init(drive: Drive, sector_count: u32) IdeBlockDevice {
+        return .{
+            .block_dev = .{ .vtable = &vtable, .block_count = sector_count },
+            .drive = drive,
+        };
+    }
+
+    fn readBlock(bd: *BlockDevice, lba: u32, buf: *[block_device.BLOCK_SIZE]u8) BlockError!void {
+        const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
+        readSectorLba28(self.drive, lba, buf) catch return error.ReadError;
+    }
+
+    fn writeBlock(bd: *BlockDevice, lba: u32, buf: *const [block_device.BLOCK_SIZE]u8) BlockError!void {
+        const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
+        writeSectorLba28(self.drive, lba, buf) catch return error.WriteError;
+    }
+};

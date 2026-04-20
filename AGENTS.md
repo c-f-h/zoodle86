@@ -25,10 +25,11 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/readline.zig`: line editing with cursor navigation, character insertion/deletion, line clearing.
 
 ### Storage & Filesystem
-- `kernel/fs.zig`: extent-based filesystem with mount, format, whole-file helpers, offset-based entry I/O, reusable contiguous extent allocation, delete, and rename operations.
+- `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
+- `kernel/fs.zig`: extent-based filesystem with mount, format, whole-file helpers, offset-based entry I/O, reusable contiguous extent allocation, delete, and rename operations. Uses `BlockDevice` abstraction.
 - `kernel/fs_defs.zig`: filesystem constants, superblock and directory entry structures, fixed layout definitions.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
-- `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O.
+- `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O. Also provides `IdeBlockDevice`, a concrete `BlockDevice` implementation backed by an ATA drive.
 - `kernel/io.zig`: low-level port I/O helpers (inb, inw, outb, outw).
 
 ### Assembly & Low-Level

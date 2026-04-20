@@ -74,6 +74,7 @@ pub fn clearKeyboardHandler() void {
 
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
+var disk_block_device: ide.IdeBlockDevice = undefined;
 
 /// Returns the kernel allocator used for filesystem-backed syscall scratch buffers.
 pub fn getAllocator() std.mem.Allocator {
@@ -454,7 +455,8 @@ fn mountFs() !void {
     console.putDecU32(drive_info.max_lba28);
     console.newline();
 
-    disk_fs = try fs.FileSystem.mountOrFormat(drive);
+    disk_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
+    disk_fs = try fs.FileSystem.mountOrFormat(&disk_block_device.block_dev);
 }
 
 pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
