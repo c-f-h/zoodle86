@@ -134,7 +134,8 @@ fn verifyUnlinkSemantics() !void {
     }
 }
 
-fn main() !void {
+/// Exercises filesystem syscalls with alternating writes, seeks, and unlinks.
+pub fn main() !void {
     var buf: [96]u8 = undefined;
     _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
 
@@ -178,10 +179,6 @@ fn main() !void {
     sys.yield();
 }
 
-pub export fn _start() void {
-    main() catch {
-        _ = sys.write(sys.STDOUT, "Error occurred.\n");
-        sys.exit(1);
-    };
-    sys.exit(0);
+comptime {
+    _ = sys._start;
 }

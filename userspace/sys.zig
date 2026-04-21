@@ -116,3 +116,16 @@ pub fn exit(exitcode: u32) noreturn {
     _ = syscall(.Exit, exitcode, 0, 0);
     unreachable;
 }
+
+const root = @import("root"); // import the program being compiled, which must define a `main` function
+
+/// Enters the userspace runtime, then calls the root module's `main` function.
+pub export fn _start() callconv(.c) noreturn {
+    root.main() catch |err| {
+        _ = write(STDOUT, "Runtime error: ");
+        _ = write(STDOUT, @errorName(err));
+        _ = write(STDOUT, "\n");
+        exit(1);
+    };
+    exit(0);
+}
