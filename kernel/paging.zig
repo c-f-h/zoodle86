@@ -19,7 +19,7 @@ pub const PDE = packed struct {
     page_table_addr: u20, // physical address of page table >> 12
 
     pub inline fn getPhysicalTableAddress(self: *const PDE) u32 {
-        return self.page_table_addr << 12;
+        return @as(u32, self.page_table_addr) << 12;
     }
 };
 
@@ -38,7 +38,7 @@ pub const PTE = packed struct {
     page_addr: u20, // physical address >> 12
 
     pub inline fn getPhysicalPageAddress(self: *const PTE) u32 {
-        return self.page_addr << 12;
+        return @as(u32, self.page_addr) << 12;
     }
 };
 
@@ -86,7 +86,7 @@ pub fn getPte(va: u32) *PTE {
 /// Uses the recursively mapped page directory.
 pub fn virtualToPhysical(ptr: *anyopaque) u32 {
     const va = @intFromPtr(ptr);
-    return (getPte(va).page_addr << 12) + offset(va);
+    return (@as(u32, getPte(va).page_addr) << 12) + offset(va);
 }
 
 /// Return a pointer to the currently recursively mapped Page Directory

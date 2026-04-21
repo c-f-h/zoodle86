@@ -252,7 +252,7 @@ export fn _start() void {
     // All this achieves that the kernel then runs in the higher half, as intended by the linker script.
     // We couldn't load the kernel there directly because paging has to be set up first.
     {
-        const max_physical = 0x10_0000; // for now map only the low 1MiB
+        const max_physical = 0x10_0000; // for now map only the low 1MiB - requires only one page table
         const page_tables = @as([*]paging.PageTable, @ptrFromInt(page_dir_phys + 4096));
         paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
         paging.loadPageDir(page_dir_phys);
@@ -279,6 +279,8 @@ const LINE = 0x10;
 // This is within conventional memory, with 256k of space until 0x80000.
 // The initial identity Page Table Entries for the first 1 MiB of RAM are stored immediately afterwards.
 const page_dir_phys: u32 = 0x4_0000;
+
+const memory_bitmap_va: [*]u32 = @ptrFromInt(0xC005_0000); // virtual address where the physical memory bitmap will be stored
 
 fn kernel_main() !void {
     zero_bss();
@@ -312,7 +314,8 @@ fn kernel_main() !void {
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow(false);
-    pageallocator.addMemory(mem_base, mem_base + mem_size);
+    pageallocator.init(memory_bitmap_va[0..256]); // 1 page is enough to map 128 MiB of RAM
+    pageallocator.setPhysicalMemoryRange(mem_base, mem_base + mem_size);
 
     // kernel data
     const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, true, true);
