@@ -176,6 +176,15 @@ pub fn putDecU32(value: u32) void {
     }
 }
 
+/// Print a u32 as a fixed-width 32-bit binary string.
+pub fn putBinaryU32(value: u32) void {
+    var bit: u32 = 0;
+    while (bit < 32) : (bit += 1) {
+        const shift: u5 = @intCast(31 - bit);
+        putch(if (((value >> shift) & 1) == 0) '0' else '1');
+    }
+}
+
 pub inline fn put(multiple: anytype) void {
     inline for (multiple) |val| {
         if (@TypeOf(val) == u64) {

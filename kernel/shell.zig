@@ -5,6 +5,7 @@ const console = @import("console.zig");
 const fs = @import("fs.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
+const pageallocator = @import("pageallocator.zig");
 const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
 const task = @import("task.zig");
@@ -36,6 +37,7 @@ const commands = [_]Command{
     .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
+    .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Load one or several ELF binary executables and launch the first one.", .handler = cmdRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
@@ -195,6 +197,49 @@ fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
+fn printPageUsage(page_count: usize, page_size_bytes: usize) void {
+    console.putDecU32(@intCast(page_count));
+    console.puts(" pages (");
+    console.putDecU32(@intCast((page_count * page_size_bytes) / 1024));
+    console.puts(" KiB)");
+}
+
+fn cmdMemstat(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    if (args.next() != null) {
+        printUsage("memstat");
+        return;
+    }
+
+    const stats = pageallocator.getStats();
+    const used_pages = stats.total_pages - stats.free_pages;
+
+    console.puts("Page allocator:\n");
+    console.puts("  range: ");
+    console.putHexU32(@intCast(stats.managed_start));
+    console.puts("..");
+    console.putHexU32(@intCast(stats.managed_end));
+    console.newline();
+
+    console.puts("  total: ");
+    printPageUsage(stats.total_pages, stats.page_size_bytes);
+    console.newline();
+
+    console.puts("  used : ");
+    printPageUsage(used_pages, stats.page_size_bytes);
+    console.newline();
+
+    console.puts("  free : ");
+    printPageUsage(stats.free_pages, stats.page_size_bytes);
+    console.newline();
+
+    console.puts("  word[");
+    console.putDecU32(@intCast(stats.current_word_index));
+    console.puts("]: ");
+    console.putBinaryU32(stats.current_word_bits);
+    console.newline();
+}
+
 fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
 
@@ -261,6 +306,8 @@ fn printUsage(name: []const u8) void {
             console.puts(" <old> <new>");
         } else if (std.mem.eql(u8, command.name, "dumpmem")) {
             console.puts(" <hex-address>");
+        } else if (std.mem.eql(u8, command.name, "memstat")) {
+            console.puts(" (no arguments)");
         } else if (std.mem.eql(u8, command.name, "serial")) {
             console.puts(" <on|off>");
         }

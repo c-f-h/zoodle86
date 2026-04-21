@@ -38,7 +38,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ### Applications & Tools
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, serial, run, mkfs, dumpmem, keylog, shutdown, break). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, serial, run, mkfs, dumpmem, memstat, keylog, shutdown, break). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.Io.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `kernel/fs.zig` directly.
 - `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`) and extracts all files to a directory.
