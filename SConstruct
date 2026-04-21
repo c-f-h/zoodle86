@@ -31,6 +31,7 @@ USERSPACE_SOURCES = [
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 SERIALOUT = BUILD_DIR / "serial.txt"
+AUTOEXEC_FILENAME = "autoexec"
 
 IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
@@ -60,6 +61,11 @@ def reset_dir(path):
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+
+
+def get_autoexec_script():
+    script = ARGUMENTS.get("AUTOEXEC", "")
+    return script.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
 
 
 BOOT_BIN = build_artifact(BOOT_ASM, ".bin")
@@ -242,9 +248,18 @@ def build_fs_image(target, source, env):
         )
 
     # Inject each userspace binary into the filesystem image, dropping the .elf extension.
-    for userspace_exe in source:
+    for userspace_exe in source[0:len(USERSPACE_EXES)]:
         userspace_path = pathlib.Path(str(userspace_exe))
         shutil.copy2(userspace_path, FS_IMAGE_DIR / userspace_path.stem)
+
+    autoexec_path = FS_IMAGE_DIR / AUTOEXEC_FILENAME
+    autoexec_script = get_autoexec_script()
+    if autoexec_script:
+        if not autoexec_script.endswith("\n"):
+            autoexec_script += "\n"
+        autoexec_path.write_text(autoexec_script, encoding="utf-8")
+    elif autoexec_path.exists():
+        autoexec_path.unlink()
 
     run(
         [
@@ -328,7 +343,8 @@ userspace_exes = [
     AlwaysBuild(env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET")))
     for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
 ]
-fsimage = env.Command(str(FS_IMAGE), userspace_exes, Action(build_fs_image, "Building $TARGET"))
+autoexec_value = env.Value(get_autoexec_script())
+fsimage = env.Command(str(FS_IMAGE), userspace_exes + [autoexec_value], Action(build_fs_image, "Building $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)
 

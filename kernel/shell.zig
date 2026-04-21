@@ -9,12 +9,9 @@ const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
 const task = @import("task.zig");
 
-// For debugging: automatically execute shell commands at boot time
-const initial_shell_commands = [_][]const u8{
-    //"run hello",
-    //"shutdown",
-};
-var cur_initial_cmd_idx: usize = 0;
+const autoexec_name = "autoexec";
+var autoexec_next_line_idx: usize = 0;
+var autoexec_finished: bool = false;
 
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
@@ -65,12 +62,7 @@ pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
         .disk_fs = disk_fs,
     };
 
-    // Process all queued startup commands before switching to the interactive loop.
-    while (cur_initial_cmd_idx < initial_shell_commands.len) {
-        const cmd = initial_shell_commands[cur_initial_cmd_idx];
-        cur_initial_cmd_idx += 1;
-        try handleCommand(&shell, cmd);
-    }
+    try runAutoexec(&shell);
 
     while (true) {
         var cmdline_buf = [1]u8{0} ** 128;
@@ -86,6 +78,36 @@ fn findCommand(name: []const u8) ?*const Command {
         }
     }
     return null;
+}
+
+fn runAutoexec(shell: *Shell) !void {
+    if (autoexec_finished) return;
+
+    const script = shell.disk_fs.readFile(shell.alloc, autoexec_name) catch |err| switch (err) {
+        error.FileNotFound => {
+            autoexec_finished = true;
+            return;
+        },
+        else => return err,
+    };
+    defer shell.alloc.free(script);
+
+    if (autoexec_next_line_idx == 0) {
+        console.puts("Running autoexec.\n");
+    }
+
+    var line_idx: usize = 0;
+    var lines = std.mem.splitScalar(u8, script, '\n');
+    while (lines.next()) |raw_line| : (line_idx += 1) {
+        if (line_idx < autoexec_next_line_idx) continue;
+
+        autoexec_next_line_idx = line_idx + 1;
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        try handleCommand(shell, line);
+    }
+
+    autoexec_finished = true;
 }
 
 fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {

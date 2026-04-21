@@ -38,7 +38,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ### Applications & Tools
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, serial, run, mkfs, dumpmem, keylog, shutdown, break).
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (help, ls, cat, write, rm, mv, serial, run, mkfs, dumpmem, keylog, shutdown, break). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.Io.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `kernel/fs.zig` directly.
 - `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`) and extracts all files to a directory.
@@ -59,6 +59,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `scons run`: build and run the image in Bochs.
 - `scons debug`: build and run the image in Bochs with the debugger attached.
 - `scons qemu`: build and run the image in QEMU.
+- Add `AUTOEXEC="serial on\nrun hello"` to any of the above SCons commands to inject a one-off `autoexec` file into the filesystem image for that build.
 
 Build pipeline overview:
 - `build/stage2.elf`: linked from `kernel/kernel.zig` and `interrupts.asm`.
@@ -136,6 +137,6 @@ Context switch flow (user → kernel → user):
 - Every public Zig function should have at least a one-line doc comment explaining its function.
 - Debugging tips:
   - Use `objdump -S` to disassemble the kernel binary for resolving crash addresses
-  - Use `initial_shell_commands` in `shell.zig` to automatically execute a sequence of commands on startup
+  - For startup commands, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`
   - Make use the the Bochs serial output logging to `build/serial.txt` for tracing exceptions and program state. Use the `serial on` shell command to mirror console output to the serial output.
 - Whenever the design of the project changes, keep AGENTS.md up to date!
