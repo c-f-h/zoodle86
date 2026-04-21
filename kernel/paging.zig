@@ -180,6 +180,12 @@ fn allocatePageTableAt(pti: u10, user: bool) void {
     @memset(&mapped_pts[pti], @bitCast(@as(u32, 0)));
 }
 
+fn ensurePageTableAt(pti: u10, user: bool) void {
+    if (!mapped_pd[pti].present) {
+        allocatePageTableAt(pti, user);
+    }
+}
+
 // Allocate a number of pages within an already allocated page table.
 fn allocatePagesAt(pti: u10, start_pg: u10, num_pages: u32, user: bool, writable: bool) void {
     const pt = &mapped_pts[pti];
@@ -188,17 +194,25 @@ fn allocatePagesAt(pti: u10, start_pg: u10, num_pages: u32, user: bool, writable
     }
 }
 
-/// Allocate a number of pages at the given virtual address. Must fit into a single, 4MB aligned page table.
+/// Allocate a number of pages at the given virtual address (page-aligned).
 /// Does not check for existing allocations at that location.
 pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool) []u8 {
-    const pti = pageTableIndex(addr);
-    const start_pg: u32 = pageIndex(addr);
-    if (start_pg + num_pages > 1024) {
-        @panic("Virtual range crosses page-table boundary");
+    if (addr & 0xFFF != 0) {
+        @panic("Virtual address must be page-aligned");
     }
 
-    allocatePageTableAt(pti, user);
-    allocatePagesAt(pti, @truncate(start_pg), num_pages, user, writable);
+    var cursor = addr;
+    var remaining_pages = num_pages;
+
+    while (remaining_pages > 0) {
+        const pti = pageTableIndex(cursor);
+        ensurePageTableAt(pti, user);
+
+        const chunk_pages: u32 = @min(remaining_pages, 1024 - @as(u32, pageIndex(cursor)));
+        allocatePagesAt(pti, pageIndex(cursor), chunk_pages, user, writable);
+        cursor += chunk_pages * PAGE;
+        remaining_pages -= chunk_pages;
+    }
 
     const page_start: [*]u8 = @ptrFromInt(addr);
     return page_start[0 .. num_pages * PAGE];
@@ -210,9 +224,11 @@ fn handlePageFault(va: usize, errcode: u32) bool {
         return false;
     }
     const ptask = task.getCurrentTask();
-    if (roundDown(va, PAGE) == ptask.stack_mem.base - PAGE) {
-        // Accessing one page below the current stack base - grow the stack by one page
-        ptask.stack_mem.growDown(1);
+    const fault_page = roundDown(va, PAGE);
+    // Only allow growing the stack down to the predefined limit (stack_bottom)
+    if (fault_page >= ptask.stack_bottom and fault_page < ptask.stack_mem.base) {
+        const additional_pages = numPagesBetween(fault_page, ptask.stack_mem.base);
+        ptask.stack_mem.growDown(additional_pages);
         return true;
     }
     return false;
@@ -262,6 +278,7 @@ pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
     return (p + size - 1) & (~(size - 1));
 }
 
+// Compute the number of aligned pages needed so that the range [va0, va1) is fully covered.
 fn numPagesBetween(va0: usize, va1: usize) u32 {
     const va_begin = roundDown(va0, PAGE);
     const va_end = roundToNext(va1, PAGE);
@@ -274,6 +291,11 @@ pub const VMemRange = struct {
     num_pages: u32 = 0,
     user: bool = false,
     writable: bool = false,
+
+    /// The virtual end address of the range (exclusive)
+    pub fn end(self: *const VMemRange) u32 {
+        return self.base + self.num_pages * PAGE;
+    }
 
     /// Initialize the struct and allocate a contiguous range of virtual memory pages starting at the given virtual address.
     pub fn allocate(range: *VMemRange, va: u32, va_end: u32, is_user: bool, is_writable: bool) []u8 {
@@ -301,19 +323,20 @@ pub const VMemRange = struct {
         }
     }
 
+    /// Grow the range upwards by allocating additional pages beyond the current end.
+    pub fn growUp(range: *VMemRange, additional_pages: u32) void {
+        if (additional_pages == 0) return;
+        _ = allocateMemoryAt(range.end(), additional_pages, range.user, range.writable);
+        range.num_pages += additional_pages;
+    }
+
+    /// Grow the range downwards by allocating additional pages below the current base.
     pub fn growDown(range: *VMemRange, additional_pages: u32) void {
         if (additional_pages == 0) return;
-        if (additional_pages > 1024) {
-            @panic("Cannot grow more than one page table at a time");
-        }
-
         const new_base = range.base - additional_pages * PAGE;
-        const new_pti = pageTableIndex(new_base);
-        if (new_pti != pageTableIndex(range.base)) {
-            // entered a new page table - need to allocate it first
-            allocatePageTableAt(new_pti, range.user);
-        }
-        allocatePagesAt(new_pti, pageIndex(new_base), additional_pages, range.user, range.writable);
+
+        _ = allocateMemoryAt(new_base, additional_pages, range.user, range.writable);
+
         range.base = new_base;
         range.num_pages += additional_pages;
     }

@@ -45,13 +45,13 @@ pub const Task = struct {
     page_dir_phys_addr: u32 = undefined,
     pid: u32 = undefined,
     kernel_esp: usize = 0,
-    stack_bottom: u32 = undefined,
-    stack_top: u32 = undefined,
+    stack_bottom: u32 = undefined, // lower bound for stack growth in virtual memory
+    stack_top: u32 = undefined, // top of stack in virtual memory
     heap_top: u32 = undefined,
 
     code_mem: paging.VMemRange = .{},
     data_mem: paging.VMemRange = .{},
-    stack_mem: paging.VMemRange = .{},
+    stack_mem: paging.VMemRange = .{}, // actual extents of current stack (may grow downwards)
 
     fd_table: [MAX_FDS]FdSlot = [_]FdSlot{.{}} ** MAX_FDS,
 

@@ -81,8 +81,8 @@ There is no separate unit-test suite yet. A successful build is the current base
 | 0x00000000 - 0x00100000 | 1 MB | Identity-mapped low memory (boot, real-mode data) |
 | 0x00400000 - 0x10000000 | ~252 MB | User-mode text (code) |
 | 0x10000000 - 0x40000000 | ~768 MB | User-mode rodata/data/heap (per-process) |
-| 0x40000000 - 0x7FFFF000 | ~1 GB | Unused |
-| 0x7FFFF000 - 0x80000000 | 4 KB | User-mode stack (grows downward from 0x80000000, per-process) |
+| 0x40000000 - 0x70000000 | ~768 MB | Unused |
+| 0x70000000 - 0x80000000 | 256 MB | User-mode stack reservation (per-process, grows downward from 0x80000000; top page mapped initially) |
 | 0x80000000 - 0xC0000000 | 1 GB | Unused |
 | 0xC0008000 - 0xC0200000 | ~2 MB | Kernel code and data (stage-2) |
 | 0xE0000000 - 0xE0400000 | 4 MB | Kernel heap (fixed-buffer allocator) |
@@ -97,7 +97,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Serial Debug Output**: The kernel initializes COM1 early in boot and writes exception and panic diagnostics to the serial port. Bochs is configured with `com1: enabled=1, mode=file` so this output is captured in `build/serial.txt` on the host.
 
-**Memory Management**: The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has its own 4 KB kernel stack (power-of-2 aligned), with the current task pointer stored at the stack base.
+**Memory Management**: The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has its own 4 KB kernel stack (power-of-2 aligned), with the current task pointer stored at the stack base. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window.
 
 **Task/Process Management**: Each `Task` struct holds a 4 KB kernel stack (first word stores a pointer back to the `Task` for `getCurrentTask()`), a 4 KB per-task page directory, a unique PID, a saved `kernel_esp` (0 = free slot), user-mode stack/heap bounds, and a small per-task fd table (with stdio preinstalled plus mappings into the kernel global open-file table). User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). A fixed pool of 8 task slots is managed by `taskman.zig`.
 

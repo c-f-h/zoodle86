@@ -274,6 +274,8 @@ export fn _start() void {
 const Task = task.Task;
 
 const LINE = 0x10;
+const USER_STACK_BOTTOM: u32 = 0x7000_0000;
+const USER_STACK_TOP: u32 = 0x8000_0000;
 
 // Preliminary physical memory location for initial Page Directory.
 // This is within conventional memory, with 256k of space until 0x80000.
@@ -390,17 +392,23 @@ pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
     // compute image extents and locate stack and heap
     const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
     ptask.heap_top = paging.roundToNext(data_end, paging.PAGE); // any remaining space in last data page can be used for heap
+    if (ptask.heap_top >= USER_STACK_BOTTOM) {
+        return error.OutOfMemory;
+    }
 
     // user code and data
     ptask.loadPageDir();
     _ = ptask.code_mem.allocate(0x0040_0000, code_end, true, true);
     _ = ptask.data_mem.allocate(0x1000_0000, data_end, true, true);
-    // set up stack page at fixed high address
-    ptask.stack_top = 0x8000_0000; // stack will grow downwards from 2GB
-    ptask.stack_bottom = ptask.stack_top - paging.PAGE;
-    _ = ptask.stack_mem.allocate(ptask.stack_bottom, ptask.stack_top, true, true);
+    // Reserve a fixed stack window and map only its top page initially.
+    ptask.stack_top = USER_STACK_TOP;
+    ptask.stack_bottom = USER_STACK_BOTTOM;
+    _ = ptask.stack_mem.allocate(ptask.stack_top - paging.PAGE, ptask.stack_top, true, true);
 
-    console.put(.{ "CODE:  ", code_start, " - ", code_end, ", DATA: ", data_start, " - ", data_end, "; entry: 0x", ehdr.e_entry, "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, "\n" });
+    console.put(.{
+        "CODE:  ",   code_start,         " - ", code_end,        ", DATA: ",   data_start,           " - ", data_end,        "; entry: 0x", ehdr.e_entry,
+        "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, " (mapped: ", ptask.stack_mem.base, " - ", ptask.stack_top, ")\n",
+    });
 
     var i: u32 = 0;
 
