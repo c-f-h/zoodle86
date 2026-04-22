@@ -319,6 +319,7 @@ def run_qemu(target, source, env):
             "-m", "32",
             "-boot", "order=ac",
             "-drive", f"file={BOOT_IMG},if=ide,format=raw",
+            "-serial", f"file:{SERIALOUT}",
         ],
         cwd=ROOT,
     )
