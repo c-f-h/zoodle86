@@ -401,7 +401,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     const elf_data = try disk_fs.readFile(alloc, fname);
     defer alloc.free(elf_data);
 
-    const ehdr: *elf32.Elf32_Ehdr = @ptrCast(@alignCast(elf_data.ptr));
+    const ehdr: *align(1) elf32.Elf32_Ehdr = @ptrCast(elf_data.ptr);
 
     // compute image extents and locate stack and heap
     const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
