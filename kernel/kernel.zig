@@ -380,7 +380,12 @@ pub fn reschedule() noreturn {
     }
 }
 
+/// Loads an ELF file into a fresh task with an isolated user address space.
 pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task {
+    // Task initialization clones the currently active page directory, so start
+    // from the kernel-only page tables instead of whatever user task was most
+    // recently loaded.
+    paging.loadPageDir(page_dir_phys);
     const ptask = taskman.newTask();
 
     console.put(.{ "Loading ", fname, "...\n" });

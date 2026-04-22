@@ -89,8 +89,11 @@ pub const Task = struct {
     }
 
     fn initPaging(task: *Task) void {
+        // Clone the currently active page directory.
+        // NB: This should be the kernel-only page directory to avoid cross-task contamination.
         @memcpy(&task.page_dir, paging.getMappedPageDirectory());
         task.page_dir_phys_addr = paging.virtualToPhysical(&task.page_dir);
+        // Restore the recursive mapping to the new page directory
         task.page_dir[1023] = paging.PDE{
             .writable = true,
             .user = false,
