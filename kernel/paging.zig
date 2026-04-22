@@ -106,10 +106,10 @@ pub inline fn enable() void {
 /// Load the page directory at the given physical address
 pub inline fn loadPageDir(page_dir_phys: u32) void {
     asm volatile (
-        \\ mov %[pdir], %%cr3     // enable paging
+        \\ mov %[pdir], %%cr3
         :
         : [pdir] "r" (page_dir_phys),
-    );
+        : .{ .memory = true });
 }
 
 /// Initialize identity mapping: physical addresses map 1:1 to virtual addresses.

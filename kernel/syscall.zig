@@ -1,6 +1,8 @@
 const filedesc = @import("filedesc.zig");
 const kernel = @import("kernel.zig");
+const paging = @import("paging.zig");
 const task = @import("task.zig");
+const std = @import("std");
 
 const Syscall = enum(u32) {
     Read = 0,
@@ -12,9 +14,12 @@ const Syscall = enum(u32) {
     GetPid = 39,
     Exit = 60,
     Unlink = 87,
+    Spawn = 1001,
     _,
 };
 
+const ERRNO_E2BIG: u32 = 7;
+const ERRNO_EAGAIN: u32 = 11;
 const ERRNO_EIO: u32 = 5;
 const ERRNO_ENOENT: u32 = 2;
 const ERRNO_ENOMEM: u32 = 12;
@@ -36,6 +41,7 @@ fn errnoResult(errno: u32) u32 {
 fn mapError(err: anyerror) u32 {
     return errnoResult(switch (err) {
         error.AccessDenied => ERRNO_EACCES,
+        error.ArgsTooLarge => ERRNO_E2BIG,
         error.BadFd => ERRNO_EBADF,
         error.FileInUse => ERRNO_EBUSY,
         error.ControllerError => ERRNO_EIO,
@@ -50,6 +56,7 @@ fn mapError(err: anyerror) u32 {
         error.InvalidSeek => ERRNO_EINVAL,
         error.InvalidSuperblock => ERRNO_EIO,
         error.NoDevice => ERRNO_EIO,
+        error.NoTaskSlots => ERRNO_EAGAIN,
         error.NoSpace => ERRNO_ENOSPC,
         error.NotAtaDevice => ERRNO_EIO,
         error.OutOfMemory => ERRNO_ENOMEM,
@@ -91,6 +98,54 @@ fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {
     return filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence) catch |err| mapError(err);
 }
 
+fn sys_spawn(argv_desc_ofs: u32) u32 {
+    const current_task = task.getCurrentTask();
+
+    // read argv slice from userspace memory
+    const argv_desc = current_task.getUserPtr(task.AbiSlice, argv_desc_ofs);
+    const argc: usize = @intCast(argv_desc.len);
+    if (argc == 0 or argc > task.MAX_ARGV_COUNT) {
+        return errnoResult(ERRNO_EINVAL);
+    }
+
+    const arg_slices = current_task.getUserSlice(task.AbiSlice, argv_desc.ptr, argv_desc.len);
+
+    // count total bytes in argument strings for a single allocation
+    var string_bytes: usize = 0;
+    for (arg_slices, 0..) |arg_desc, i| {
+        if (i == 0 and arg_desc.len == 0) return errnoResult(ERRNO_EINVAL); // command must not be empty
+        string_bytes += arg_desc.len;
+    }
+
+    // allocate buffers for the string storage and the slice objects
+    const allocator = kernel.getAllocator();
+
+    const arg_storage = allocator.alloc(u8, string_bytes) catch |err| return mapError(err);
+    defer allocator.free(arg_storage);
+
+    const argv_buf = allocator.alloc([]const u8, argc) catch |err| return mapError(err);
+    defer allocator.free(argv_buf);
+
+    // copy argv strings from userspace and store their slices in the argv_buf
+    var cursor: usize = 0;
+    for (arg_slices, 0..) |arg_desc, i| {
+        const len: usize = @intCast(arg_desc.len);
+        if (len == 0) {
+            argv_buf[i] = arg_storage[cursor..cursor]; // empty slice
+        } else {
+            const arg_bytes = current_task.getUserMem(arg_desc.ptr, arg_desc.len);
+            const dest = arg_storage[cursor .. cursor + len];
+            @memcpy(dest, arg_bytes);
+            argv_buf[i] = dest;
+            cursor += len;
+        }
+    }
+
+    defer current_task.loadPageDir(); // make sure to return to the correct page directory
+    const child = kernel.loadUserspaceElf(argv_buf[0], argv_buf) catch |err| return mapError(err);
+    return child.pid;
+}
+
 /// Dispatches the int 0x80 syscall ABI invoked by user-mode executables.
 pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
     return switch (nr) {
@@ -106,6 +161,7 @@ pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) cal
         .Write => sys_write(arg1, arg2, arg3),
         .Unlink => sys_unlink(arg1, arg2),
         .Yield => kernel.reschedule(),
+        .Spawn => sys_spawn(arg1),
         else => errnoResult(ERRNO_EINVAL),
     };
 }

@@ -1,6 +1,7 @@
 pub const STDIN: u32 = 0;
 pub const STDOUT: u32 = 1;
 pub const STDERR: u32 = 2;
+pub const FAIL: u32 = 0xFFFF_FFFF;
 
 /// Stable 32-bit ABI slice representation used for receiving argv at process startup.
 /// Must match the definition in kernel/task.zig.
@@ -49,6 +50,7 @@ const Syscall = enum(u32) {
     GetPid = 39,
     Exit = 60,
     Unlink = 87,
+    Spawn = 1001,
 };
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
@@ -118,6 +120,41 @@ pub fn unlink(path: []const u8) u32 {
 /// Returns the current process identifier.
 pub fn getpid() u32 {
     return syscall(.GetPid, 0, 0, 0);
+}
+
+/// Spawns a userspace executable from a full argv slice where argv[0] names the program.
+pub fn spawnv(argv: []const []const u8) !u32 {
+    if (argv.len > MAX_ARGV_COUNT) return error.TooManyArgs;
+
+    var argv_abi_storage: [MAX_ARGV_COUNT]AbiSlice = undefined;
+    for (argv, 0..) |arg, i| {
+        argv_abi_storage[i] = .{
+            .ptr = @intFromPtr(arg.ptr),
+            .len = @intCast(arg.len),
+        };
+    }
+
+    const argv_abi = AbiSlice{
+        .ptr = if (argv.len == 0) 0 else @intFromPtr(&argv_abi_storage[0]),
+        .len = @intCast(argv.len),
+    };
+    const pid = syscall(.Spawn, @intFromPtr(&argv_abi), 0, 0);
+    if (pid == FAIL) {
+        return error.SpawnFailed;
+    }
+    return pid;
+}
+
+/// Spawns a userspace executable, prepending the command name as argv[0].
+pub fn spawn(path: []const u8, args: []const []const u8) !u32 {
+    if (args.len + 1 > MAX_ARGV_COUNT) return error.TooManyArgs;
+
+    var argv_buf: [MAX_ARGV_COUNT][]const u8 = undefined;
+    argv_buf[0] = path;
+    for (args, 0..) |arg, i| {
+        argv_buf[i + 1] = arg;
+    }
+    return spawnv(argv_buf[0 .. args.len + 1]);
 }
 
 /// Voluntarily yields execution to the scheduler.

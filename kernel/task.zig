@@ -227,11 +227,36 @@ pub const Task = struct {
         unreachable;
     }
 
+    // Checks that the given range lies within the user memory segment.
+    fn validateUserDataRange(_: *Task, ptr: u32, len: u32) bool {
+        const end = ptr + len;
+        return ptr >= kernel.USER_DATA_START and end <= kernel.USER_STACK_TOP;
+    }
+
     /// Accesses a slice of memory within the task's user memory segment.
+    /// Only valid while the task's page directory is mapped.
     pub fn getUserMem(task: *Task, ofs: u32, len: u32) []u8 {
-        _ = task;
+        if (!task.validateUserDataRange(ofs, len))
+            @panic("Invalid user memory access"); // TODO: return an error, terminate the task
         const start: [*]u8 = @ptrFromInt(ofs);
         return start[0..len];
+    }
+
+    /// Accesses a slice of type T within the task's user memory segment.
+    pub fn getUserSlice(task: *Task, comptime T: type, va: usize, count: usize) []T {
+        const len = @sizeOf(T) * count;
+        if (!task.validateUserDataRange(va, len))
+            @panic("Invalid user memory access"); // TODO: return an error, terminate the task
+        const start: [*]T = @ptrFromInt(va);
+        return start[0..count];
+    }
+
+    /// Returns a pointer to a value of type T within the task's user memory segment.
+    pub fn getUserPtr(task: *Task, comptime T: type, va: usize) *T {
+        const len = @sizeOf(T);
+        if (!task.validateUserDataRange(va, len))
+            @panic("Invalid user memory access"); // TODO: return an error, terminate the task
+        return @ptrFromInt(va);
     }
 
     /// Updates the active CPU TSS to use this task's kernel stack.

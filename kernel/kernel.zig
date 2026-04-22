@@ -274,8 +274,10 @@ export fn _start() void {
 const Task = task.Task;
 
 const LINE = 0x10;
-const USER_STACK_BOTTOM: u32 = 0x7000_0000;
-const USER_STACK_TOP: u32 = 0x8000_0000;
+
+pub const USER_DATA_START: u32 = 0x1000_0000; // start of userspace data segment
+pub const USER_STACK_BOTTOM: u32 = 0x7000_0000; // start of userspace stack
+pub const USER_STACK_TOP: u32 = 0x8000_0000; // end of userspace stack (and end of userspace virtual address space)
 
 // Preliminary physical memory location for initial Page Directory.
 // This is within conventional memory, with 256k of space until 0x80000.
@@ -381,12 +383,19 @@ pub fn reschedule() noreturn {
 }
 
 /// Loads an ELF file into a fresh task with an isolated user address space.
+/// Returns with the kernel page directory reloaded so the caller can decide when to run it.
 pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task {
     // Task initialization clones the currently active page directory, so start
     // from the kernel-only page tables instead of whatever user task was most
     // recently loaded.
     paging.loadPageDir(page_dir_phys);
-    const ptask = taskman.newTask();
+    defer paging.loadPageDir(page_dir_phys);
+
+    const ptask = try taskman.newTask();
+    errdefer {
+        ptask.loadPageDir();
+        ptask.terminate();
+    }
 
     console.put(.{ "Loading ", fname, "...\n" });
     const elf_data = try disk_fs.readFile(alloc, fname);
@@ -404,7 +413,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     // user code and data
     ptask.loadPageDir();
     _ = ptask.code_mem.allocate(0x0040_0000, code_end, true, true);
-    _ = ptask.data_mem.allocate(0x1000_0000, data_end, true, true);
+    _ = ptask.data_mem.allocate(USER_DATA_START, data_end, true, true);
     // Reserve a fixed stack window and map only its top page initially.
     ptask.stack_top = USER_STACK_TOP;
     ptask.stack_bottom = USER_STACK_BOTTOM;

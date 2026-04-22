@@ -9,15 +9,15 @@ pub fn init() void {
     }
 }
 
-/// Create and initialize a new task.
-pub fn newTask() *task.Task {
+/// Creates and initializes a new task, or reports that the fixed task pool is full.
+pub fn newTask() error{NoTaskSlots}!*task.Task {
     for (&tasks) |*t| {
         if (t.kernel_esp == 0) {
             t.init();
             return t;
         }
     }
-    @panic("No free task slots");
+    return error.NoTaskSlots;
 }
 
 /// Return the next runnable task after `ptask`, or null if none exists.

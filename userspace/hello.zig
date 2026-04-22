@@ -6,6 +6,9 @@ pub fn main(argv: []const []const u8) !void {
     if (argv.len > 1) {
         count = try std.fmt.parseInt(u32, argv[1], 10);
     }
+    if (argv.len > 2) {
+        _ = try sys.spawn("hello", &.{argv[2]});
+    }
 
     var buf: [64]u8 = undefined;
     const msg = try std.fmt.bufPrint(&buf, "Hello, world from process {0}!\n", .{sys.getpid()});

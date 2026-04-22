@@ -45,7 +45,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`) and writes a directory of input files into it using `fs.FileSystem.writeFile()`.
 - `userspace/hello.zig`: freestanding userspace hello-world/yield smoke-test binary.
 - `userspace/fs_stress.zig`: freestanding userspace filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
-- `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers, linker script, and startup entry point `_start` which passes command line arguments to `main` and handles runtime errors.
+- `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers, linker script, and startup entry point `_start` which passes command line arguments to `main`.
 
 ### Build Configuration
 - `stage2.ld`, `userspace.ld`: linker scripts for stage-2 and userspace.
@@ -126,6 +126,7 @@ Context switch flow (user → kernel → user):
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
 | `exit` | 60 | — | — | Terminates task, closes descriptors, and reschedules; does not return |
 | `unlink` | 87 | path_offset, path_len | 0 or `FAIL` | Removes a filesystem entry; fails if the file is still open by any task |
+| `spawn` | 1001 | argv_slice_ptr | child PID or `FAIL` | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable |
 
 **Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–63 are reserved for the stage-2 loader. The custom filesystem begins at sector 64. The filesystem uses a one-sector superblock, an eight-sector flat root directory (64 entries × 64 bytes), and contiguous file extents allocated from reusable gaps with a first-fit scan. Directory slot 0 is reserved for a future bootable kernel file. Files are stored in contiguous extents with metadata (name, state, extent location, timestamps) tracked in the root directory.
 
