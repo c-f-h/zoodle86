@@ -138,7 +138,7 @@ Context switch flow (user → kernel → user):
 - Use Zig 0.16.
 - Every public Zig function should have at least a one-line doc comment explaining its function.
 - Debugging tips:
-  - Use `objdump -S` to disassemble the kernel binary for resolving crash addresses
-  - For startup commands, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`
-  - Make use the the Bochs serial output logging to `build/serial.txt` for tracing exceptions and program state. Use the `serial on` shell command to mirror console output to the serial output.
+  - Use `objdump` to disassemble the kernel binary for resolving crash addresses
+  - For startup commands, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`. End with `shutdown` to terminate cleanly.
+  - Make use of serial output logging to `build/serial.txt` for tracing exceptions and program state. Use the `serial on` shell command to mirror console output to the serial output.
 - Whenever the design of the project changes, keep AGENTS.md up to date!
