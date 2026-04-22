@@ -7,15 +7,15 @@ This is a tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in 
 This repository builds a bootable x86 disk image with a tiny freestanding kernel and a small command-driven text UI.
 
 ### Core Kernel Modules
-- `kernel/kernel.zig`: kernel entrypoint, E820 memory discovery, GDT/IDT setup, paging initialization, memory allocator, filesystem mounting, shell startup, exception handling, and syscall dispatcher.
+- `kernel/kernel.zig`: kernel entrypoint, E820 memory discovery, GDT/IDT setup, paging initialization, memory allocator, filesystem mounting, shell startup, and exception handling.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
-- `kernel/pageallocator.zig`: page-level allocator for user processes and kernel structures.
+- `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
-- `kernel/task.zig`: task/process management with per-task GDT entries, kernel stacks, user memory regions, page directories, and per-task file descriptor mappings.
-- `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) with round-robin scheduler; `getNextActiveTask()` finds the next runnable task for cooperative scheduling.
+- `kernel/task.zig`: task/process management with per-task kernel stack, user memory regions, page directories, and file descriptor mappings.
+- `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) with round-robin scheduler.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over the filesystem and console streams.
-- `kernel/syscall.zig`: syscall number enum and dispatch entry point; routes `int 0x80` calls from user mode into kernel handlers for stdout, file descriptors, process control, and scheduling.
+- `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode.
 
 ### Console & Input/Output
 - `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, and memory dumps.
