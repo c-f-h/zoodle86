@@ -1,4 +1,4 @@
-﻿const serial = @import("serial.zig");
+const serial = @import("serial.zig");
 const vga = @import("vgatext.zig");
 
 var console_row: u32 = 0;
