@@ -23,6 +23,7 @@ const ERRNO_EAGAIN: u32 = 11;
 const ERRNO_EIO: u32 = 5;
 const ERRNO_ENOENT: u32 = 2;
 const ERRNO_ENOMEM: u32 = 12;
+const ERRNO_EFAULT: u32 = 14;
 const ERRNO_EACCES: u32 = 13;
 const ERRNO_EEXIST: u32 = 17;
 const ERRNO_ENFILE: u32 = 23;
@@ -44,6 +45,7 @@ fn mapError(err: anyerror) u32 {
         error.ArgsTooLarge => ERRNO_E2BIG,
         error.BadFd => ERRNO_EBADF,
         error.FileInUse => ERRNO_EBUSY,
+        error.AccessViolation => ERRNO_EFAULT,
         error.ControllerError => ERRNO_EIO,
         error.Corrupt => ERRNO_EIO,
         error.DeviceFault => ERRNO_EIO,
@@ -68,7 +70,7 @@ fn mapError(err: anyerror) u32 {
 }
 
 fn sys_open(path_ofs: u32, path_len: u32, flags: u32) u32 {
-    const path = task.getCurrentTask().getUserMem(path_ofs, path_len);
+    const path = task.getCurrentTask().getUserMem(path_ofs, path_len) catch |err| return mapError(err);
     return filedesc.openFile(kernel.getFileSystem(), task.getCurrentTask(), path, flags) catch |err| mapError(err);
 }
 
@@ -78,18 +80,18 @@ fn sys_close(fd: u32) u32 {
 }
 
 fn sys_unlink(path_ofs: u32, path_len: u32) u32 {
-    const path = task.getCurrentTask().getUserMem(path_ofs, path_len);
+    const path = task.getCurrentTask().getUserMem(path_ofs, path_len) catch |err| return mapError(err);
     filedesc.unlinkFile(kernel.getFileSystem(), path) catch |err| return mapError(err);
     return 0;
 }
 
 fn sys_read(fd: u32, ofs: u32, count: u32) u32 {
-    const dest = task.getCurrentTask().getUserMem(ofs, count);
+    const dest = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
     return @intCast(filedesc.readFile(kernel.getFileSystem(), task.getCurrentTask(), fd, dest) catch |err| return mapError(err));
 }
 
 fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
-    const data = task.getCurrentTask().getUserMem(ofs, count);
+    const data = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
     return @intCast(filedesc.writeFile(kernel.getFileSystem(), kernel.getAllocator(), task.getCurrentTask(), fd, data) catch |err| return mapError(err));
 }
 
@@ -102,13 +104,13 @@ fn sys_spawn(argv_desc_ofs: u32) u32 {
     const current_task = task.getCurrentTask();
 
     // read argv slice from userspace memory
-    const argv_desc = current_task.getUserPtr(task.AbiSlice, argv_desc_ofs);
+    const argv_desc = current_task.getUserPtr(task.AbiSlice, argv_desc_ofs) catch |err| return mapError(err);
     const argc: usize = @intCast(argv_desc.len);
     if (argc == 0 or argc > task.MAX_ARGV_COUNT) {
         return errnoResult(ERRNO_EINVAL);
     }
 
-    const arg_slices = current_task.getUserSlice(task.AbiSlice, argv_desc.ptr, argv_desc.len);
+    const arg_slices = current_task.getUserSlice(task.AbiSlice, argv_desc.ptr, argv_desc.len) catch |err| return mapError(err);
 
     // count total bytes in argument strings for a single allocation
     var string_bytes: usize = 0;
@@ -133,7 +135,7 @@ fn sys_spawn(argv_desc_ofs: u32) u32 {
         if (len == 0) {
             argv_buf[i] = arg_storage[cursor..cursor]; // empty slice
         } else {
-            const arg_bytes = current_task.getUserMem(arg_desc.ptr, arg_desc.len);
+            const arg_bytes = current_task.getUserMem(arg_desc.ptr, arg_desc.len) catch |err| return mapError(err);
             const dest = arg_storage[cursor .. cursor + len];
             @memcpy(dest, arg_bytes);
             argv_buf[i] = dest;

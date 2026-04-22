@@ -39,8 +39,8 @@ const commands = [_]Command{
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
-    .{ .name = "run", .description = "Load one or several ELF binary executables and launch the first one.", .handler = cmdRun },
-    .{ .name = "runv", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRunv },
+    .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
+    .{ .name = "multirun", .description = "Load several ELF binary executables and launch the first one.", .handler = cmdMultiRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
@@ -262,7 +262,7 @@ fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
-fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
+fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     var first_task: ?*task.Task = null;
     if (args.peek() == null) {
@@ -279,7 +279,7 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     kernel.run(first_task.?);
 }
 
-fn cmdRunv(shell: *Shell, args: *ArgsIterator) !void {
+fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     const fname = args.next() orelse {
         console.puts("Usage: runv <executable> [<arg> ...]\n");

@@ -2,19 +2,23 @@ const gdt = @import("gdt.zig");
 const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
+const std = @import("std");
 
 const KERNEL_STACK_SIZE = 4096;
 
-/// Stable 32-bit ABI slice representation used for initial-stack argv passing.
+/// Maximum number of arguments that can be passed to a process via setArgs.
+const KernelStack = [KERNEL_STACK_SIZE]u8;
+
+/// Stable 32-bit ABI slice representation used for argv passing.
 /// Must match the definition in userspace/sys.zig.
 pub const AbiSlice = extern struct {
     ptr: u32,
     len: u32,
 };
 
-/// Maximum number of arguments that can be passed to a process via setArgs.
 pub const MAX_ARGV_COUNT = 128;
-const KernelStack = [KERNEL_STACK_SIZE]u8;
+
+pub const UserMemError = error{AccessViolation};
 
 pub const MAX_FDS = 16;
 
@@ -229,33 +233,56 @@ pub const Task = struct {
 
     // Checks that the given range lies within the user memory segment.
     fn validateUserDataRange(_: *Task, ptr: u32, len: u32) bool {
-        const end = ptr + len;
-        return ptr >= kernel.USER_DATA_START and end <= kernel.USER_STACK_TOP;
+        if (ptr < kernel.USER_DATA_START or ptr > kernel.USER_STACK_TOP) return false;
+        return len <= kernel.USER_STACK_TOP - ptr;
+    }
+
+    // Checks that the given range is mapped in the current page directory with user permissions.
+    fn validateUserMappingRange(_: *Task, ptr: u32, len: u32) bool {
+        if (len == 0) return true;
+
+        const last_byte = ptr + len - 1;
+        const page_dir = paging.getMappedPageDirectory();
+        var va = paging.roundDown(ptr, paging.PAGE);
+        const end_page = paging.roundDown(last_byte, paging.PAGE);
+        while (true) : (va += paging.PAGE) {
+            const pde = page_dir[@truncate(va >> 22)];
+            if (!pde.present or !pde.user) return false;
+
+            const pte = paging.getPte(va);
+            if (!pte.present or !pte.user) return false;
+
+            if (va == end_page) return true;
+        }
+    }
+
+    fn validateUserAccess(task: *Task, ptr: u32, len: u32) UserMemError!void {
+        if (!task.validateUserDataRange(ptr, len) or !task.validateUserMappingRange(ptr, len)) {
+            return error.AccessViolation;
+        }
     }
 
     /// Accesses a slice of memory within the task's user memory segment.
     /// Only valid while the task's page directory is mapped.
-    pub fn getUserMem(task: *Task, ofs: u32, len: u32) []u8 {
-        if (!task.validateUserDataRange(ofs, len))
-            @panic("Invalid user memory access"); // TODO: return an error, terminate the task
+    pub fn getUserMem(task: *Task, ofs: u32, len: u32) UserMemError![]u8 {
+        try task.validateUserAccess(ofs, len);
         const start: [*]u8 = @ptrFromInt(ofs);
         return start[0..len];
     }
 
     /// Accesses a slice of type T within the task's user memory segment.
-    pub fn getUserSlice(task: *Task, comptime T: type, va: usize, count: usize) []T {
-        const len = @sizeOf(T) * count;
-        if (!task.validateUserDataRange(va, len))
-            @panic("Invalid user memory access"); // TODO: return an error, terminate the task
+    pub fn getUserSlice(task: *Task, comptime T: type, va: u32, count: u32) UserMemError![]T {
+        const elem_size: u32 = @intCast(@sizeOf(T));
+        const len = std.math.mul(u32, elem_size, count) catch return error.AccessViolation;
+        try task.validateUserAccess(va, len);
         const start: [*]T = @ptrFromInt(va);
         return start[0..count];
     }
 
     /// Returns a pointer to a value of type T within the task's user memory segment.
-    pub fn getUserPtr(task: *Task, comptime T: type, va: usize) *T {
-        const len = @sizeOf(T);
-        if (!task.validateUserDataRange(va, len))
-            @panic("Invalid user memory access"); // TODO: return an error, terminate the task
+    pub fn getUserPtr(task: *Task, comptime T: type, va: u32) UserMemError!*T {
+        const len: u32 = @intCast(@sizeOf(T));
+        try task.validateUserAccess(va, len);
         return @ptrFromInt(va);
     }
 
