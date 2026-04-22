@@ -2,6 +2,20 @@ pub const STDIN: u32 = 0;
 pub const STDOUT: u32 = 1;
 pub const STDERR: u32 = 2;
 
+/// Stable 32-bit ABI slice representation used for receiving argv at process startup.
+/// Must match the definition in kernel/task.zig.
+pub const AbiSlice = extern struct {
+    ptr: u32,
+    len: u32,
+
+    fn toSlice(slice: *const AbiSlice, comptime T: type) []const T {
+        return @as([*]const T, @ptrFromInt(slice.ptr))[0..slice.len];
+    }
+};
+
+/// Maximum number of arguments supported in the argv startup array.
+pub const MAX_ARGV_COUNT = 128;
+
 const FileOpenMode = enum(u2) {
     ReadOnly = 0,
     WriteOnly = 1,
@@ -119,9 +133,30 @@ pub fn exit(exitcode: u32) noreturn {
 
 const root = @import("root"); // import the program being compiled, which must define a `main` function
 
-/// Enters the userspace runtime, then calls the root module's `main` function.
-pub export fn _start() callconv(.c) noreturn {
-    root.main() catch |err| {
+/// Entry point for userspace processes.
+/// The initial stack pointer points to the argv AbiSlice pointer when entering userspace.
+pub export fn _start() callconv(.naked) noreturn {
+    asm volatile (
+        \\ push %%esp        // pointer to argv AbiSlice
+        \\ call argvStartup
+        ::: .{ .memory = true });
+    unreachable;
+}
+
+/// Reconstructs Zig slices from the ABI argv layout placed by the kernel on the
+/// initial stack, then calls the root module's main(argv) function.
+export fn argvStartup(argv: *const AbiSlice) callconv(.c) noreturn {
+    const argc = argv.len;
+
+    var argv_slices: [MAX_ARGV_COUNT][]const u8 = undefined;
+    if (argc > 0) {
+        const str_abi: [*]const AbiSlice = @ptrFromInt(argv.ptr);
+        for (0..argc) |i| {
+            argv_slices[i] = str_abi[i].toSlice(u8);
+        }
+    }
+
+    root.main(argv_slices[0..argc]) catch |err| {
         _ = write(STDOUT, "Runtime error: ");
         _ = write(STDOUT, @errorName(err));
         _ = write(STDOUT, "\n");

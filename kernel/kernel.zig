@@ -380,7 +380,7 @@ pub fn reschedule() noreturn {
     }
 }
 
-pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
+pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task {
     const ptask = taskman.newTask();
 
     console.put(.{ "Loading ", fname, "...\n" });
@@ -443,7 +443,8 @@ pub fn loadUserspaceElf(fname: []const u8) !*task.Task {
     // mark code segment read-only after initialization
     ptask.code_mem.changePermissions(true, false);
 
-    ptask.setEntryPoint(ehdr.e_entry, ptask.stack_top);
+    const initial_esp = try ptask.setArgs(args);
+    ptask.setEntryPoint(ehdr.e_entry, initial_esp);
     return ptask;
 }
 

@@ -4,6 +4,16 @@ const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
 
 const KERNEL_STACK_SIZE = 4096;
+
+/// Stable 32-bit ABI slice representation used for initial-stack argv passing.
+/// Must match the definition in userspace/sys.zig.
+pub const AbiSlice = extern struct {
+    ptr: u32,
+    len: u32,
+};
+
+/// Maximum number of arguments that can be passed to a process via setArgs.
+pub const MAX_ARGV_COUNT = 128;
 const KernelStack = [KERNEL_STACK_SIZE]u8;
 
 pub const MAX_FDS = 16;
@@ -149,6 +159,57 @@ pub const Task = struct {
         const stack_frame = @as([*]u32, @ptrCast(&task.kernel_stack)) + KERNEL_STACK_SIZE / 4 - 5;
         stack_frame[3] = esp;
         stack_frame[0] = eip;
+    }
+
+    /// Writes argv onto the top mapped stack page and returns the adjusted initial
+    /// ESP (pointing to an AbiSlice that describes the full argv array).
+    /// Must be called after the task's top stack page has been mapped.
+    /// Call the returned ESP value with setEntryPoint to complete task setup.
+    pub fn setArgs(task: *Task, args: []const []const u8) error{ArgsTooLarge}!u32 {
+        if (args.len > MAX_ARGV_COUNT) return error.ArgsTooLarge;
+
+        // Compute total bytes needed: string data (4-byte-rounded) + slice array + outer AbiSlice.
+        var string_bytes: u32 = 0;
+        for (args) |arg| string_bytes += @intCast(arg.len);
+        const strings_rounded = (string_bytes + 3) & ~@as(u32, 3);
+        const needed: u32 = strings_rounded +
+            @as(u32, @intCast(args.len)) * @sizeOf(AbiSlice) +
+            @sizeOf(AbiSlice);
+        if (needed > paging.PAGE - 16) return error.ArgsTooLarge;
+
+        // Layout on the top stack page (built top-down):
+        //   [page_top - strings_rounded .. page_top)   : packed string bytes
+        //   [array_base .. array_base + argc*8)        : per-arg AbiSlice records
+        //   [sp .. sp+8)                               : outer AbiSlice (argv descriptor)  <- initial ESP
+        var sp: u32 = task.stack_top;
+
+        // Write string bytes and record their addresses.
+        sp -= strings_rounded;
+        var write_pos: u32 = sp;
+        var string_ptrs: [MAX_ARGV_COUNT]u32 = undefined;
+        for (args, 0..) |arg, i| {
+            const dest: [*]u8 = @ptrFromInt(write_pos);
+            @memcpy(dest[0..arg.len], arg);
+            string_ptrs[i] = write_pos;
+            write_pos += @intCast(arg.len);
+        }
+
+        // Write per-arg AbiSlice array.
+        sp -= @as(u32, @intCast(args.len)) * @sizeOf(AbiSlice);
+        const array_base = sp;
+        if (args.len > 0) {
+            const slice_array: [*]AbiSlice = @ptrFromInt(array_base);
+            for (args, 0..) |arg, i| {
+                slice_array[i] = .{ .ptr = string_ptrs[i], .len = @intCast(arg.len) };
+            }
+        }
+
+        // Write the outer AbiSlice (the argv descriptor).
+        sp -= @sizeOf(AbiSlice);
+        const argv_desc: *AbiSlice = @ptrFromInt(sp);
+        argv_desc.* = .{ .ptr = array_base, .len = @intCast(args.len) };
+
+        return sp;
     }
 
     /// Switches execution to this task and resumes userspace from its saved kernel stack.

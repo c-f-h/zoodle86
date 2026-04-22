@@ -40,6 +40,7 @@ const commands = [_]Command{
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Load one or several ELF binary executables and launch the first one.", .handler = cmdRun },
+    .{ .name = "runv", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRunv },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
@@ -270,12 +271,37 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     }
 
     while (args.next()) |fname| {
-        const ptask = try kernel.loadUserspaceElf(fname);
+        const ptask = try kernel.loadUserspaceElf(fname, &.{});
         if (first_task == null) {
             first_task = ptask;
         }
     }
     kernel.run(first_task.?);
+}
+
+fn cmdRunv(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    const fname = args.next() orelse {
+        console.puts("Usage: runv <executable> [<arg> ...]\n");
+        return;
+    };
+
+    // argv[0] is the executable name; remaining tokens follow.
+    var argv_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
+    var argc: usize = 0;
+    argv_buf[argc] = fname;
+    argc += 1;
+    while (args.next()) |arg| {
+        if (argc >= argv_buf.len) {
+            console.puts("Too many arguments.\n");
+            return;
+        }
+        argv_buf[argc] = arg;
+        argc += 1;
+    }
+
+    const ptask = try kernel.loadUserspaceElf(fname, argv_buf[0..argc]);
+    kernel.run(ptask);
 }
 
 fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {

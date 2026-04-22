@@ -135,7 +135,8 @@ fn verifyUnlinkSemantics() !void {
 }
 
 /// Exercises filesystem syscalls with alternating writes, seeks, and unlinks.
-pub fn main() !void {
+pub fn main(argv: []const []const u8) !void {
+    _ = argv;
     var buf: [96]u8 = undefined;
     _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
 
