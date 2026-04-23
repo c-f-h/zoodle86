@@ -405,8 +405,9 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
 
     // compute image extents and locate stack and heap
     const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
-    ptask.heap_top = paging.roundToNext(data_end, paging.PAGE); // any remaining space in last data page can be used for heap
-    if (ptask.heap_top >= USER_STACK_BOTTOM) {
+    ptask.heap_start = paging.roundToNext(data_end, paging.PAGE);
+    ptask.heap_brk = ptask.heap_start;
+    if (ptask.heap_start >= USER_STACK_BOTTOM) {
         return error.OutOfMemory;
     }
 

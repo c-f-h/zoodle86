@@ -61,7 +61,8 @@ pub const Task = struct {
     kernel_esp: usize = 0,
     stack_bottom: u32 = undefined, // lower bound for stack growth in virtual memory
     stack_top: u32 = undefined, // top of stack in virtual memory
-    heap_top: u32 = undefined,
+    heap_start: u32 = undefined,
+    heap_brk: u32 = undefined, // current program break for heap
 
     code_mem: paging.VMemRange = .{},
     data_mem: paging.VMemRange = .{},

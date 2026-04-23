@@ -122,6 +122,7 @@ Context switch flow (user → kernel → user):
 | `open` | 2 | path_offset, path_len, flags | fd or `FAIL` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
 | `close` | 3 | fd | 0 or `FAIL` | Closes stdio or filesystem-backed fds |
 | `lseek` | 8 | fd, signed_offset, whence | new offset or `FAIL` | Supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`; may seek past EOF |
+| `brk` | 12 | addr | new break or `FAIL` | Gets heap break if addr=0; sets break to addr if valid; validates bounds and grows/shrinks data memory |
 | `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
 | `exit` | 60 | — | — | Terminates task, closes descriptors, and reschedules; does not return |

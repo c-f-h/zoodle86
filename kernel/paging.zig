@@ -278,8 +278,8 @@ pub inline fn roundToNext(p: u32, comptime size: u32) u32 {
     return (p + size - 1) & (~(size - 1));
 }
 
-// Compute the number of aligned pages needed so that the range [va0, va1) is fully covered.
-fn numPagesBetween(va0: usize, va1: usize) u32 {
+/// Compute the number of aligned pages needed so that the range [va0, va1) is fully covered.
+pub fn numPagesBetween(va0: usize, va1: usize) u32 {
     const va_begin = roundDown(va0, PAGE);
     const va_end = roundToNext(va1, PAGE);
     return @divExact(va_end - va_begin, PAGE);
@@ -300,14 +300,17 @@ pub const VMemRange = struct {
     /// Initialize the struct and allocate a contiguous range of virtual memory pages starting at the given virtual address.
     pub fn allocate(range: *VMemRange, va: u32, va_end: u32, is_user: bool, is_writable: bool) []u8 {
         if (va & 0xFFF != 0) {
-            @panic("Virtual address must be page-aligned");
+            @panic("VMemRange must be page-aligned");
         }
+        if (va_end < va) {
+            @panic("Invalid memory range in VMemRange");
+        }
+        const aligned_va_end = roundToNext(va_end, PAGE);
         range.base = va;
-        const num_pages = numPagesBetween(va, va_end);
-        range.num_pages = num_pages;
+        range.num_pages = @divExact(aligned_va_end - va, PAGE);
         range.user = is_user;
         range.writable = is_writable;
-        const mem = allocateMemoryAt(va, num_pages, is_user, is_writable);
+        const mem = allocateMemoryAt(va, range.num_pages, is_user, is_writable);
         @memset(mem, 0x00);
         return mem;
     }
@@ -326,7 +329,8 @@ pub const VMemRange = struct {
     /// Grow the range upwards by allocating additional pages beyond the current end.
     pub fn growUp(range: *VMemRange, additional_pages: u32) void {
         if (additional_pages == 0) return;
-        _ = allocateMemoryAt(range.end(), additional_pages, range.user, range.writable);
+        const mem = allocateMemoryAt(range.end(), additional_pages, range.user, range.writable);
+        @memset(mem, 0x00);
         range.num_pages += additional_pages;
     }
 
@@ -335,10 +339,36 @@ pub const VMemRange = struct {
         if (additional_pages == 0) return;
         const new_base = range.base - additional_pages * PAGE;
 
-        _ = allocateMemoryAt(new_base, additional_pages, range.user, range.writable);
+        const mem = allocateMemoryAt(new_base, additional_pages, range.user, range.writable);
+        @memset(mem, 0x00);
 
         range.base = new_base;
         range.num_pages += additional_pages;
+    }
+
+    /// Shrink the range down by freeing pages from the current end.
+    pub fn shrinkFromEnd(range: *VMemRange, fewer_pages: u32) void {
+        if (fewer_pages == 0) return;
+        if (fewer_pages > range.num_pages) {
+            @panic("Cannot shrink VMemRange below zero pages");
+        }
+
+        var remaining = fewer_pages;
+        while (remaining > 0) : (remaining -= 1) {
+            const va = range.base + (range.num_pages - 1) * PAGE;
+            const pte = getPte(va);
+            pageallocator.freePage(pte.getPhysicalPageAddress());
+            pte.* = @bitCast(@as(u32, 0));
+            invlpg(va);
+
+            if (pageIndex(va) == 0) {
+                const pde = &mapped_pd[pageTableIndex(va)];
+                pageallocator.freePage(pde.getPhysicalTableAddress());
+                pde.* = @bitCast(@as(u32, 0));
+            }
+
+            range.num_pages -= 1;
+        }
     }
 
     /// Free all pages allocated by this range and clear the corresponding page directory/table entries.

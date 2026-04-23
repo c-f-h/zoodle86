@@ -10,6 +10,7 @@ const Syscall = enum(u32) {
     Open = 2,
     Close = 3,
     Lseek = 8,
+    Brk = 12, // change program heap size
     Yield = 24,
     GetPid = 39,
     Exit = 60,
@@ -100,6 +101,31 @@ fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {
     return filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence) catch |err| mapError(err);
 }
 
+fn sys_brk(addr: u32) u32 {
+    const ptask = task.getCurrentTask();
+    if (addr == 0) {
+        return ptask.heap_brk;
+    }
+    if (addr < ptask.heap_start) {
+        return errnoResult(ERRNO_EINVAL);
+    }
+    if (addr > ptask.stack_bottom) {
+        return errnoResult(ERRNO_ENOMEM);
+    }
+
+    const new_total_pages = paging.numPagesBetween(ptask.data_mem.base, addr);
+    if (new_total_pages > ptask.data_mem.num_pages) {
+        const additional_pages = new_total_pages - ptask.data_mem.num_pages;
+        ptask.data_mem.growUp(additional_pages);
+    } else if (new_total_pages < ptask.data_mem.num_pages) {
+        const fewer_pages = ptask.data_mem.num_pages - new_total_pages;
+        ptask.data_mem.shrinkFromEnd(fewer_pages);
+    }
+
+    ptask.heap_brk = addr;
+    return addr;
+}
+
 fn sys_spawn(argv_desc_ofs: u32) u32 {
     const current_task = task.getCurrentTask();
 
@@ -158,6 +184,7 @@ pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) cal
         },
         .GetPid => task.getCurrentTask().pid,
         .Lseek => sys_lseek(arg1, arg2, arg3),
+        .Brk => sys_brk(arg1),
         .Open => sys_open(arg1, arg2, arg3),
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),

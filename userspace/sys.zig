@@ -46,6 +46,7 @@ const Syscall = enum(u32) {
     Open = 2,
     Close = 3,
     Seek = 8,
+    Brk = 12, // change program heap size
     Yield = 24,
     GetPid = 39,
     Exit = 60,
@@ -167,6 +168,38 @@ pub fn exit(exitcode: u32) noreturn {
     _ = syscall(.Exit, exitcode, 0, 0);
     unreachable;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+
+fn sys_brk(addr: usize) usize {
+    return syscall(.Brk, addr, 0, 0);
+}
+
+var old_brk: usize = 0;
+
+/// Adjust the process break by `diff` bytes and return the previous break.
+pub fn changeHeapSize(diff: i32) ![*]u8 {
+    // fetch current program break on first call
+    if (old_brk == 0) {
+        old_brk = sys_brk(0);
+    }
+
+    const orig_brk = old_brk;
+
+    const new_brk = if (diff >= 0)
+        old_brk + @as(usize, @intCast(diff))
+    else
+        old_brk - @as(usize, @intCast(-diff));
+
+    const result = sys_brk(new_brk);
+    if (result == FAIL) {
+        return error.OutOfMemory;
+    }
+    old_brk = result;
+    return @ptrFromInt(orig_brk);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 
 const root = @import("root"); // import the program being compiled, which must define a `main` function
 
