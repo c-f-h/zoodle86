@@ -35,6 +35,14 @@ pub const FdSlot = struct {
     file_index: u8 = 0,
 };
 
+/// Lifecycle state of a task slot.
+pub const TaskState = enum {
+    free, // slot is available for reuse
+    active, // task is runnable or currently executing
+    waiting, // task is blocked in waitpid, kernel_esp is saved for resumption
+    zombie, // task has exited but exit status not yet collected by parent
+};
+
 /// Given a pointer which points to within a kernel stack, finds the pointer to the associated *Task.
 pub fn getPointerToTaskPtr(sp: usize) **Task {
     const kss: usize = @sizeOf(KernelStack);
@@ -59,6 +67,11 @@ pub const Task = struct {
     page_dir_phys_addr: u32 = undefined,
     pid: u32 = undefined,
     kernel_esp: usize = 0,
+    state: TaskState = .free,
+    parent_pid: u32 = 0, // PID of spawning task; 0 = created by kernel/shell (auto-reap)
+    reap_children: bool = false, // if true, children are auto-reaped instead of becoming zombies
+    exit_status: u32 = 0, // exit code written on exit, read by waitpid
+    waiting_for_pid: u32 = 0, // PID this task is blocked waiting on (state == .waiting)
     stack_bottom: u32 = undefined, // lower bound for stack growth in virtual memory
     stack_top: u32 = undefined, // top of stack in virtual memory
     heap_start: u32 = undefined,
@@ -90,6 +103,7 @@ pub const Task = struct {
         regs[9] = kernel.user_data_selector;
 
         task.kernel_esp = @intFromPtr(regs);
+        task.state = .active;
         task.initPaging();
     }
 
@@ -120,15 +134,33 @@ pub const Task = struct {
         paging.loadPageDir(task.page_dir_phys_addr);
     }
 
-    /// Terminates a task and releases any resources owned by it.
-    pub fn terminate(task: *Task) void {
-        filedesc.closeTaskFiles(task);
-        task.initFdTable();
-        task.pid = 0;
-        task.kernel_esp = 0;
-        task.code_mem.freePages();
-        task.data_mem.freePages();
-        task.stack_mem.freePages();
+    /// Closes files and frees all memory owned by the task.
+    /// Does NOT change state or pid; call terminate() or set state manually after.
+    pub fn cleanup(t: *Task) void {
+        filedesc.closeTaskFiles(t);
+        t.initFdTable();
+        t.kernel_esp = 0;
+        t.code_mem.freePages();
+        t.data_mem.freePages();
+        t.stack_mem.freePages();
+    }
+
+    /// Immediately frees a task slot, releasing all resources. Always auto-reaps.
+    /// Use for errdefer paths and kernel-internal cleanup where zombie semantics are not needed.
+    pub fn terminate(t: *Task) void {
+        t.cleanup();
+        t.state = .free;
+        t.pid = 0;
+    }
+
+    /// Writes a value into the saved EAX position on the kernel stack frame so that
+    /// when the task is resumed via iretd, the value is delivered as the syscall return.
+    /// Only valid while the task is in the .waiting state with a saved kernel_esp.
+    pub fn setSyscallReturn(t: *Task, val: u32) void {
+        if (t.state != .waiting or t.kernel_esp == 0)
+            @panic("setSyscallReturn called on task that is not waiting");
+        const saved_eax: *u32 = @ptrFromInt(t.kernel_esp + 28);
+        saved_eax.* = val;
     }
 
     /// Finds the first free userspace-visible file descriptor slot.

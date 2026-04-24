@@ -2,6 +2,7 @@ const filedesc = @import("filedesc.zig");
 const kernel = @import("kernel.zig");
 const paging = @import("paging.zig");
 const task = @import("task.zig");
+const taskman = @import("taskman.zig");
 const std = @import("std");
 
 const Syscall = enum(u32) {
@@ -14,8 +15,10 @@ const Syscall = enum(u32) {
     Yield = 24,
     GetPid = 39,
     Exit = 60,
+    WaitPid = 61,
     Unlink = 87,
     Spawn = 1001,
+    SetChildReap = 1002,
     _,
 };
 
@@ -171,17 +174,43 @@ fn sys_spawn(argv_desc_ofs: u32) u32 {
 
     defer current_task.loadPageDir(); // make sure to return to the correct page directory
     const child = kernel.loadUserspaceElf(argv_buf[0], argv_buf) catch |err| return mapError(err);
+    child.parent_pid = current_task.pid;
     return child.pid;
+}
+
+/// Blocks the calling task until the child with the given PID exits, then returns its exit status.
+/// Returns FAIL if the PID is not found or the caller is not its parent.
+fn sys_waitpid(pid: u32) u32 {
+    const current = task.getCurrentTask();
+    const child = taskman.findTask(pid) orelse return errnoResult(ERRNO_EINVAL);
+    if (child.parent_pid != current.pid) return errnoResult(ERRNO_EINVAL);
+
+    if (child.state == .zombie) {
+        // Child already exited; collect status and free slot.
+        const status = child.exit_status;
+        child.state = .free;
+        child.pid = 0;
+        return status;
+    }
+
+    // Child is still running; block until its exit handler wakes us.
+    current.waiting_for_pid = pid;
+    current.state = .waiting;
+    kernel.reschedule(); // does not return; exit handler will call setSyscallReturn() and set state=active
+}
+
+/// Marks the current task so that all its children are auto-reaped on exit
+/// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
+fn sys_set_child_reap() u32 {
+    task.getCurrentTask().reap_children = true;
+    return 0;
 }
 
 /// Dispatches the int 0x80 syscall ABI invoked by user-mode executables.
 pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
     return switch (nr) {
         .Close => sys_close(arg1),
-        .Exit => {
-            task.getCurrentTask().terminate();
-            kernel.reschedule();
-        },
+        .Exit => kernel.exitCurrentTask(arg1),
         .GetPid => task.getCurrentTask().pid,
         .Lseek => sys_lseek(arg1, arg2, arg3),
         .Brk => sys_brk(arg1),
@@ -189,6 +218,8 @@ pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) cal
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),
         .Unlink => sys_unlink(arg1, arg2),
+        .WaitPid => sys_waitpid(arg1),
+        .SetChildReap => sys_set_child_reap(),
         .Yield => kernel.reschedule(),
         .Spawn => sys_spawn(arg1),
         else => errnoResult(ERRNO_EINVAL),

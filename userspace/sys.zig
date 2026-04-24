@@ -50,8 +50,10 @@ const Syscall = enum(u32) {
     Yield = 24,
     GetPid = 39,
     Exit = 60,
+    WaitPid = 61,
     Unlink = 87,
     Spawn = 1001,
+    SetChildReap = 1002,
 };
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
@@ -161,6 +163,18 @@ pub fn spawn(path: []const u8, args: []const []const u8) !u32 {
 /// Voluntarily yields execution to the scheduler.
 pub fn yield() void {
     _ = syscall(.Yield, 0, 0, 0);
+}
+
+/// Waits for the child with the given PID to exit and returns its exit status.
+/// Returns FAIL if the PID is not a child of the calling process.
+pub fn waitpid(pid: u32) u32 {
+    return syscall(.WaitPid, pid, 0, 0);
+}
+
+/// Marks the calling process so all its children are auto-reaped on exit
+/// instead of becoming zombies. After this call, waitpid on children will fail.
+pub fn setChildReap() void {
+    _ = syscall(.SetChildReap, 0, 0, 0);
 }
 
 /// Terminates the current process with the provided exit code.

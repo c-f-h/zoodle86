@@ -143,8 +143,7 @@ export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callcon
         console.puts(&err);
         console.setAttr(VGA_ATTR);
         console.puts("\nTerminating program.\n");
-        task.getCurrentTask().terminate();
-        reschedule();
+        exitCurrentTask(0xFFFF_FFFF);
     } else {
         // The fault occurred in the kernel; panic!
         @panic(&err);
@@ -373,13 +372,48 @@ pub fn reschedule() noreturn {
     const current_task = task.getCurrentTask();
     if (taskman.getNextActiveTask(current_task)) |next_task| {
         next_task.switchTo(&tss_cpu0);
-    } else if (current_task.kernel_esp != 0) {
-        // If no other task is runnable, switch back to the current one if it's still running
+    } else if (current_task.state == .active) {
+        // No other task is runnable; switch back to the current one if it is still active
         current_task.switchTo(&tss_cpu0);
     } else {
         // No more active tasks; return to the kernel shell
         kernel_reenter();
     }
+}
+
+/// Performs a full userspace process exit: orphans children, releases resources,
+/// determines zombie vs. auto-reap, and reschedules.  Never returns.
+pub fn exitCurrentTask(exit_code: u32) noreturn {
+    const current = task.getCurrentTask();
+
+    // Reparent (and auto-free zombie) children of this task.
+    taskman.orphanChildrenOf(current.pid);
+
+    // Release all resources.
+    current.cleanup();
+
+    // Decide whether to auto-reap or become a zombie.
+    // Auto-reap if: no real parent (shell-spawned), or parent set the reap_children flag.
+    const auto_reap = blk: {
+        if (current.parent_pid == 0) break :blk true;
+        const parent = taskman.findTask(current.parent_pid) orelse break :blk true;
+        break :blk parent.reap_children;
+    };
+
+    if (auto_reap) {
+        current.state = .free;
+        current.pid = 0;
+    } else if (taskman.wakeWaiterFor(current.pid, exit_code)) {
+        // Parent was already blocked in waitpid; wake it and free this slot.
+        current.state = .free;
+        current.pid = 0;
+    } else {
+        // Parent will call waitpid later; preserve exit status as a zombie.
+        current.exit_status = exit_code;
+        current.state = .zombie;
+    }
+
+    reschedule();
 }
 
 /// Loads an ELF file into a fresh task with an isolated user address space.
