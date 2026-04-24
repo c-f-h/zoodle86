@@ -177,25 +177,39 @@ fn sys_brk(addr: usize) usize {
 
 var old_brk: usize = 0;
 
-/// Adjust the process break by `diff` bytes and return the previous break.
-pub fn changeHeapSize(diff: i32) ![*]u8 {
-    // fetch current program break on first call
+fn cachedHeapBreak() usize {
     if (old_brk == 0) {
         old_brk = sys_brk(0);
     }
+    return old_brk;
+}
 
-    const orig_brk = old_brk;
+/// Returns the current process break without changing the heap size.
+pub fn getHeapBreak() usize {
+    return cachedHeapBreak();
+}
+
+/// Sets the process break to an absolute address and returns the previous break.
+pub fn setHeapBreak(new_brk: usize) ![*]u8 {
+    const orig_brk = cachedHeapBreak();
+    const result = sys_brk(new_brk);
+    if (result == FAIL) {
+        return error.OutOfMemory;
+    }
+    old_brk = result;
+    return @ptrFromInt(orig_brk);
+}
+
+/// Adjust the process break by `diff` bytes and return the previous break.
+pub fn changeHeapSize(diff: i32) ![*]u8 {
+    const orig_brk = cachedHeapBreak();
 
     const new_brk = if (diff >= 0)
         old_brk + @as(usize, @intCast(diff))
     else
         old_brk - @as(usize, @intCast(-diff));
 
-    const result = sys_brk(new_brk);
-    if (result == FAIL) {
-        return error.OutOfMemory;
-    }
-    old_brk = result;
+    _ = try setHeapBreak(new_brk);
     return @ptrFromInt(orig_brk);
 }
 

@@ -27,6 +27,7 @@ ZIG_KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 USERSPACE_SOURCES = [
     ROOT / "userspace" / "hello.zig",
     ROOT / "userspace" / "fs_stress.zig",
+    ROOT / "userspace" / "alloc_stress.zig",
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"

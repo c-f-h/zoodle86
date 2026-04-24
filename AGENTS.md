@@ -43,8 +43,10 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.Io.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `kernel/fs.zig` directly.
 - `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`) and extracts all files to a directory.
 - `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`) and writes a directory of input files into it using `fs.FileSystem.writeFile()`.
-- `userspace/hello.zig`: freestanding userspace hello-world/yield smoke-test binary.
-- `userspace/fs_stress.zig`: freestanding userspace filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
+- `userspace/hello.zig`: userspace hello-world/yield smoke-test binary.
+- `userspace/fs_stress.zig`: userspace filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
+- `userspace/allocator.zig`: brk-backed userspace `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
+- `userspace/alloc_stress.zig`: userspace heap allocator stress test covering allocate/free/realloc behavior.
 - `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers, linker script, and startup entry point `_start` which passes command line arguments to `main`.
 
 ### Build Configuration
@@ -66,6 +68,7 @@ Build pipeline overview:
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
 - `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.
 - `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
+- `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.
 
@@ -99,6 +102,8 @@ There is no separate unit-test suite yet. A successful build is the current base
 **Serial Debug Output**: The kernel initializes COM1 early in boot and writes exception and panic diagnostics to the serial port. Bochs is configured with `com1: enabled=1, mode=file` so this output is captured in `build/serial.txt` on the host.
 
 **Memory Management**: The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has its own 4 KB kernel stack (power-of-2 aligned), with the current task pointer stored at the stack base. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window.
+
+**Userspace Heap Allocation**: Userspace can grow its heap through syscall `brk` and the shared helper `userspace/sys.zig:changeHeapSize()`. `userspace/allocator.zig` builds a reusable single-threaded `std.mem.Allocator` on top of that interface using power-of-two size classes plus free-list reuse, so userspace programs can use normal Zig heap APIs such as `alloc`, `realloc`, `free`, and `std.fmt.allocPrint()`.
 
 **Task/Process Management**: Each `Task` struct holds a 4 KB kernel stack (first word stores a pointer back to the `Task` for `getCurrentTask()`), a 4 KB per-task page directory, a unique PID, a saved `kernel_esp` (0 = free slot), user-mode stack/heap bounds, and a small per-task fd table (with stdio preinstalled plus mappings into the kernel global open-file table). User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). A fixed pool of 8 task slots is managed by `taskman.zig`.
 
