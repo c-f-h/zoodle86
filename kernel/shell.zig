@@ -161,7 +161,7 @@ fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
 
 fn cmdRm(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        deleteFile(shell.disk_fs, name);
+        try deleteFile(shell.alloc, shell.disk_fs, name);
     } else {
         printUsage("rm");
     }
@@ -363,7 +363,7 @@ fn readLineInto(buf: []u8) ![]u8 {
 
 fn listFiles(disk_fs: *fs.FileSystem) !void {
     var found_any = false;
-    var index: usize = 1;
+    var index: usize = 0;
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
         if (try disk_fs.getFileInfo(index)) |info| {
             found_any = true;
@@ -415,9 +415,14 @@ fn writeFileFromConsole(
         try contents.append(alloc, '\n');
     }
 
-    disk_fs.writeFile(name, contents.items) catch |err| {
-        printFsError(err);
-        return;
+    disk_fs.writeFile(alloc, name, contents.items) catch |err| {
+        switch (err) {
+            error.OutOfMemory => return err,
+            else => |fs_err| {
+                printFsError(fs_err);
+                return;
+            },
+        }
     };
 
     console.puts("Wrote ");
@@ -425,10 +430,15 @@ fn writeFileFromConsole(
     console.puts(".\n");
 }
 
-fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) void {
-    disk_fs.deleteFile(name) catch |err| {
-        printFsError(err);
-        return;
+fn deleteFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
+    disk_fs.deleteFile(alloc, name) catch |err| {
+        switch (err) {
+            error.OutOfMemory => return err,
+            else => |fs_err| {
+                printFsError(fs_err);
+                return;
+            },
+        }
     };
 
     console.puts("Deleted ");

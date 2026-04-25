@@ -278,9 +278,12 @@ pub const USER_DATA_START: u32 = 0x1000_0000; // start of userspace data segment
 pub const USER_STACK_BOTTOM: u32 = 0x7000_0000; // start of userspace stack
 pub const USER_STACK_TOP: u32 = 0x8000_0000; // end of userspace stack (and end of userspace virtual address space)
 
-// Preliminary physical memory location for initial Page Directory.
-// This is within conventional memory, with 256k of space until 0x80000.
-// The initial identity Page Table Entries for the first 1 MiB of RAM are stored immediately afterwards.
+// Preliminary physical memory location for the bootstrap Page Directory.
+// Keep this well above the loaded stage-2 image and its zeroed .bss region so
+// zero_bss() does not erase the active bootstrap page tables before the kernel
+// switches to its real memory-management setup.
+// The initial identity Page Table Entries for the first 1 MiB of RAM are stored
+// immediately afterwards.
 const page_dir_phys: u32 = 0x4_0000;
 
 const memory_bitmap_va: [*]u32 = @ptrFromInt(0xC005_0000); // virtual address where the physical memory bitmap will be stored

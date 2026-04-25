@@ -75,7 +75,7 @@ fn mapError(err: anyerror) u32 {
 
 fn sys_open(path_ofs: u32, path_len: u32, flags: u32) u32 {
     const path = task.getCurrentTask().getUserMem(path_ofs, path_len) catch |err| return mapError(err);
-    return filedesc.openFile(kernel.getFileSystem(), task.getCurrentTask(), path, flags) catch |err| mapError(err);
+    return filedesc.openFile(kernel.getFileSystem(), kernel.getAllocator(), task.getCurrentTask(), path, flags) catch |err| mapError(err);
 }
 
 fn sys_close(fd: u32) u32 {
@@ -85,7 +85,7 @@ fn sys_close(fd: u32) u32 {
 
 fn sys_unlink(path_ofs: u32, path_len: u32) u32 {
     const path = task.getCurrentTask().getUserMem(path_ofs, path_len) catch |err| return mapError(err);
-    filedesc.unlinkFile(kernel.getFileSystem(), path) catch |err| return mapError(err);
+    filedesc.unlinkFile(kernel.getFileSystem(), kernel.getAllocator(), path) catch |err| return mapError(err);
     return 0;
 }
 

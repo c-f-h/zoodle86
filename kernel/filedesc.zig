@@ -34,7 +34,7 @@ const SeekWhence = enum(u32) {
 
 const OpenFile = struct {
     in_use: bool = false,
-    entry_index: usize = 0,
+    inode_index: u16 = 0,
     offset: u32 = 0,
     readable: bool = false,
     writable: bool = false,
@@ -51,7 +51,7 @@ pub fn init() void {
 }
 
 /// Opens or creates a filesystem-backed descriptor for a task.
-pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
+pub fn openFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const access_mode = try validateOpenFlags(flags);
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
@@ -60,14 +60,15 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
         if ((flags & O_CREAT) == 0) return error.FileNotFound;
         break :blk try disk_fs.createFile(path);
     };
+    const inode_index = try disk_fs.getFileInodeIndex(entry_index);
 
     if ((flags & O_TRUNC) != 0) {
-        try disk_fs.truncateFile(entry_index);
+        try disk_fs.truncateInode(allocator, inode_index);
     }
 
     open_files[open_index] = .{
         .in_use = true,
-        .entry_index = entry_index,
+        .inode_index = inode_index,
         .offset = 0,
         .readable = access_mode != O_WRONLY,
         .writable = access_mode != O_RDONLY,
@@ -78,10 +79,11 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
 }
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
-pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
+pub fn unlinkFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, path: []const u8) FiledescError!void {
     const entry_index = (try disk_fs.getFileIndex(path)) orelse return error.FileNotFound;
-    if (isEntryOpen(entry_index)) return error.FileInUse;
-    try disk_fs.deleteFile(path);
+    const inode_index = try disk_fs.getFileInodeIndex(entry_index);
+    if (isInodeOpen(inode_index)) return error.FileInUse;
+    try disk_fs.deleteFile(allocator, path);
 }
 
 /// Reads from a task-owned descriptor into a user buffer.
@@ -94,7 +96,7 @@ pub fn readFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, dest: []u8)
             const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
             if (!open_file.readable) return error.AccessDenied;
 
-            const bytes_read = try disk_fs.readFileAt(open_file.entry_index, open_file.offset, dest);
+            const bytes_read = try disk_fs.readInodeAt(open_file.inode_index, open_file.offset, dest);
             open_file.offset = std.math.add(u32, open_file.offset, bytes_read) catch return error.NoSpace;
             break :blk bytes_read;
         },
@@ -117,10 +119,10 @@ pub fn writeFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *
             if (!open_file.writable) return error.AccessDenied;
 
             const write_offset = if (open_file.append)
-                try disk_fs.getFileSize(open_file.entry_index)
+                try disk_fs.getInodeSize(open_file.inode_index)
             else
                 open_file.offset;
-            const written = try disk_fs.writeFileAt(allocator, open_file.entry_index, write_offset, src);
+            const written = try disk_fs.writeInodeAt(allocator, open_file.inode_index, write_offset, src);
             open_file.offset = std.math.add(u32, write_offset, written) catch return error.NoSpace;
             break :blk written;
         },
@@ -143,7 +145,7 @@ pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32
             const base: i64 = switch (whence) {
                 .Set => 0,
                 .Cur => open_file.offset,
-                .End => try disk_fs.getFileSize(open_file.entry_index),
+                .End => try disk_fs.getInodeSize(open_file.inode_index),
             };
             const next_offset = std.math.add(i64, base, @as(i64, offset)) catch return error.InvalidSeek;
             if (next_offset < 0 or next_offset > std.math.maxInt(u32)) return error.InvalidSeek;
@@ -212,9 +214,9 @@ fn getOpenFile(index: u8) ?*OpenFile {
     return &open_files[index];
 }
 
-fn isEntryOpen(entry_index: usize) bool {
+fn isInodeOpen(inode_index: u16) bool {
     for (&open_files) |open_file| {
-        if (open_file.in_use and open_file.entry_index == entry_index) {
+        if (open_file.in_use and open_file.inode_index == inode_index) {
             return true;
         }
     }

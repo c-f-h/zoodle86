@@ -17,13 +17,15 @@ pub const AbiSlice = extern struct {
 /// Maximum number of arguments supported in the argv startup array.
 pub const MAX_ARGV_COUNT = 128;
 
-const FileOpenMode = enum(u2) {
+/// Selects the access mode encoded in userspace open flags.
+pub const FileOpenMode = enum(u2) {
     ReadOnly = 0,
     WriteOnly = 1,
     ReadWrite = 2,
 };
 
-const FileOpenFlags = packed struct(u32) {
+/// Encodes the userspace `open` syscall flags in a typed form.
+pub const FileOpenFlags = packed struct(u32) {
     open_mode: FileOpenMode = .ReadOnly, // 0-1
     reserved0: u4 = 0, // 2-5
     create: bool = false, // 6

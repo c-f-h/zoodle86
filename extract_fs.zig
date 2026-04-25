@@ -35,7 +35,7 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout.print("Filesystem info:\n", .{});
     try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});
-    try stdout.print("  Data starts at LBA: {d}\n", .{fs.DATA_START_LBA});
+    try stdout.print("  Data starts at LBA: {d}\n", .{disk_fs.dataStartLba()});
 
     try std.Io.Dir.cwd().createDirPath(init.io, output_path);
     const output_dir = try std.Io.Dir.cwd().openDir(init.io, output_path, .{});
@@ -44,7 +44,7 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("Extracting files to: {s}\n", .{output_path});
 
     var extracted: u32 = 0;
-    var index: usize = 1;
+    var index: usize = 0;
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
         const info = (try disk_fs.getFileInfo(index)) orelse continue;
         const name = info.name[0..info.name_len];

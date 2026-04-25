@@ -65,7 +65,7 @@ fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
 }
 
 fn verifyFileContents(path: []const u8, expected: []const u8) !void {
-    const fd = try expectSyscall(sys.open(path, .{ .open_mode = .ReadOnly }));
+    const fd = try expectSyscall(sys.open(path, .{}));
     defer _ = sys.close(fd);
 
     var actual: [total_bytes]u8 = undefined;
@@ -75,7 +75,11 @@ fn verifyFileContents(path: []const u8, expected: []const u8) !void {
 }
 
 fn verifySeekSemantics() !void {
-    const fd = try expectSyscall(sys.open(seek_file, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+    const fd = try expectSyscall(sys.open(seek_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }));
     errdefer _ = sys.close(fd);
 
     try writeAll(fd, "0123456789");
@@ -100,7 +104,7 @@ fn verifySeekSemantics() !void {
 
     if (sys.close(fd) == FAIL) return error.SyscallFailed;
 
-    const verify_fd = try expectSyscall(sys.open(seek_file, .{ .open_mode = .ReadOnly }));
+    const verify_fd = try expectSyscall(sys.open(seek_file, .{}));
     defer _ = sys.close(verify_fd);
 
     var actual: [seek_expected.len]u8 = undefined;
@@ -110,7 +114,11 @@ fn verifySeekSemantics() !void {
 }
 
 fn verifyUnlinkSemantics() !void {
-    const fd = try expectSyscall(sys.open(unlink_file, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+    const fd = try expectSyscall(sys.open(unlink_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }));
 
     try writeAll(fd, "temporary contents");
 
@@ -123,7 +131,7 @@ fn verifyUnlinkSemantics() !void {
     if (sys.close(fd) == FAIL) return error.SyscallFailed;
     if (sys.unlink(unlink_file) == FAIL) return error.SyscallFailed;
 
-    if (sys.open(unlink_file, .{ .open_mode = .ReadOnly }) != FAIL) {
+    if (sys.open(unlink_file, .{}) != FAIL) {
         _ = sys.write(sys.STDOUT, "unexpectedly reopened unlinked file\n");
         return error.SyscallFailed;
     }
@@ -140,10 +148,15 @@ pub fn main(argv: []const []const u8) !void {
     var buf: [96]u8 = undefined;
     _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
 
-    const fd_a = try expectSyscall(sys.open(stress_file_a, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
-    const fd_b = try expectSyscall(sys.open(stress_file_b, .{ .open_mode = .ReadWrite, .create = true, .truncate = true }));
+    const create_flags: sys.FileOpenFlags = .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    };
+    const fd_a = try expectSyscall(sys.open(stress_file_a, create_flags));
+    const fd_b = try expectSyscall(sys.open(stress_file_b, create_flags));
 
-    const fd_c = sys.open(nonexistent_file, .{ .open_mode = .ReadOnly });
+    const fd_c = sys.open(nonexistent_file, .{});
     if (fd_c != FAIL) {
         _ = sys.write(sys.STDOUT, "unexpectedly opened nonexistent file\n");
         _ = sys.close(fd_c);

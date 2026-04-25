@@ -30,8 +30,8 @@ pub fn main(init: std.process.Init) !void {
     };
 
     const image_size_sectors = try std.fmt.parseInt(u32, size_arg, 10);
-    if (image_size_sectors < fs.DATA_START_LBA + 1) {
-        std.debug.print("Error: image size too small (minimum {} sectors)\n", .{fs.DATA_START_LBA + 1});
+    if (image_size_sectors < fs.minimumImageSectorCount()) {
+        std.debug.print("Error: image size too small (minimum {} sectors)\n", .{fs.minimumImageSectorCount()});
         return CompileError.InvalidArgs;
     }
 
@@ -45,7 +45,7 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout.print("Collecting files from input directory...\n", .{});
 
-    var files: [fs.DIRECTORY_ENTRY_COUNT - 1][]u8 = undefined;
+    var files: [fs.DIRECTORY_ENTRY_COUNT][]u8 = undefined;
     var file_count: usize = 0;
 
     var iter = input_dir.iterateAssumeFirstIteration();
@@ -58,7 +58,7 @@ pub fn main(init: std.process.Init) !void {
         if (kind != .file) continue;
 
         if (file_count >= files.len) {
-            try stdout.print("Error: too many files (max {d})\n", .{fs.DIRECTORY_ENTRY_COUNT - 1});
+            try stdout.print("Error: too many files (max {d})\n", .{fs.DIRECTORY_ENTRY_COUNT});
             return CompileError.TooManyFiles;
         }
 
@@ -99,7 +99,7 @@ pub fn main(init: std.process.Init) !void {
         defer init.gpa.free(file_data);
         _ = try input_file.readPositionalAll(init.io, file_data, 0);
 
-        try disk_fs.writeFile(name, file_data);
+        try disk_fs.writeFile(init.gpa, name, file_data);
     }
 
     try stdout.print("\nDone. Wrote {d} files to {s}\n", .{ file_count, output_path });
