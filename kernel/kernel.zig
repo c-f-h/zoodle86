@@ -13,6 +13,7 @@ const paging = @import("paging.zig");
 const pageallocator = @import("pageallocator.zig");
 const serial = @import("serial.zig");
 const syscall = @import("syscall.zig");
+const vgatext = @import("vgatext.zig");
 
 const std = @import("std");
 
@@ -39,6 +40,7 @@ pub const VECTOR_SYSCALL = 0x80;
 extern fn zero_bss() void;
 extern fn interrupts_init() void;
 extern fn task_switch() callconv(.naked) noreturn;
+extern const _bss_end: u8;
 
 // Interrupt handler addresses from interrupts.asm
 extern fn exception_isr_int08() void;
@@ -238,6 +240,41 @@ fn panicOnError(err: anyerror) noreturn {
     });
 }
 
+fn earlyBootFail(message: []const u8) noreturn {
+    vgatext.disableCursor();
+    vgatext.clear(0x4F);
+
+    var row: u32 = 0;
+    var col: u32 = 0;
+    for (message) |ch| {
+        if (ch == '\n') {
+            row += 1;
+            col = 0;
+            if (row >= vgatext.TEXT_HEIGHT) break;
+            continue;
+        }
+        if (col >= vgatext.TEXT_WIDTH) {
+            row += 1;
+            col = 0;
+            if (row >= vgatext.TEXT_HEIGHT) break;
+        }
+        vgatext.putCharAt(row, col, ch, 0x4F);
+        col += 1;
+    }
+
+    asm volatile ("cli");
+    while (true) {
+        asm volatile ("hlt");
+    }
+}
+
+fn ensureStage2BssFitsBootstrapPageTables() void {
+    const stage2_end_phys = paging.virtualToPhysical(@ptrCast(@constCast(&_bss_end)));
+    if (stage2_end_phys > page_dir_phys) {
+        earlyBootFail("KERNEL PANIC:\nstage2 .bss overlaps bootstrap page directory");
+    }
+}
+
 /// Kernel entry point.
 export fn _start() void {
     // This function is initially loaded and invoked at 0x8000 + ofs, even though the code is positioned at
@@ -263,6 +300,8 @@ export fn _start() void {
             \\ higher_half_jump_target:
             ::: .{ .eax = true });
     }
+
+    ensureStage2BssFitsBootstrapPageTables();
 
     kernel_main() catch |err| {
         panicOnError(err);
