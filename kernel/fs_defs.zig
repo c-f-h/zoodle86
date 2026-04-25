@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const FILENAME_MAX_LEN: usize = 16;
 pub const DIRECTORY_ENTRY_COUNT: usize = 64;
-pub const STAGE2_RESERVED_SECTORS: u32 = 80;
+pub const STAGE2_RESERVED_SECTORS: u32 = 96;
 pub const SUPERBLOCK_SECTORS: u32 = 1;
 
 pub const FS_START_LBA: u32 = 1 + STAGE2_RESERVED_SECTORS;

@@ -233,6 +233,7 @@ fn panicOnError(err: anyerror) noreturn {
     @panic(switch (err) {
         error.OutOfMemory => "Out of memory",
         error.BufferTooSmall => "Buffer too small",
+        error.InvalidELF => "Invalid kernel module ELF",
         ide.IdeError.Timeout => "IDE timeout",
         ide.IdeError.DeviceFault => "IDE device fault",
         ide.IdeError.ControllerError => "IDE controller error",
@@ -381,6 +382,7 @@ fn kernel_main() !void {
     console.puts(" MiB\n\n");
 
     try mountFs();
+    try loadKernelModule();
     enterKernelShell();
 }
 
@@ -558,6 +560,96 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
 
 pub fn run(ptask: *task.Task) void {
     ptask.switchTo(&tss_cpu0);
+}
+
+/// Reads the "kernel" ELF file from the filesystem, maps its PT_LOAD segments into
+/// kernel virtual memory at their fixed link-time addresses, and calls the entry point.
+/// Prints the return value to console and serial as a POC demonstration.
+/// Gracefully skips if the file is absent.
+fn loadKernelModule() !void {
+    // Ensure the kernel-only page directory is active before any allocation.
+    paging.loadPageDir(page_dir_phys);
+
+    const elf_data = disk_fs.readFile(alloc, "kernel") catch |err| {
+        if (err == error.FileNotFound) {
+            console.puts("kernel module not found, skipping.\n");
+            serial.puts("kernel module not found, skipping.\n");
+            return;
+        }
+        return err;
+    };
+    defer alloc.free(elf_data);
+
+    // Validate ELF magic, class, and machine.
+    const ELF_MAGIC = "\x7FELF";
+    if (elf_data.len < @sizeOf(elf32.Elf32_Ehdr)) {
+        console.puts("kernel module: ELF too small\n");
+        return error.InvalidELF;
+    }
+    if (!std.mem.eql(u8, elf_data[0..4], ELF_MAGIC)) {
+        console.puts("kernel module: invalid ELF magic\n");
+        return error.InvalidELF;
+    }
+    if (elf_data[4] != 1) { // EI_CLASS: 1 = 32-bit
+        console.puts("kernel module: not a 32-bit ELF\n");
+        return error.InvalidELF;
+    }
+
+    const ehdr: *align(1) elf32.Elf32_Ehdr = @ptrCast(elf_data.ptr);
+
+    if (ehdr.e_machine != 3) { // EM_386
+        console.puts("kernel module: not an x86 ELF\n");
+        return error.InvalidELF;
+    }
+
+    // Compute the virtual span of all PT_LOAD segments.
+    var load_vaddr_min: u32 = 0xffff_ffff;
+    var load_vaddr_max: u32 = 0;
+    var seg_count: u32 = 0;
+    var i: u32 = 0;
+    while (i < ehdr.e_phnum) : (i += 1) {
+        const phdr = ehdr.phdrPtr(elf_data.ptr, i);
+        if (phdr.p_type != elf32.PT_LOAD) continue;
+        // Bounds-check segment data against file size.
+        if (@as(u64, phdr.p_offset) + phdr.p_filesz > elf_data.len) {
+            console.puts("kernel module: segment data out of bounds\n");
+            return error.InvalidELF;
+        }
+        if (phdr.p_filesz > phdr.p_memsz) {
+            console.puts("kernel module: segment filesz > memsz\n");
+            return error.InvalidELF;
+        }
+        if (phdr.p_vaddr < load_vaddr_min) load_vaddr_min = phdr.p_vaddr;
+        const seg_end = phdr.p_vaddr +% phdr.p_memsz;
+        if (seg_end > load_vaddr_max) load_vaddr_max = seg_end;
+        seg_count += 1;
+    }
+
+    if (seg_count == 0) {
+        console.puts("kernel module: no loadable segments\n");
+        return error.InvalidELF;
+    }
+
+    // Allocate all pages covering the full virtual span in one shot, then zero them.
+    const load_base = paging.roundDown(load_vaddr_min, paging.PAGE);
+    const load_end = paging.roundToNext(load_vaddr_max, paging.PAGE);
+    const num_pages = (load_end - load_base) / paging.PAGE;
+    const mem = paging.allocateMemoryAt(load_base, num_pages, false, true);
+    @memset(mem, 0);
+
+    // Copy each segment's file data into its virtual address.
+    i = 0;
+    while (i < ehdr.e_phnum) : (i += 1) {
+        const phdr = ehdr.phdrPtr(elf_data.ptr, i);
+        if (phdr.p_type != elf32.PT_LOAD) continue;
+        const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
+        @memcpy(dest[0..phdr.p_filesz], elf_data.ptr[phdr.p_offset..][0..phdr.p_filesz]);
+    }
+
+    // Call the entry point directly in kernel mode.
+    const entry: *const fn () callconv(.c) u32 = @ptrFromInt(ehdr.e_entry);
+    const result = entry();
+    console.put(.{ "Kernel module returned: 0x", result, "\n" });
 }
 
 fn mountFs() !void {

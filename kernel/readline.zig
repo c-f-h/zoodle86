@@ -1,4 +1,4 @@
-const kernel = @import("kernel.zig");
+const kernel = @import("stage2.zig");
 const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
 const vga = @import("vgatext.zig");

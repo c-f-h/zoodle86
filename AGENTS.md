@@ -7,7 +7,8 @@ This is a tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in 
 This repository builds a bootable x86 disk image with a tiny freestanding kernel and a small command-driven text UI.
 
 ### Core Kernel Modules
-- `kernel/kernel.zig`: kernel entrypoint, E820 memory discovery, GDT/IDT setup, paging initialization, memory allocator, filesystem mounting, dedicated kernel-shell stack handoff, shell startup, and exception handling.
+- `kernel/stage2.zig`: kernel entrypoint, E820 memory discovery, GDT/IDT setup, paging initialization, memory allocator, filesystem mounting, kernel module loading, dedicated kernel-shell stack handoff, shell startup, and exception handling.
+- `kernel/kmod.zig`: POC kernel module loaded from the filesystem at boot. Exports `kmod_init()` which returns a known magic value to demonstrate that a separately-compiled ELF can be loaded from the FS and called by stage2.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
 - `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
@@ -50,7 +51,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `userspace/sys.zig`, `userspace.ld`: shared userspace syscall ABI helpers, linker script, and startup entry point `_start` which passes command line arguments to `main`.
 
 ### Build Configuration
-- `stage2.ld`, `userspace.ld`: linker scripts for stage-2 and userspace.
+- `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel module respectively.
 - `SConstruct`: SCons build and run entrypoints.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
 - Bochs serial output is captured to `build/serial.txt` via the generated `build/bochsrc.txt`.
@@ -64,8 +65,9 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - Add `AUTOEXEC="serial on\nrun hello"` to any of the above SCons commands to inject a one-off `autoexec` file into the filesystem image for that build.
 
 Build pipeline overview:
-- `build/stage2.elf`: linked from `kernel/kernel.zig` and `interrupts.asm`.
+- `build/stage2.elf`: linked from `kernel/stage2.zig` and `interrupts.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
+- `build/kernel.elf`: the kernel module, linked from `kernel/kmod.zig` with `kernel.ld` at `0xC0300000`; copied into the filesystem image as `kernel`.
 - `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.
 - `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
 - `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.
@@ -78,6 +80,8 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Boot & Real-Mode Setup**: The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stage-2 image at `0x8000`, and switches to 32-bit protected mode before jumping into Zig code. On hard-disk boots it uses BIOS extended LBA reads for stage 2; the older CHS path is only used for floppy-style boots.
 
+**Kernel Module Loading**: After the filesystem is mounted, `kernel_main()` calls `loadKernelModule()` which reads the `"kernel"` ELF file from the filesystem, allocates physical pages for each PT_LOAD segment at the fixed virtual addresses specified by `kernel.ld` (`0xC0300000+`), copies the segment data, and calls the entry point directly in kernel mode (ring 0). The function gracefully skips if the file is absent. These pages are mapped into the kernel-only page directory before any user tasks are created, so they are inherited by all subsequent task page directories as kernel-accessible, user-inaccessible pages.
+
 **Virtual Memory Layout**: The kernel uses a higher-half design with paging enabled. The first 1 MB of physical RAM is identity-mapped at both 0x0 (for boot compatibility) and 0xC0000000+ (for kernel code/data). A recursive page directory entry at PD[1023] → PD allows the kernel to calculate physical addresses and manipulate page tables without additional data structures. User-mode code and data execute in the lower half (0x0–0x3FFFFFFF) with dedicated per-process page directories.
 
 | Virtual Address | Size | Purpose |
@@ -89,6 +93,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 | 0x70000000 - 0x80000000 | 256 MB | User-mode stack reservation (per-process, grows downward from 0x80000000; top page mapped initially) |
 | 0x80000000 - 0xC0000000 | 1 GB | Unused |
 | 0xC0008000 - 0xC0200000 | ~2 MB | Kernel code and data (stage-2) |
+| 0xC0300000 - 0xC0400000 | 1 MB | Kernel module (`kernel.elf`), loaded from FS at boot |
 | 0xE0000000 - 0xE0400000 | 4 MB | Kernel heap (fixed-buffer allocator) |
 | 0xE0400000 - 0xE0500000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
 | 0xFFC00000 - 0xFFFFF000 | ~4 MB | Recursively mapped page tables (PD[1023] entry points to PD) |
@@ -139,7 +144,7 @@ Context switch flow (user → kernel → user):
 | `spawn` | 1001 | argv_slice_ptr | child PID or `FAIL` | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable |
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
 
-**Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–80 are reserved for the stage-2 loader. The custom filesystem begins at sector 81. The filesystem layout is a one-sector superblock followed by a block bitmap, inode table, and data region. The root directory lives in the data region as a fixed-size inode-backed directory file containing 64 entries.
+**Disk Image Layout**: Sector 0 is the boot sector. Sectors 1–96 are reserved for the stage-2 loader. The custom filesystem begins at sector 97. The filesystem layout is a one-sector superblock followed by a block bitmap, inode table, and data region. The root directory lives in the data region as a fixed-size inode-backed directory file containing 64 entries.
 
 **Filesystem**: The ZOD2 filesystem is inode-based and optimized for tiny disk images. It keeps a block bitmap plus a compact inode table (with no separate inode bitmap), uses 8 direct block pointers plus 2 single-indirect pointers per inode, and stores the root directory as a fixed-size inode-backed directory file containing 64 entries with 16-byte maximum names. Version 1 exposes only the root directory, but the on-disk inode and directory-entry structures are designed so hierarchical directories can be added later. Open descriptors now track inode identity rather than directory-slot identity, and `unlink` still rejects files that are currently open rather than emulating delete-on-last-close semantics.
 

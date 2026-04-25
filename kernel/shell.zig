@@ -7,7 +7,7 @@ const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const pageallocator = @import("pageallocator.zig");
 const readline = @import("readline.zig");
-const kernel = @import("kernel.zig");
+const kernel = @import("stage2.zig");
 const task = @import("task.zig");
 
 const autoexec_name = "autoexec";

@@ -1,6 +1,6 @@
 const gdt = @import("gdt.zig");
 const paging = @import("paging.zig");
-const kernel = @import("kernel.zig");
+const kernel = @import("stage2.zig");
 const filedesc = @import("filedesc.zig");
 const std = @import("std");
 

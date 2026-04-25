@@ -1,5 +1,5 @@
 const filedesc = @import("filedesc.zig");
-const kernel = @import("kernel.zig");
+const kernel = @import("stage2.zig");
 const paging = @import("paging.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
