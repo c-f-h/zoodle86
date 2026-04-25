@@ -273,10 +273,13 @@ export fn _start() void {
 const Task = task.Task;
 
 const LINE = 0x10;
+const KERNEL_SHELL_STACK_SIZE = 16 * 1024;
 
 pub const USER_DATA_START: u32 = 0x1000_0000; // start of userspace data segment
 pub const USER_STACK_BOTTOM: u32 = 0x7000_0000; // start of userspace stack
 pub const USER_STACK_TOP: u32 = 0x8000_0000; // end of userspace stack (and end of userspace virtual address space)
+
+var kernel_shell_stack: [KERNEL_SHELL_STACK_SIZE]u8 align(4096) = undefined;
 
 // Preliminary physical memory location for the bootstrap Page Directory.
 // Keep this well above the loaded stage-2 image and its zeroed .bss region so
@@ -313,7 +316,6 @@ fn kernel_main() !void {
 
     // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
     interrupts_init();
-    taskman.init();
     filedesc.init();
 
     console.console_init(VGA_ATTR);
@@ -328,6 +330,7 @@ fn kernel_main() !void {
     @memset(kernel_data, 0xDD);
     var fba = std.heap.FixedBufferAllocator.init(kernel_data);
     alloc = fba.allocator();
+    taskman.init();
 
     const MiB = 1024 * 1024;
     console.put(.{
@@ -339,8 +342,7 @@ fn kernel_main() !void {
     console.puts(" MiB\n\n");
 
     try mountFs();
-    //try launchUserspaceElf("userspace.elf");
-    try shell.run(alloc, &disk_fs);
+    enterKernelShell();
 }
 
 pub inline fn bochsDebugBreak() void {
@@ -355,8 +357,25 @@ pub inline fn getRegister(comptime reg: [3]u8) u32 {
     );
 }
 
-// Re-run the kernel shell.
-// TODO/BUG: This may run in a terminated task's kernel stack, which could get overwritten.
+fn runKernelShell() noreturn {
+    shell.run(alloc, &disk_fs) catch |err| {
+        panicOnError(err);
+    };
+}
+
+fn enterKernelShell() noreturn {
+    const stack_top = @intFromPtr(&kernel_shell_stack) + kernel_shell_stack.len;
+    asm volatile (
+        \\ mov %[stack_top], %%esp
+        \\ call *%[entry]
+        :
+        : [stack_top] "r" (stack_top),
+          [entry] "r" (@intFromPtr(&runKernelShell)),
+        : .{ .memory = true });
+    unreachable;
+}
+
+// Re-run the kernel shell on the dedicated kernel shell stack rather than the just-exited task stack.
 fn kernel_reenter() noreturn {
     // Switch back to the kernel page directory (without userspace mapping)
     paging.loadPageDir(page_dir_phys);
@@ -365,9 +384,7 @@ fn kernel_reenter() noreturn {
     console.putHexU32(getRegister("esp".*));
     console.newline();
 
-    shell.run(alloc, &disk_fs) catch |err| {
-        panicOnError(err);
-    };
+    enterKernelShell();
 }
 
 /// Switch to the next active task, if any, or re-enter the kernel if no other task is runnable.

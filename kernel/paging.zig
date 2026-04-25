@@ -218,6 +218,57 @@ pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool)
     return page_start[0 .. num_pages * PAGE];
 }
 
+/// Change the permissions for a contiguous range of already-mapped pages.
+pub fn changePermissionsAt(addr: u32, num_pages: u32, user: bool, writable: bool) void {
+    if (addr & 0xFFF != 0) {
+        @panic("Permission range must be page-aligned");
+    }
+
+    for (0..num_pages) |i| {
+        const va = addr + @as(u32, @intCast(i)) * PAGE;
+        const pte = getPte(va);
+        if (!pte.present) {
+            @panic("Cannot change permissions of unmapped page");
+        }
+        pte.user = user;
+        pte.writable = writable;
+        invlpg(va);
+    }
+}
+
+fn pageTableIsEmpty(pti: u10) bool {
+    for (&mapped_pts[pti]) |pte| {
+        if (pte.present) return false;
+    }
+    return true;
+}
+
+/// Unmap a contiguous range of pages and free their physical backing.
+pub fn unmapPagesAt(addr: u32, num_pages: u32) void {
+    if (addr & 0xFFF != 0) {
+        @panic("Unmap range must be page-aligned");
+    }
+
+    for (0..num_pages) |i| {
+        const va = addr + @as(u32, @intCast(i)) * PAGE;
+        const pti = pageTableIndex(va);
+        const pte = getPte(va);
+        if (!pte.present) {
+            @panic("Cannot unmap an unmapped page");
+        }
+
+        pageallocator.freePage(pte.getPhysicalPageAddress());
+        pte.* = @bitCast(@as(u32, 0));
+        invlpg(va);
+
+        if (pageTableIsEmpty(pti)) {
+            const pde = &mapped_pd[pti];
+            pageallocator.freePage(pde.getPhysicalTableAddress());
+            pde.* = @bitCast(@as(u32, 0));
+        }
+    }
+}
+
 fn handlePageFault(va: usize, errcode: u32) bool {
     if (errcode != 6) {
         // 6 = page not present, write access, user mode - for stack growth
@@ -317,13 +368,7 @@ pub const VMemRange = struct {
 
     /// Change the user/supervisor and read/write permissions for this range.
     pub fn changePermissions(range: *VMemRange, user: bool, writable: bool) void {
-        for (0..range.num_pages) |i| {
-            const va = range.base + i * 0x1000;
-            const pte = getPte(va);
-            pte.user = user;
-            pte.writable = writable;
-            invlpg(va);
-        }
+        changePermissionsAt(range.base, range.num_pages, user, writable);
     }
 
     /// Grow the range upwards by allocating additional pages beyond the current end.

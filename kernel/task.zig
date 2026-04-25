@@ -72,10 +72,10 @@ pub const Task = struct {
     reap_children: bool = false, // if true, children are auto-reaped instead of becoming zombies
     exit_status: u32 = 0, // exit code written on exit, read by waitpid
     waiting_for_pid: u32 = 0, // PID this task is blocked waiting on (state == .waiting)
-    stack_bottom: u32 = undefined, // lower bound for stack growth in virtual memory
-    stack_top: u32 = undefined, // top of stack in virtual memory
-    heap_start: u32 = undefined,
-    heap_brk: u32 = undefined, // current program break for heap
+    stack_bottom: u32 = 0, // lower bound for stack growth in virtual memory
+    stack_top: u32 = 0, // top of stack in virtual memory
+    heap_start: u32 = 0,
+    heap_brk: u32 = 0, // current program break for heap
 
     code_mem: paging.VMemRange = .{},
     data_mem: paging.VMemRange = .{},
@@ -85,6 +85,7 @@ pub const Task = struct {
 
     /// Initializes a fresh task slot and its initial userspace context.
     pub fn init(task: *Task) void {
+        task.* = .{};
         @as(**Task, @ptrCast(&task.kernel_stack)).* = task;
         task.pid = next_pid;
         next_pid += 1;
@@ -325,6 +326,11 @@ pub const Task = struct {
         tss.setKernelStack(stack_top);
     }
 };
+
+comptime {
+    if (KERNEL_STACK_SIZE != paging.PAGE) @compileError("Task layout expects a one-page kernel stack");
+    if (@offsetOf(Task, "kernel_stack") != 0) @compileError("Task.kernel_stack must remain the first field");
+}
 
 /// Saves the kernel stack pointer for the current task so it can be resumed later.
 pub export fn save_kernel_stack_ptr(kernel_esp: usize) callconv(.c) void {
