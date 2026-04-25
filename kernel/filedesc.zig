@@ -56,7 +56,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *t
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
 
-    const entry_index = try disk_fs.getFileIndex(path) orelse blk: {
+    const entry_index = try disk_fs.findFileIndex(path) orelse blk: {
         if ((flags & O_CREAT) == 0) return error.FileNotFound;
         break :blk try disk_fs.createFile(path);
     };
@@ -80,7 +80,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *t
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
 pub fn unlinkFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, path: []const u8) FiledescError!void {
-    const entry_index = (try disk_fs.getFileIndex(path)) orelse return error.FileNotFound;
+    const entry_index = (try disk_fs.findFileIndex(path)) orelse return error.FileNotFound;
     const inode_index = try disk_fs.getFileInodeIndex(entry_index);
     if (isInodeOpen(inode_index)) return error.FileInUse;
     try disk_fs.deleteFile(allocator, path);

@@ -141,11 +141,6 @@ pub const FileSystem = struct {
         };
     }
 
-    /// Looks up the root-directory slot for a named regular file.
-    pub fn getFileIndex(self: *const FileSystem, name: []const u8) FsError!?usize {
-        return self.findFileIndex(name);
-    }
-
     /// Resolves a root-directory slot to its backing inode number.
     pub fn getFileInodeIndex(self: *const FileSystem, index: usize) FsError!u16 {
         const entry = try self.readLiveRootFileEntry(index);
@@ -361,7 +356,8 @@ pub const FileSystem = struct {
         if (visible_files != @as(usize, self.superblock.file_count)) return error.Corrupt;
     }
 
-    fn findFileIndex(self: *const FileSystem, name: []const u8) FsError!?usize {
+    /// Looks up the root-directory slot for a named regular file.
+    pub fn findFileIndex(self: *const FileSystem, name: []const u8) FsError!?usize {
         if (!validateName(name)) return error.InvalidName;
 
         var index: usize = 0;

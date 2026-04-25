@@ -6,7 +6,6 @@ extern syscall_dispatch, exception_handler, page_fault_handler
 extern save_kernel_stack_ptr
 
 ; exports
-global zero_bss
 global interrupts_init
 global task_switch
 
@@ -34,17 +33,6 @@ KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
 USER_CODE_SELECTOR equ (3 << 3) | 3
 USER_DATA_SELECTOR equ (4 << 3) | 3
 KERNEL_DATA_SELECTOR equ (2 << 3)
-
-zero_bss:
-    ; zero out the BSS section
-    pushad
-    mov edi, _bss_start
-    mov ecx, _bss_end
-    sub ecx, edi
-    xor eax, eax
-    rep stosb
-    popad
-    ret
 
 interrupts_init:
     pushad

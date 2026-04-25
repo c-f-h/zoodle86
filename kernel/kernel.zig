@@ -266,13 +266,9 @@ const memory_bitmap_va: [*]u32 = @ptrFromInt(0xC005_0000); // virtual address wh
 var page_dir_phys: u32 = undefined;
 
 fn kernel_main() !void {
-    // BSS was already zeroed by the stage2 loader when it loaded this ELF.
-    // Do NOT call zero_bss() here — we are executing on kernel_initial_stack,
-    // which lives in BSS, and zeroing it mid-execution would corrupt the stack.
-    serial.init(); // kernel has its own copy of serial's initialized flag; re-init is safe
-    serial.puts("kernel_main entered\n");
+    serial.init();
+    serial.puts(" ---  kernel_main  ---\n");
     initGdt();
-    serial.puts("GDT ok\n");
 
     {
         const cs = kernel_code_selector;
@@ -290,33 +286,25 @@ fn kernel_main() !void {
         idt.set(VECTOR_SYSCALL, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), cs, 3);
         idt.load();
     }
-    serial.puts("IDT ok\n");
 
     // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
     interrupts_init();
-    serial.puts("interrupts ok\n");
     filedesc.init();
 
     console.console_init(VGA_ATTR);
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow(false);
-    serial.puts("memory window ok\n");
     pageallocator.init(memory_bitmap_va[0..256]); // 1 page is enough to map 128 MiB of RAM
     const skip = 4 * 1024 * 1024; // skip the first 4 MiB of memory, which is where the kernel is loaded - TODO: move to conventional memory
     pageallocator.setPhysicalMemoryRange(mem_base + skip, mem_base + mem_size - skip);
-    serial.puts("pageallocator ok\n");
 
     // kernel data
     const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, true, true);
-    serial.puts("kernel data mapped ok\n");
     @memset(kernel_data, 0xDD);
-    serial.puts("kernel data memset ok\n");
     var fba = std.heap.FixedBufferAllocator.init(kernel_data);
     alloc = fba.allocator();
-    serial.puts("allocator ok\n");
     taskman.init();
-    serial.puts("taskman ok\n");
 
     const MiB = 1024 * 1024;
     console.put(.{
@@ -328,7 +316,6 @@ fn kernel_main() !void {
     console.puts(" MiB\n\n");
 
     try mountFs();
-    serial.puts("FS mounted ok\n");
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
 }

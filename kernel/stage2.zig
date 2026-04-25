@@ -2,7 +2,6 @@
 /// Responsibilities: set up 4MB identity paging (physical 0–4MB mapped at both VA 0
 /// and VA 0xC0000000), mount the filesystem, load kernel.elf from the filesystem,
 /// and jump into the kernel via kernel_init(page_dir_phys).
-const console = @import("console.zig");
 const elf32 = @import("elf32.zig");
 const fs = @import("fs.zig");
 const ide = @import("ide.zig");
@@ -61,20 +60,18 @@ fn ensureStage2BssFitsBootstrapPageTables() void {
 /// Read the "kernel" ELF from the filesystem and jump to its entry point.
 /// Each PT_LOAD segment is read directly to its link-time virtual address (already mapped).
 fn loadKernelElfAndJump() noreturn {
-    serial.puts("Loading kernel ELF...\n");
-
-    const kernel_idx = (disk_fs.getFileIndex("kernel") catch
-        earlyBootFail("FS error: cannot look up kernel")) orelse
-        earlyBootFail("kernel not found in filesystem");
+    const kernel_idx = (disk_fs.findFileIndex("kernel") catch
+        earlyBootFail("FS error: cannot find kernel")) orelse
+        earlyBootFail("FS error: cannot find kernel");
 
     // Read the 52-byte ELF header
     var ehdr_buf: [@sizeOf(elf32.Elf32_Ehdr)]u8 = undefined;
     const n = disk_fs.readFileAt(kernel_idx, 0, &ehdr_buf) catch
         earlyBootFail("FS read error: ELF header");
-    if (n < @sizeOf(elf32.Elf32_Ehdr)) earlyBootFail("kernel ELF too small");
+    if (n < @sizeOf(elf32.Elf32_Ehdr)) earlyBootFail("kernel: not an x86 ELF");
 
-    if (!std.mem.eql(u8, ehdr_buf[0..4], "\x7FELF")) earlyBootFail("kernel: invalid ELF magic");
-    if (ehdr_buf[4] != 1) earlyBootFail("kernel: not a 32-bit ELF");
+    if (!std.mem.eql(u8, ehdr_buf[0..4], "\x7FELF")) earlyBootFail("kernel: not an x86 ELF");
+    if (ehdr_buf[4] != 1) earlyBootFail("kernel: not an x86 ELF");
 
     const ehdr: *align(1) elf32.Elf32_Ehdr = @ptrCast(&ehdr_buf);
     if (ehdr.e_machine != 3) earlyBootFail("kernel: not an x86 ELF");
@@ -85,17 +82,16 @@ fn loadKernelElfAndJump() noreturn {
         var phdr_buf: [@sizeOf(elf32.Elf32_Phdr)]u8 = undefined;
         const phdr_off = ehdr.e_phoff + i * ehdr.e_phentsize;
         _ = disk_fs.readFileAt(kernel_idx, phdr_off, &phdr_buf) catch
-            earlyBootFail("FS read error: program header");
+            earlyBootFail("FS read error");
         const phdr: *align(1) elf32.Elf32_Phdr = @ptrCast(&phdr_buf);
         if (phdr.p_type != elf32.PT_LOAD) continue;
 
         const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
         _ = disk_fs.readFileAt(kernel_idx, phdr.p_offset, dest[0..phdr.p_filesz]) catch
-            earlyBootFail("FS read error: segment data");
+            earlyBootFail("FS read error");
         @memset(dest[phdr.p_filesz..phdr.p_memsz], 0);
     }
 
-    serial.puts("Jumping to kernel...\n");
     const entry: *const fn (u32) callconv(.c) noreturn = @ptrFromInt(ehdr.e_entry);
     entry(page_dir_phys);
 }
@@ -122,8 +118,7 @@ fn loader_main() noreturn {
     idt.init();
     idt.load();
 
-    console.console_init(0x07);
-    console.puts(" -------- stage2 loader --------\n\n");
+    serial.puts(" --- stage2 loader ---\n");
 
     mountFs() catch earlyBootFail("Failed to mount filesystem");
 
@@ -167,20 +162,6 @@ pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) no
 pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
     var i: usize = 0;
     while (i < len) : (i += 1) dest[i] = src[i];
-    return dest;
-}
-
-pub export fn memmove(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
-    if (@intFromPtr(dest) < @intFromPtr(src) or @intFromPtr(dest) >= @intFromPtr(src) + len) {
-        var i: usize = 0;
-        while (i < len) : (i += 1) dest[i] = src[i];
-    } else {
-        var i: usize = len;
-        while (i > 0) {
-            i -= 1;
-            dest[i] = src[i];
-        }
-    }
     return dest;
 }
 
