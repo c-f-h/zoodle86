@@ -23,9 +23,9 @@ BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "kernel" / "interrupts.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 USERSPACE_LINKER_SCRIPT = ROOT / "userspace.ld"
-KERNEL_MOD_LINKER_SCRIPT = ROOT / "kernel.ld"
-ZIG_KERNEL_SRC = ROOT / "kernel" / "stage2.zig"
-KERNEL_MOD_SRC = ROOT / "kernel" / "kmod.zig"
+KERNEL_LINKER_SCRIPT = ROOT / "kernel.ld"
+ZIG_STAGE2_SRC = ROOT / "kernel" / "stage2.zig"
+KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 USERSPACE_SOURCES = [
     ROOT / "userspace" / "hello.zig",
     ROOT / "userspace" / "fs_stress.zig",
@@ -83,7 +83,7 @@ BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 SERIALOUT_PATH = SERIALOUT
 USERSPACE_EXES = [build_artifact(path, ".elf") for path in USERSPACE_SOURCES]
-KERNEL_MOD_EXE = BUILD_DIR / "kernel.elf"
+KERNEL_EXE = BUILD_DIR / "kernel.elf"
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 IMAGE_SIZE_SECTORS = IMAGE_SIZE // 512
@@ -133,10 +133,10 @@ COMMON_ZIG_OPTS = [
 ]
 
 def build_stage2(target, source, env):
-    """Compile stage2.zig and link it with interrupts.o into stage2.elf in one
-    build-exe step.  Using build-exe with a .zig source file (rather than a
-    pre-compiled .o) causes Zig's LLVM backend to emit local STT_FUNC symbol
-    table entries for every non-inlined internal function; useful for debugging."""
+    """Compile stage2.zig (minimal loader, no NASM) and link it into stage2.elf.
+    Using build-exe with a .zig source file causes Zig's LLVM backend to emit local
+    STT_FUNC symbol table entries for every non-inlined internal function; useful for
+    debugging."""
     output_path = pathlib.Path(str(target[0]))
     linker_script = str(source[-1])
     ensure_parent(output_path)
@@ -152,8 +152,7 @@ def build_stage2(target, source, env):
             "-fno-strip",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
-            str(INTERRUPTS_OBJ),
-            str(ZIG_KERNEL_SRC),
+            str(ZIG_STAGE2_SRC),
         ]
     )
 
@@ -183,7 +182,7 @@ def build_userspace_exe(target, source, env):
         raise RuntimeError(f"Zig did not produce {output_path.name}.")
 
 
-def build_kernel_mod(target, source, env):
+def build_kernel(target, source, env):
     output_path = pathlib.Path(str(target[0]))
     source_path = pathlib.Path(str(source[0]))
     linker_script = str(source[1])
@@ -202,6 +201,7 @@ def build_kernel_mod(target, source, env):
             "-fno-compiler-rt",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
+            str(INTERRUPTS_OBJ),
             str(source_path),
         ]
     )
@@ -286,8 +286,8 @@ def build_fs_image(target, source, env):
         shutil.copy2(userspace_path, FS_IMAGE_DIR / userspace_path.stem)
 
     # Inject the kernel module as "kernel".
-    kernel_mod_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))
-    shutil.copy2(kernel_mod_path, FS_IMAGE_DIR / "kernel")
+    kernel_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))
+    shutil.copy2(kernel_path, FS_IMAGE_DIR / "kernel")
 
     autoexec_path = FS_IMAGE_DIR / AUTOEXEC_FILENAME
     autoexec_script = get_autoexec_script()
@@ -370,7 +370,7 @@ env = Environment(ENV=os.environ)
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
 interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
 # Always rebuild: zig imports are not tracked by scons, let zig handle caching.
-stage2_exe = AlwaysBuild(env.Command(str(STAGE2_EXE), [interrupts_obj, str(ZIG_KERNEL_SRC), STAGE2_LINKER_SCRIPT], Action(build_stage2, "Compiling and linking $TARGET")))
+stage2_exe = AlwaysBuild(env.Command(str(STAGE2_EXE), [str(ZIG_STAGE2_SRC), STAGE2_LINKER_SCRIPT], Action(build_stage2, "Compiling and linking $TARGET")))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,
@@ -381,7 +381,7 @@ userspace_exes = [
     AlwaysBuild(env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET")))
     for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
 ]
-kernel_mod_exe = AlwaysBuild(env.Command(str(KERNEL_MOD_EXE), [str(KERNEL_MOD_SRC), KERNEL_MOD_LINKER_SCRIPT], Action(build_kernel_mod, "Compiling $TARGET")))
+kernel_mod_exe = AlwaysBuild(env.Command(str(KERNEL_EXE), [str(KERNEL_SRC), KERNEL_LINKER_SCRIPT, interrupts_obj], Action(build_kernel, "Compiling $TARGET")))
 autoexec_value = env.Value(get_autoexec_script())
 fsimage = env.Command(str(FS_IMAGE), userspace_exes + [kernel_mod_exe, autoexec_value], Action(build_fs_image, "Building $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))

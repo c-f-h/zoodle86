@@ -1,6 +1,4 @@
 const pageallocator = @import("pageallocator.zig");
-const serial = @import("serial.zig");
-const task = @import("task.zig");
 
 // Identity-mapped paging module.
 // Provides minimal static page directory and pre-allocated page tables for identity mapping.
@@ -266,57 +264,6 @@ pub fn unmapPagesAt(addr: u32, num_pages: u32) void {
             pageallocator.freePage(pde.getPhysicalTableAddress());
             pde.* = @bitCast(@as(u32, 0));
         }
-    }
-}
-
-fn handlePageFault(va: usize, errcode: u32) bool {
-    if (errcode != 6) {
-        // 6 = page not present, write access, user mode - for stack growth
-        return false;
-    }
-    const ptask = task.getCurrentTask();
-    const fault_page = roundDown(va, PAGE);
-    // Only allow growing the stack down to the predefined limit (stack_bottom)
-    if (fault_page >= ptask.stack_bottom and fault_page < ptask.stack_mem.base) {
-        const additional_pages = numPagesBetween(fault_page, ptask.stack_mem.base);
-        ptask.stack_mem.growDown(additional_pages);
-        return true;
-    }
-    return false;
-}
-
-/// Simple page fault handler: print faulting address and error code, then halt.
-pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) void {
-    _ = vector;
-    _ = cs;
-
-    // Read CR2 to get faulting address
-    const fault_va = asm volatile ("mov %%cr2, %%eax"
-        : [ret] "={eax}" (-> u32),
-    );
-
-    if (handlePageFault(fault_va, errcode))
-        return;
-
-    const console = @import("console.zig");
-
-    serial.puts("\n!!! PAGE FAULT !!!\nError code: ");
-    serial.putHexU32(errcode);
-    serial.puts("\nAddress:    ");
-    serial.putHexU32(fault_va);
-    serial.puts("\neip:        ");
-    serial.putHexU32(eip);
-    serial.puts("\nHalting.\n");
-
-    console.put(.{
-        "\n!!! PAGE FAULT !!!\nError code: ", errcode,
-        "\nAddress:    ",                     fault_va,
-        "\neip:        ",                     eip,
-        "\nHalting.\n",
-    });
-
-    while (true) {
-        asm volatile ("hlt");
     }
 }
 

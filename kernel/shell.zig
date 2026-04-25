@@ -7,7 +7,7 @@ const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const pageallocator = @import("pageallocator.zig");
 const readline = @import("readline.zig");
-const kernel = @import("stage2.zig");
+const kernel = @import("kernel.zig");
 const task = @import("task.zig");
 
 const autoexec_name = "autoexec";
@@ -266,7 +266,7 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     var first_task: ?*task.Task = null;
     if (args.peek() == null) {
-        console.puts("Usage: run <executable> [<executable> ...]\n");
+        console.puts("Usage: multirun <executable> [<executable> ...]\n");
         return;
     }
 
@@ -282,7 +282,7 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     const fname = args.next() orelse {
-        console.puts("Usage: runv <executable> [<arg> ...]\n");
+        console.puts("Usage: run <executable> [<arg> ...]\n");
         return;
     };
 
