@@ -79,6 +79,7 @@ pub fn clearKeyboardHandler() void {
     cur_kb_handler = null;
 }
 
+var kernel_fba: std.heap.FixedBufferAllocator = undefined;
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
 var disk_block_device: ide.IdeBlockDevice = undefined;
@@ -246,18 +247,12 @@ fn panicOnError(err: anyerror) noreturn {
 
 const Task = task.Task;
 
-const KERNEL_SHELL_STACK_SIZE = 16 * 1024;
-
 pub const USER_DATA_START: u32 = 0x1000_0000; // start of userspace data segment
 pub const USER_STACK_BOTTOM: u32 = 0x7000_0000; // start of userspace stack
 pub const USER_STACK_TOP: u32 = 0x8000_0000; // end of userspace stack (and end of userspace virtual address space)
 
+const KERNEL_SHELL_STACK_SIZE = 16 * 1024;
 var kernel_shell_stack: [KERNEL_SHELL_STACK_SIZE]u8 align(4096) = undefined;
-
-// Dedicated stack for the kernel_init → kernel_main transition.
-// Must be large enough to survive the full kernel init sequence.
-const INITIAL_STACK_SIZE = 8 * 1024;
-var kernel_initial_stack: [INITIAL_STACK_SIZE]u8 align(4096) = undefined;
 
 const memory_bitmap_va: [*]u32 = @ptrFromInt(0xC005_0000); // virtual address where the physical memory bitmap will be stored
 
@@ -265,9 +260,10 @@ const memory_bitmap_va: [*]u32 = @ptrFromInt(0xC005_0000); // virtual address wh
 // Passed in by kernel_init and used by kernel_reenter to reload the kernel-only PD.
 var page_dir_phys: u32 = undefined;
 
-fn kernel_main() !void {
+fn kernel_enter() !noreturn {
+    // NB: This function runs on a temporary stack; its locals won't survive into the kernel shell.
     serial.init();
-    serial.puts(" ---  kernel_main  ---\n");
+    serial.puts(" --- kernel_enter  ---\n");
     initGdt();
 
     {
@@ -302,17 +298,16 @@ fn kernel_main() !void {
     // kernel data
     const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, true, true);
     @memset(kernel_data, 0xDD);
-    var fba = std.heap.FixedBufferAllocator.init(kernel_data);
-    alloc = fba.allocator();
+    kernel_fba = std.heap.FixedBufferAllocator.init(kernel_data);
+    alloc = kernel_fba.allocator();
     taskman.init();
 
-    const MiB = 1024 * 1024;
     console.put(.{
         "Usable memory: ", mem_base,
         " - ",             mem_base + mem_size,
         ", size=",
     });
-    console.putDecU32(@divTrunc(mem_size, MiB));
+    console.putDecU32(@divTrunc(mem_size, 1024 * 1024));
     console.puts(" MiB\n\n");
 
     try mountFs();
@@ -582,9 +577,8 @@ pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) ca
 
 // ---- Kernel entry point ----
 
-fn kernel_main_trampoline() noreturn {
-    kernel_main() catch |err| panicOnError(err);
-    unreachable;
+fn kernel_enter_trampoline() noreturn {
+    kernel_enter() catch |err| panicOnError(err);
 }
 
 /// Kernel entry point called by the stage2 boot loader after loading this ELF.
@@ -592,13 +586,13 @@ fn kernel_main_trampoline() noreturn {
 pub export fn kernel_init(pd_phys: u32) callconv(.c) noreturn {
     page_dir_phys = pd_phys;
     // Switch to the kernel's own initial stack before touching any globals.
-    const stack_top = @intFromPtr(&kernel_initial_stack) + kernel_initial_stack.len;
+    const stack_top = @intFromPtr(&kernel_shell_stack) + kernel_shell_stack.len;
     asm volatile (
         \\ mov %[stack_top], %%esp
         \\ call *%[entry]
         :
         : [stack_top] "r" (stack_top),
-          [entry] "r" (@intFromPtr(&kernel_main_trampoline)),
+          [entry] "r" (@intFromPtr(&kernel_enter_trampoline)),
         : .{ .memory = true });
     unreachable;
 }
