@@ -181,8 +181,8 @@ pub fn main(argv: []const []const u8) !void {
         try writeAll(fd_b, &chunk_b);
     }
 
-    if (sys.close(fd_a) == FAIL) return error.SyscallFailed;
-    if (sys.close(fd_b) == FAIL) return error.SyscallFailed;
+    _ = try expectSyscall(sys.close(fd_a));
+    _ = try expectSyscall(sys.close(fd_b));
 
     try verifyFileContents(stress_file_a, &expected_a);
     try verifyFileContents(stress_file_b, &expected_b);

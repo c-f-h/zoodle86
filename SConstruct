@@ -268,17 +268,14 @@ def build_fs_image(target, source, env):
 
     # preserve any existing filesystem contents of image.img
     if BOOT_IMG.exists():
-        try:
-            run(
-                [
-                    str(ZIG_EXE), "run", str(ROOT / "extract_fs.zig"),
-                    "--",
-                    str(BOOT_IMG.absolute()),
-                    str(FS_IMAGE_DIR.absolute()),
-                ]
-            )
-        except RuntimeError:
-            print("Existing image uses an incompatible filesystem format; starting from a fresh filesystem image.")
+        run(
+            [
+                str(ZIG_EXE), "run", str(ROOT / "extract_fs.zig"),
+                "--",
+                str(BOOT_IMG.absolute()),
+                str(FS_IMAGE_DIR.absolute()),
+            ]
+        )
 
     # Inject each userspace binary into the filesystem image, dropping the .elf extension.
     for userspace_exe in source[0:len(USERSPACE_EXES)]:

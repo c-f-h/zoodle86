@@ -60,13 +60,13 @@ fn ensureStage2BssFitsBootstrapPageTables() void {
 /// Read the "kernel" ELF from the filesystem and jump to its entry point.
 /// Each PT_LOAD segment is read directly to its link-time virtual address (already mapped).
 fn loadKernelElfAndJump() noreturn {
-    const kernel_idx = (disk_fs.findFileIndex("kernel") catch
+    const kernel_inode = (disk_fs.findFileInodeIndex("kernel") catch
         earlyBootFail("FS error: cannot find kernel")) orelse
         earlyBootFail("FS error: cannot find kernel");
 
     // Read the 52-byte ELF header
     var ehdr_buf: [@sizeOf(elf32.Elf32_Ehdr)]u8 = undefined;
-    const n = disk_fs.readFileAt(kernel_idx, 0, &ehdr_buf) catch
+    const n = disk_fs.readInodeAt(kernel_inode, 0, &ehdr_buf) catch
         earlyBootFail("FS read error: ELF header");
     if (n < @sizeOf(elf32.Elf32_Ehdr)) earlyBootFail("kernel: not an x86 ELF");
 
@@ -81,13 +81,13 @@ fn loadKernelElfAndJump() noreturn {
     while (i < ehdr.e_phnum) : (i += 1) {
         var phdr_buf: [@sizeOf(elf32.Elf32_Phdr)]u8 = undefined;
         const phdr_off = ehdr.e_phoff + i * ehdr.e_phentsize;
-        _ = disk_fs.readFileAt(kernel_idx, phdr_off, &phdr_buf) catch
+        _ = disk_fs.readInodeAt(kernel_inode, phdr_off, &phdr_buf) catch
             earlyBootFail("FS read error");
         const phdr: *align(1) elf32.Elf32_Phdr = @ptrCast(&phdr_buf);
         if (phdr.p_type != elf32.PT_LOAD) continue;
 
         const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
-        _ = disk_fs.readFileAt(kernel_idx, phdr.p_offset, dest[0..phdr.p_filesz]) catch
+        _ = disk_fs.readInodeAt(kernel_inode, phdr.p_offset, dest[0..phdr.p_filesz]) catch
             earlyBootFail("FS read error");
         @memset(dest[phdr.p_filesz..phdr.p_memsz], 0);
     }

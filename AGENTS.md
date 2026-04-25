@@ -27,8 +27,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ### Storage & Filesystem
 - `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
-- `kernel/fs.zig`: inode-based filesystem with mount, format, whole-file helpers, offset-based inode I/O, block-bitmap allocation, root-directory entry management, delete, and rename operations. Uses `BlockDevice` abstraction.
-- `kernel/fs_defs.zig`: inode-based filesystem constants, superblock/inode/directory-entry structures, and derived layout helpers.
+- `kernel/fs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
 - `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O. Also provides `IdeBlockDevice`, a concrete `BlockDevice` implementation backed by an ATA drive.
 - `kernel/io.zig`: low-level port I/O helpers (inb, inw, outb, outw).

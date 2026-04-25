@@ -29,13 +29,10 @@ pub fn main(init: std.process.Init) !void {
 
     const file_size = try image_file.length(init.io);
     var fbd = file_block_device.FileBlockDevice.init(image_file, init.io, @intCast(file_size / block_device.BLOCK_SIZE));
-
-    try stdout.print("Reading superblock from LBA {}...\n", .{fs.FS_START_LBA});
     var disk_fs = try fs.FileSystem.mount(&fbd.block_dev);
 
     try stdout.print("Filesystem info:\n", .{});
     try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});
-    try stdout.print("  Data starts at LBA: {d}\n", .{disk_fs.dataStartLba()});
 
     try std.Io.Dir.cwd().createDirPath(init.io, output_path);
     const output_dir = try std.Io.Dir.cwd().openDir(init.io, output_path, .{});
