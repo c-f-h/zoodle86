@@ -4,6 +4,7 @@
 /// management, task management, syscalls, filesystem, and the interactive shell.
 const console = @import("console.zig");
 const filedesc = @import("filedesc.zig");
+const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
@@ -44,11 +45,6 @@ pub const VECTOR_TIMER = 0x20;
 pub const VECTOR_KEYBOARD = 0x21;
 pub const VECTOR_SYSCALL = 0x80;
 pub const VECTOR_SPURIOUS = 0xFF;
-
-// External interrupt setup from interrupts.asm
-extern fn interrupts_init() void;
-extern fn task_switch() callconv(.naked) noreturn;
-extern const _bss_end: u8;
 
 // Interrupt handler addresses from interrupts.asm
 extern fn exception_isr_int08() void;
@@ -102,7 +98,7 @@ pub fn getFileSystem() *fs.FileSystem {
 }
 
 /// Keyboard event consumer called by the interrupt handler.
-export fn consume_key_event(event: *const keyboard.KeyEvent) void {
+pub fn consumeKeyEvent(event: *const keyboard.KeyEvent) void {
     if (cur_kb_handler) |handler| {
         _ = handler.handler(handler.ctx, event);
     }
@@ -138,7 +134,32 @@ fn initGdt() void {
     gdt.ltr(tss_selector_cpu0); // load TSS for the first CPU and marks the TSS as busy
 }
 
-export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) noreturn {
+/// Single entry point into the kernel from IRQs/exceptions/syscalls.
+export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c) void {
+    if (frame.vector == VECTOR_KEYBOARD or frame.vector == VECTOR_TIMER) {
+        // Acknowledge EOI on LAPIC interrups
+        apic.lapic_eoi();
+    } else if (frame.vector == VECTOR_SYSCALL) {
+        // TODO: Should be called on other vectors as well, but is currently only
+        // safe on entry from a user stack - figure out exact semantics
+        task.saveKernelStackPtr(@intFromPtr(frame));
+    }
+
+    switch (frame.vector) {
+        VECTOR_TIMER => pit.timer_irq_handler(),
+        VECTOR_KEYBOARD => keyboard.keyboard_dispatch(frame),
+        VECTOR_SYSCALL => syscall.syscall_dispatch(@ptrCast(frame)),
+        VECTOR_DOUBLE_FAULT, VECTOR_INVALID_TSS, VECTOR_NOSEGMENT, VECTOR_SS_FAULT, VECTOR_GPF => exception_handler(frame),
+        VECTOR_PAGEFAULT => page_fault_handler(frame),
+        else => @panic("Unknown interrupt vector"),
+    }
+}
+
+fn exception_handler(frame: *const interrupt_frame.InterruptFrame) noreturn {
+    const vector: u8 = @truncate(frame.vector);
+    const errcode = frame.error_code;
+    const eip = frame.eip;
+    const cs: u16 = @truncate(frame.cs);
     const err_template = "Exception: 00, error code: 00000000. Source: cs=0000 eip=00000000";
     var err: [err_template.len]u8 = undefined;
     @memcpy(&err, err_template);
@@ -151,7 +172,7 @@ export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callcon
 
     // The original cs tells us whether the fault happened in userspace (ring 3); in that
     // case we should terminate only the userspace program and continue.
-    if ((cs & 3) == 3) {
+    if (frame.fromUserMode()) {
         console.setAttr(0x0f);
         console.puts(&err);
         console.setAttr(VGA_ATTR);
@@ -556,9 +577,9 @@ fn handlePageFault(va: usize, errcode: u32) bool {
 
 /// Page fault dispatcher: handles growable user stacks; terminates the program on
 /// unrecoverable faults; panics if the fault happened in kernel mode.
-pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) void {
-    _ = vector;
-    _ = cs;
+fn page_fault_handler(frame: *const interrupt_frame.InterruptFrame) void {
+    const errcode = frame.error_code;
+    const eip = frame.eip;
 
     // Read CR2 to get faulting address
     const fault_va = asm volatile ("mov %%cr2, %%eax"
@@ -568,23 +589,24 @@ pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) ca
     if (handlePageFault(fault_va, errcode))
         return;
 
-    serial.puts("\n!!! PAGE FAULT !!!\nError code: ");
-    serial.putHexU32(errcode);
-    serial.puts("\nAddress:    ");
-    serial.putHexU32(fault_va);
-    serial.puts("\neip:        ");
-    serial.putHexU32(eip);
-    serial.puts("\nHalting.\n");
-
+    const old_mirror_state = console.isSerialMirrorEnabled();
+    console.setSerialMirrorEnabled(true);
     console.put(.{
         "\n!!! PAGE FAULT !!!\nError code: ", errcode,
         "\nAddress:    ",                     fault_va,
         "\neip:        ",                     eip,
-        "\nHalting.\n",
     });
+    console.setSerialMirrorEnabled(old_mirror_state);
 
-    while (true) {
-        asm volatile ("hlt");
+    if (frame.fromUserMode()) {
+        console.puts("\nTerminating program.\n");
+        console.setSerialMirrorEnabled(old_mirror_state);
+        exitCurrentTask(0xFFFF_FFFF);
+    } else {
+        console.puts("\nHalting.\n");
+        while (true) {
+            asm volatile ("hlt");
+        }
     }
 }
 

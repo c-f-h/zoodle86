@@ -17,6 +17,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, and file descriptor mappings.
+- `kernel/interrupt_frame.zig`: standard stack frame layout used when entering the kernel.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over the filesystem and console streams.
 - `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode.
@@ -37,7 +38,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 
 ### Assembly & Low-Level
 - `boot.asm`: boot sector and stage-2 loader.
-- `interrupts.asm`: low-level exception/IRQ entry points, scancode buffering, interrupt statistics.
+- `interrupts.asm`: low-level exception/IRQ entry stubs that dispatch through `kernel.interrupt_dispatch()`.
 
 ### Applications & Tools
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
@@ -110,7 +111,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Interrupt Controller Initialization (ACPI + APIC)**: During `kernel_enter()`, after early paging and allocator setup, `acpi.init()` scans for the RSDP in EBDA/BIOS regions, maps and validates ACPI SDTs (including RSDT and MADT), and extracts APIC topology data. `apic.initApic()` then maps LAPIC and I/O APIC MMIO regions uncached, verifies controller presence, disables the legacy 8259 PIC, enables the local APIC, applies MADT interrupt source overrides (IRQ→GSI remaps), and programs the keyboard interrupt route to IDT vector `0x21` via the I/O APIC.
 
-**Exception Handling**: The kernel handles multiple exception types including Page Fault (0x0E), General Protection Fault (0x0D), and others. User-mode faults (such as page faults) terminate the offending task without crashing the kernel.
+**Exception Handling**: The kernel handles multiple exception types including Page Fault (0x0E), General Protection Fault (0x0D), and others. Low-level entry stubs in `interrupts.asm` normalize all interrupts/exceptions/syscalls onto a shared interrupt-frame prefix (defined in `interrupt_frame.zig`). All handlers converge on `kernel.interrupt_dispatch()` which routes to specific handlers based on vector type. User-mode faults terminate the offending task without crashing the kernel.
 
 **Serial Debug Output**: The kernel initializes COM1 early in boot and writes exception and panic diagnostics to the serial port. Bochs is configured with `com1: enabled=1, mode=file` so this output is captured in `build/serial.txt` on the host.
 
@@ -118,7 +119,7 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 **Userspace Heap Allocation**: Userspace can grow its heap through syscall `brk` and the shared helper `userspace/sys.zig:changeHeapSize()`. `userspace/allocator.zig` builds a reusable single-threaded `std.mem.Allocator` on top of that interface using power-of-two size classes plus free-list reuse, so userspace programs can use normal Zig heap APIs such as `alloc`, `realloc`, `free`, and `std.fmt.allocPrint()`.
 
-**Task/Process Management**: Each `Task` struct starts with a 4 KB kernel stack page (its first word stores a pointer back to the `Task` for `getCurrentTask()`), followed by a 4 KB per-task page directory, a unique PID, a saved `kernel_esp`, user-mode stack/heap bounds, and a small per-task fd table (with stdio preinstalled plus mappings into the kernel global open-file table). Each task also carries a `TaskState` (`.free`, `.active`, `.waiting`, `.zombie`), a `parent_pid` (0 for shell-spawned tasks), a `reap_children` flag, an `exit_status`, and a `waiting_for_pid` for the blocked-waitpid case. User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). `taskman.zig` now allocates a fixed pool of 8 `TaskmanEntry` slots at runtime, each laid out as `[guard page][Task]`.
+**Task/Process Management**: Each `Task` struct starts with a 4 KB kernel stack page (its first word stores a pointer back to the `Task` for `getCurrentTask()`), followed by a 4 KB per-task page directory, a unique PID, a saved `kernel_esp`, user-mode stack/heap bounds, and a small per-task fd table (with stdio preinstalled plus mappings into the kernel global open-file table). `kernel_esp` points at a normalized userspace return frame defined in `interrupt_frame.zig`. Each task also carries a `TaskState` (`.free`, `.active`, `.waiting`, `.zombie`), a `parent_pid` (0 for shell-spawned tasks), a `reap_children` flag, an `exit_status`, and a `waiting_for_pid` for the blocked-waitpid case. User-mode execution uses flat-addressed segments backed by the user memory region. The kernel can load and execute freestanding ELF binaries (ELF32 format) by extracting code and data segments, computing heap and stack boundaries (page-aligned above the program image), and mapping those segments into GDT selectors 0x18 and 0x20 (user code/data, DPL=3). `taskman.zig` now allocates a fixed pool of 8 `TaskmanEntry` slots at runtime, each laid out as `[guard page][Task]`.
 
 **Argv ABI**: Command-line arguments are passed to a new process via `Task.setArgs(args)` and written into the userspace stack. `_start` (naked) pushes ESP and calls `argvStartup`, which reconstructs `[]const []const u8` from the ABI layout and passes it to `main(argv)`. The `run <executable> [<arg>...]` shell command launches a program with arguments (argv[0] = executable name); `multirun` launches several executables with no arguments.
 
@@ -127,11 +128,13 @@ There is no separate unit-test suite yet. A successful build is the current base
 **Process Lifecycle & Zombie Reaping**: When a task exits (via `exit` syscall or a fault), it first orphans any children (setting their `parent_pid = 0` and freeing any zombie children immediately). The task then releases its files and memory. Whether it becomes a zombie or is freed immediately depends on: (1) if `parent_pid == 0` (shell-spawned) or the parent has `reap_children = true`, the slot is freed at once; (2) if the parent is already blocked in `waitpid`, it is woken immediately and the slot freed; (3) otherwise the slot transitions to `.zombie` state, holding only the PID and exit status until the parent collects it via `waitpid`. This matches POSIX semantics: `set_child_reap` (syscall 1002) is the equivalent of `SIGCHLD = SIG_IGN`.
 
 Context switch flow (user → kernel → user):
-1. User executes `int 0x80`; hardware loads kernel SS/ESP from TSS.
-2. `syscall_isr` (in `interrupts.asm`) saves the kernel ESP into the current `Task.kernel_esp` via `save_kernel_stack_ptr()`.
-3. `syscall_dispatch()` handles the call; for Exit/Yield it calls `reschedule()` (does not return).
-4. `reschedule()` calls `next_task.switchTo(&tss_cpu0)` which runs inline assembly: loads the new page directory into CR3, places the new task's `kernel_esp` in EAX, and jumps to `task_switch`.
-5. `task_switch` restores the stack pointer then falls through to `return_to_userspace` which executes `popad / pop es / pop ds / iretd` to resume user code.
+1. User executes `int 0x80`; hardware loads kernel SS/ESP from TSS and pushes return context.
+2. `syscall_isr` (in `interrupts.asm`) pushes the vector and error code, then jumps to `generic_handler`.
+3. `generic_handler` (in `interrupts.asm`) saves registers, loads kernel data selector, calls `interrupt_dispatch()` with a pointer to the `InterruptFrame`, and restores.
+4. `interrupt_dispatch()` (in `kernel.zig`) recognizes VECTOR_SYSCALL, calls `task.saveKernelStackPtr()` to store the frame pointer into `Task.kernel_esp`, and dispatches to `syscall_dispatch()`.
+5. `syscall_dispatch()` handles the call; for Exit/Yield it calls `reschedule()` (does not return).
+6. `reschedule()` calls `next_task.switchTo(&tss_cpu0)` which loads the new page directory into CR3, restores the new task's `kernel_esp` into ESP, and jumps to `return_to_userspace`.
+7. `return_to_userspace` executes `popad / pop es / pop ds`, drops the normalized `vector/error_code` pair, and finishes with `iretd` to resume user code.
 
 **Syscall ABI**: User-mode programs invoke syscalls via `int 0x80` with the syscall number in `eax` and up to three arguments in `ebx`, `ecx`, `edx`. The return value is placed in `eax`. On failure, syscalls return `FAIL = 0xFFFFFFFF`.
 

@@ -1,4 +1,6 @@
-const std = @import("std");
+const interrupt_frame = @import("interrupt_frame.zig");
+const kernel = @import("kernel.zig");
+const io = @import("io.zig");
 
 // Modifier flags
 pub const MOD_SHIFT: u8 = 0x01;
@@ -80,21 +82,18 @@ pub const KeyEvent = struct {
     ascii: u8,
 };
 
-// External symbols from interrupts.asm
-extern var keyboard_scancode_buffer: [16]u8;
-extern var keyboard_scancode_head: u8;
-extern var keyboard_scancode_tail: u8;
+// Keyboard ring buffer
+var keyboard_scancode_buffer: [16]u8 = undefined;
+var keyboard_scancode_head: u8 = 0;
+var keyboard_scancode_tail: u8 = 0;
 
-// External output metrics
-pub extern var keyboard_irq_count: u32;
-pub extern var keyboard_overflow_count: u32;
+// Output metrics
+pub var keyboard_irq_count: u32 = 0;
+pub var keyboard_overflow_count: u32 = 0;
 
 // Module state
 var keyboard_modifiers: u8 = 0;
 var keyboard_e0_pending: u8 = 0;
-
-/// Event sink callback - must be defined by kernel
-extern fn consume_key_event(event: *const KeyEvent) void;
 
 /// Convert a keycode to ASCII character, respecting shift modifier
 fn keycodeToAscii(keycode: u16, modifiers: u8) u8 {
@@ -235,8 +234,25 @@ fn decodeScancode(scancode: u8, event: *KeyEvent) u8 {
     return 1;
 }
 
+pub fn keyboard_dispatch(frame: *const interrupt_frame.InterruptFrame) void {
+    _ = frame;
+
+    const scancode = io.inb(0x60);
+    keyboard_irq_count += 1;
+
+    const next_head: u8 = (keyboard_scancode_head + 1) & 0x0F;
+    if (next_head == keyboard_scancode_tail) {
+        // Buffer overflow - drop event
+        keyboard_overflow_count += 1;
+        return;
+    } else {
+        keyboard_scancode_buffer[keyboard_scancode_head] = scancode;
+        keyboard_scancode_head = next_head;
+    }
+}
+
 /// Poll the ringbuffer of scancodes filled by the keyboard ISR, decode key events, and send them to the event sink.
-pub export fn keyboard_poll() void {
+pub export fn pollingLoop() void {
     // Disable interrupts
     asm volatile ("cli");
 
@@ -256,7 +272,7 @@ pub export fn keyboard_poll() void {
 
         var event: KeyEvent = undefined;
         if (decodeScancode(scancode, &event) != 0) {
-            consume_key_event(&event);
+            kernel.consumeKeyEvent(&event);
         }
 
         // Disable again to check buffer

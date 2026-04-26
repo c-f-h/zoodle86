@@ -45,7 +45,7 @@ var ticks: u64 = 0;
 
 const vga = @import("vgatext.zig");
 
-export fn timer_irq_handler() callconv(.c) void {
+pub fn timer_irq_handler() void {
     ticks += 1;
     vga.putCharAt(0, 79, @truncate(ticks & 0xFF), 0x07);
 }

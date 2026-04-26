@@ -122,7 +122,7 @@ fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {
     defer app.deinit();
 
     while (true) {
-        keyboard.keyboard_poll();
+        keyboard.pollingLoop();
     }
 }
 
@@ -347,7 +347,7 @@ fn readLineInto(buf: []u8) ![]u8 {
     defer rl.deinit();
 
     while (!rl.done) {
-        keyboard.keyboard_poll();
+        keyboard.pollingLoop();
     }
     console.newline();
 
