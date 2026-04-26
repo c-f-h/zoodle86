@@ -13,6 +13,7 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
+- `kernel/pit.zig`: Simple Programmable Interval Timer (PIT) driver.
 - `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, and file descriptor mappings.

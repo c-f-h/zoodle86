@@ -181,12 +181,14 @@ fn ioapicSetRedir(ioapic_base: usize, gsi: u32, vector: u8, lapic_id: u8) void {
     ioapicWrite(ioapic_base, reg + 0, low);
 }
 
-fn setupKeyboardApic(ioapic_base: usize) void {
-    const keyboard_gsi: u32 = getRemappedGSI(0, 1); // bus 0 (ISA), IRQ 1 is keyboard
-    const vector = 0x21; // IDT entry which handles keyboard interrupts
-
+pub fn assignInterruptVector(bus: u8, irq: u8, vector: u8) void {
+    const ioapic_base = ioapic_va; // TODO: support multiple I/O APICs
+    const gsi: u32 = getRemappedGSI(bus, irq);
+    if (gsi >= 16) { // guaranteed by testIoApic
+        @panic("GSI out of range for initial I/O APIC");
+    }
     const lapic_id: u8 = 0;
-    ioapicSetRedir(ioapic_base, keyboard_gsi, vector, lapic_id);
+    ioapicSetRedir(ioapic_base, gsi, vector, lapic_id);
 }
 
 pub export fn lapic_eoi() callconv(.c) void {
@@ -211,6 +213,4 @@ pub fn initApic() void {
 
     disablePic();
     enableLocalApic(lapic_va);
-
-    setupKeyboardApic(ioapic_va);
 }

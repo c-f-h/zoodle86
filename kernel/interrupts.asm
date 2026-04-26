@@ -2,6 +2,7 @@
 section .text
 
 extern syscall_dispatch, exception_handler, page_fault_handler
+extern timer_irq_handler
 extern save_kernel_stack_ptr
 extern lapic_eoi
 
@@ -60,6 +61,25 @@ keyboard_isr:
     pop es
     pop ds
     iretd
+
+global timer_isr
+timer_isr:
+    push ds
+    push es
+    pushad
+
+    mov ax, KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+
+    call timer_irq_handler
+
+    call lapic_eoi
+    popad
+    pop es
+    pop ds
+    iretd
+
 
 global spurious_isr
 spurious_isr:
