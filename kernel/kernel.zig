@@ -40,6 +40,7 @@ pub const VECTOR_GPF = 0x0D; // General Protection Fault
 pub const VECTOR_PAGEFAULT = 0x0E; // Page Fault
 pub const VECTOR_KEYBOARD = 0x21;
 pub const VECTOR_SYSCALL = 0x80;
+pub const VECTOR_SPURIOUS = 0xFF;
 
 // External interrupt setup from interrupts.asm
 extern fn interrupts_init() void;
@@ -55,6 +56,7 @@ extern fn exception_isr_int0D() void;
 extern fn page_fault_isr() void;
 extern fn keyboard_isr() void;
 extern fn syscall_isr() void;
+extern fn spurious_isr() void;
 
 /// Keyboard event handler vtable entry.
 pub const KeyboardHandler = struct {
@@ -281,6 +283,7 @@ fn kernel_enter() !noreturn {
 
         idt.set(VECTOR_KEYBOARD, idt.GateType.InterruptGate32, @intFromPtr(&keyboard_isr), cs, 0);
         idt.set(VECTOR_SYSCALL, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), cs, 3);
+        idt.set(VECTOR_SPURIOUS, idt.GateType.InterruptGate32, @intFromPtr(&spurious_isr), cs, 0);
         idt.load();
     }
 

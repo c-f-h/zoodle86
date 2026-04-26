@@ -15,6 +15,7 @@ global keyboard_scancode_buffer
 global keyboard_scancode_head
 global keyboard_scancode_tail
 global keyboard_overflow_count
+global spurious_irq_count
 
 KEYBOARD_BUFFER_SIZE equ 16
 KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
@@ -58,6 +59,18 @@ keyboard_isr:
     popad
     pop es
     pop ds
+    iretd
+
+global spurious_isr
+spurious_isr:
+    push ds
+
+    mov ax, KERNEL_DATA_SELECTOR
+    mov ds, ax
+    inc dword [spurious_irq_count]
+
+    pop ds
+    ; LAPIC spurious interrupts do not require EOI.
     iretd
 
 global syscall_isr
@@ -161,6 +174,7 @@ section .bss
 
 keyboard_irq_count: resd 1
 keyboard_overflow_count: resd 1
+spurious_irq_count: resd 1
 keyboard_scancode_head: resb 1
 keyboard_scancode_tail: resb 1
 keyboard_scancode_buffer: resb KEYBOARD_BUFFER_SIZE

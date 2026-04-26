@@ -11,6 +11,9 @@ const ioapic_va = 0xFEC0_0000;
 var lapic_mmio_base: u32 = 0; // same physical address for every CPU
 var ioapic_mmio_base: u32 = 0; // MMIO base address for the GSI 0-31 I/O APIC
 
+/// Count of LAPIC spurious interrupts observed since boot.
+pub extern var spurious_irq_count: u32;
+
 // Mappings from IRQs to GSIs, read from the MADT's Interrupt Source Override entries.
 const InterruptSourceOverride = struct {
     bus_source: u8,
@@ -146,10 +149,12 @@ fn disablePic() void {
 }
 
 fn enableLocalApic(lapic_base: usize) void {
-    const SVR = 0xF0;
+    const SVR = 0xF0; // Spurious Interrupt Vector Register
     const ENABLE = 1 << 8;
+    const TPR = 0x80; // Task Priority Register
 
-    lapicWrite(lapic_base, SVR, ENABLE | 0xFF); // vector 0xFF
+    lapicWrite(lapic_base, TPR, 0x00); // allow all interrupts
+    lapicWrite(lapic_base, SVR, ENABLE | 0xFF); // spurious interrupts -> vector 0xFF
 }
 
 /// IF the IRQ appears in the GSI remappings, return the remapped GSI; otherwise, return the original IRQ.
