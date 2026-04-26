@@ -20,8 +20,9 @@ The kernel uses a higher-half design with paging enabled. The first 1 MB of phys
 | 0x4000_0000 - 0x7000_0000 | ~768 MB | Unused |
 | 0x7000_0000 - 0x8000_0000 | 256 MB | User-mode stack reservation (grows downward from 0x80000000) |
 | 0x8000_0000 - 0xC000_0000 | 1 GB | Unused |
-| 0xC000_8000 - 0xC020_0000 | ~2 MB | Kernel code and data (stage-2) |
-| 0xC030_0000 - 0xC040_0000 | 1 MB | Kernel module (`kernel.elf`), loaded from FS at boot |
+| 0xC000_8000 - 0xC000_A200 | ~8 KB | Stage-2 loader code/data/BSS |
+| 0xC001_0000 - 0xC002_0000 | 64 KB | Kernel module (`kernel.elf`), loaded from FS into conventional memory at boot |
+| 0xC004_0000 - 0xC004_2000 | 8 KB | Bootstrap page directory + first page table (set up by stage-2) |
 | 0xE000_0000 - 0xE040_0000 | 4 MB | Kernel heap (fixed-buffer allocator) |
 | 0xE040_0000 - 0xE050_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
 | 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |

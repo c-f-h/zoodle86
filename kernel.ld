@@ -2,7 +2,7 @@ ENTRY(kernel_init)
 
 SECTIONS
 {
-    . = 0xC0300000;
+    . = 0xC0010000;
 
     /DISCARD/ : { *(.eh_frame .eh_frame_hdr) }
 

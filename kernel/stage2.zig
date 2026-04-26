@@ -76,7 +76,13 @@ fn loadKernelElfAndJump() noreturn {
     const ehdr: *align(1) elf32.Elf32_Ehdr = @ptrCast(&ehdr_buf);
     if (ehdr.e_machine != 3) earlyBootFail("kernel: not an x86 ELF");
 
-    // Load each PT_LOAD segment directly to its link-time virtual address
+    // Load each PT_LOAD segment directly to its link-time virtual address.
+    // Segments must land in conventional memory (below 1 MB) and must not overlap
+    // the bootstrap page directory/table or the stage2 image.
+    const stage2_end_phys = paging.virtualToPhysical(@ptrCast(@constCast(&_bss_end)));
+    // Reserved physical ranges that kernel segments must not touch:
+    //   [0, stage2_end_phys)          stage2 code/data/BSS
+    //   [page_dir_phys, page_dir_phys + 2*PAGE)   bootstrap PD + first PT
     var i: u32 = 0;
     while (i < ehdr.e_phnum) : (i += 1) {
         var phdr_buf: [@sizeOf(elf32.Elf32_Phdr)]u8 = undefined;
@@ -85,6 +91,22 @@ fn loadKernelElfAndJump() noreturn {
             earlyBootFail("FS read error");
         const phdr: *align(1) elf32.Elf32_Phdr = @ptrCast(&phdr_buf);
         if (phdr.p_type != elf32.PT_LOAD) continue;
+
+        // Translate the kernel's virtual load address to its physical address.
+        const seg_phys: u32 = phdr.p_vaddr - 0xC000_0000;
+        const seg_end: u32 = seg_phys + phdr.p_memsz;
+
+        // The kernel must live in conventional memory (below 1 MB).
+        if (seg_end > 0x10_0000) earlyBootFail("kernel segment exceeds conventional memory");
+
+        // Must not overlap stage2 image.
+        if (seg_phys < stage2_end_phys and seg_end > 0)
+            earlyBootFail("kernel segment overlaps stage2 image");
+
+        // Must not overlap the bootstrap page directory or its first page table.
+        const pd_end = page_dir_phys + 2 * paging.PAGE;
+        if (seg_phys < pd_end and seg_end > page_dir_phys)
+            earlyBootFail("kernel segment overlaps bootstrap page tables");
 
         const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
         _ = disk_fs.readInodeAt(kernel_inode, phdr.p_offset, dest[0..phdr.p_filesz]) catch
@@ -132,7 +154,8 @@ export fn _start() void {
     // (no absolute data references, no long calls) until after the higher-half jump.
     //
     // Physical 0–4MB is mapped at both VA 0 and VA 0xC0000000 so that kernel.elf
-    // (linked at 0xC0300000 = physical 0x300000) is reachable after paging is enabled.
+    // (linked at 0xC0010000 = physical 0x10000, in conventional memory) is reachable
+    // after paging is enabled.
     {
         const max_physical = 0x40_0000; // 4MB; one page table covers exactly this range
         const page_tables = @as([*]paging.PageTable, @ptrFromInt(page_dir_phys + paging.PAGE));

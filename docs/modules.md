@@ -4,8 +4,8 @@ Complete listing of every source file and its role.
 
 ## Core Kernel Modules
 
-- `kernel/stage2.zig`: kernel entrypoint, E820 memory discovery, GDT/IDT setup, paging initialization, memory allocator, filesystem mounting, kernel module loading, dedicated kernel-shell stack handoff, shell startup, and exception handling.
-- `kernel/kmod.zig`: POC kernel module loaded from the filesystem at boot. Exports `kmod_init()` which returns a known magic value to demonstrate that a separately-compiled ELF can be loaded from the FS and called by stage2.
+- `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
+- `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
 - `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
@@ -62,7 +62,7 @@ Complete listing of every source file and its role.
 
 ## Build Configuration
 
-- `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel module respectively.
+- `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel respectively.
 - `SConstruct`: SCons build and run entrypoints.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
 - Bochs serial output is captured to `build/serial.txt` via the generated `build/bochsrc.txt`.
@@ -71,7 +71,7 @@ Complete listing of every source file and its role.
 
 - `build/stage2.elf`: linked from `kernel/stage2.zig` and `interrupts.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
-- `build/kernel.elf`: the kernel module, linked from `kernel/kmod.zig` with `kernel.ld` at `0xC0300000`; copied into the filesystem image as `kernel`.
+- `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.
 - `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
 - `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.

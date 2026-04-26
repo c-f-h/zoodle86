@@ -39,7 +39,7 @@ There is no separate unit-test suite. A successful build is the current baseline
 - Use Zig 0.16.
 - Every public Zig function should have at least a one-line doc comment.
 - Debugging tips:
-  - Use `objdump` to disassemble the kernel binary for resolving crash addresses
+  - Use `objdump` to disassemble the kernel binary for resolving crash addresses.
   - For startup commands, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`. Do **not** use an environment variable for this. End with `shutdown` to terminate cleanly.
   - Make use of serial output logging to `build/serial.txt` for tracing exceptions and program state. Use the `serial on` shell command to mirror console output to the serial output.
-- Whenever the design of the project changes, keep AGENTS.md up to date!
+- Whenever the design of the project changes, keep AGENTS.md and the documentation up to date!

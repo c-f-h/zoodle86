@@ -317,9 +317,11 @@ fn kernel_enter() !noreturn {
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow(false);
+    // The page allocator must only manage extended memory (above 1 MB) so that
+    // conventional memory (boot structures, stage2, kernel code) is never overwritten.
+    if (mem_base < 0x10_0000) @panic("page allocator would manage conventional memory");
     pageallocator.init(memory_bitmap_va[0..256]); // 1 page is enough to map 128 MiB of RAM
-    const skip = 4 * 1024 * 1024; // skip the first 4 MiB of memory, which is where the kernel is loaded - TODO: move to conventional memory
-    pageallocator.setPhysicalMemoryRange(mem_base + skip, mem_base + mem_size - skip);
+    pageallocator.setPhysicalMemoryRange(mem_base, mem_base + mem_size);
 
     // kernel data
     const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, true, true);
