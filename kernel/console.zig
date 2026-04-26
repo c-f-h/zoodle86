@@ -191,6 +191,10 @@ pub inline fn put(multiple: anytype) void {
             putHexU64(val);
         } else if (@TypeOf(val) == u32 or @TypeOf(val) == usize) {
             putHexU32(val);
+        } else if (@TypeOf(val) == u16) {
+            putHexU16(val);
+        } else if (@TypeOf(val) == u8) {
+            putHexU8(val);
         } else {
             puts(val);
         }

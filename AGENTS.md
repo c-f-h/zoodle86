@@ -13,6 +13,8 @@ This repository builds a bootable x86 disk image with a tiny freestanding kernel
 - `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
+- `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
+- `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, and file descriptor mappings.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over the filesystem and console streams.
@@ -85,22 +87,27 @@ There is no separate unit-test suite yet. A successful build is the current base
 
 | Virtual Address | Size | Purpose |
 |---|---|---|
-| 0x00000000 - 0x00100000 | 1 MB | Identity-mapped low memory (boot, real-mode data) |
-| 0x00400000 - 0x10000000 | ~252 MB | User-mode text (code) |
-| 0x10000000 - 0x40000000 | ~768 MB | User-mode rodata/data/heap (per-process) |
-| 0x40000000 - 0x70000000 | ~768 MB | Unused |
-| 0x70000000 - 0x80000000 | 256 MB | User-mode stack reservation (per-process, grows downward from 0x80000000; top page mapped initially) |
-| 0x80000000 - 0xC0000000 | 1 GB | Unused |
-| 0xC0008000 - 0xC0200000 | ~2 MB | Kernel code and data (stage-2) |
-| 0xC0300000 - 0xC0400000 | 1 MB | Kernel module (`kernel.elf`), loaded from FS at boot |
-| 0xE0000000 - 0xE0400000 | 4 MB | Kernel heap (fixed-buffer allocator) |
-| 0xE0400000 - 0xE0500000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
-| 0xFFC00000 - 0xFFFFF000 | ~4 MB | Recursively mapped page tables (PD[1023] entry points to PD) |
-| 0xFFFFF000 - 0x100000000 | 4 KB | Recursively mapped page directory |
+| 0x0000_0000 - 0x0010_0000 | 1 MB | Identity-mapped low memory (boot, real-mode data) |
+| 0x0040_0000 - 0x1000_0000 | ~252 MB | User-mode text (code) |
+| 0x1000_0000 - 0x4000_0000 | ~768 MB | User-mode rodata/data/heap (per-process) |
+| 0x4000_0000 - 0x7000_0000 | ~768 MB | Unused |
+| 0x7000_0000 - 0x8000_0000 | 256 MB | User-mode stack reservation (per-process, grows downward from 0x80000000; top page mapped initially) |
+| 0x8000_0000 - 0xC000_0000 | 1 GB | Unused |
+| 0xC000_8000 - 0xC020_0000 | ~2 MB | Kernel code and data (stage-2) |
+| 0xC030_0000 - 0xC040_0000 | 1 MB | Kernel module (`kernel.elf`), loaded from FS at boot |
+| 0xE000_0000 - 0xE040_0000 | 4 MB | Kernel heap (fixed-buffer allocator) |
+| 0xE040_0000 - 0xE050_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
+| 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |
+| 0xFEC0_0000 - 0xFEC0_1000 | 4 KB | Memory-mapped APIC I/O (base GSI 0) |
+| 0xFEE0_0000 - 0xFEE0_1000 | 4 KB | Memory-mapped Local APIC |
+| 0xFFC0_0000 - 0xFFFF_F000 | ~4 MB | Recursively mapped page tables (PD[1023] entry points to PD) |
+| 0xFFFF_F000 - 0xFFFF_FFFF | 4 KB | Recursively mapped page directory |
 
 **Paging Implementation**: The kernel initially maps only the first 1 MB of physical RAM (both at 0x0 and 0xC0000000 for higher-half transition). Virtual-to-physical address translation uses recursive mapping tricks. Both page tables and user memory are allocated on-demand via the page allocator.
 
 **Protected Mode & Segmentation**: The kernel initializes a GDT with kernel code/data segments (DPL 0), user code/data segments (DPL 3), and per-task Task State Segment (TSS) descriptors for ring transitions. Interrupts and exceptions load a 256-entry IDT with gate types for task gates and 16/32-bit interrupt/trap gates.
+
+**Interrupt Controller Initialization (ACPI + APIC)**: During `kernel_enter()`, after early paging and allocator setup, `acpi.init()` scans for the RSDP in EBDA/BIOS regions, maps and validates ACPI SDTs (including RSDT and MADT), and extracts APIC topology data. `apic.initApic()` then maps LAPIC and I/O APIC MMIO regions uncached, verifies controller presence, disables the legacy 8259 PIC, enables the local APIC, applies MADT interrupt source overrides (IRQ→GSI remaps), and programs the keyboard interrupt route to IDT vector `0x21` via the I/O APIC.
 
 **Exception Handling**: The kernel handles multiple exception types including Page Fault (0x0E), General Protection Fault (0x0D), and others. User-mode faults (such as page faults) terminate the offending task without crashing the kernel.
 

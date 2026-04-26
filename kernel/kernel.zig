@@ -18,6 +18,7 @@ const pageallocator = @import("pageallocator.zig");
 const serial = @import("serial.zig");
 const syscall = @import("syscall.zig");
 const vgatext = @import("vgatext.zig");
+const acpi = @import("acpi.zig");
 
 const std = @import("std");
 
@@ -283,10 +284,6 @@ fn kernel_enter() !noreturn {
         idt.load();
     }
 
-    // remap PIC IRQs into vectors 0x20-0x30, unmask keyboard IRQ, and enable interrupts
-    interrupts_init();
-    filedesc.init();
-
     console.console_init(VGA_ATTR);
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
@@ -309,6 +306,9 @@ fn kernel_enter() !noreturn {
     });
     console.putDecU32(@divTrunc(mem_size, 1024 * 1024));
     console.puts(" MiB\n\n");
+
+    acpi.init();
+    filedesc.init();
 
     try mountFs();
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion

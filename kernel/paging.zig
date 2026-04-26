@@ -1,7 +1,6 @@
 const pageallocator = @import("pageallocator.zig");
 
-// Identity-mapped paging module.
-// Provides minimal static page directory and pre-allocated page tables for identity mapping.
+// Provides paging structures, functions, and the VMemRange struct for describing contiguous virtual memory ranges.
 
 /// Page Directory Entry (32 bits) - each one points to 1024 Page Table Entries (or is 0)
 pub const PDE = packed struct {
@@ -71,7 +70,7 @@ inline fn pageIndex(va: u32) u10 {
 
 /// Offset within the page (0-4095)
 inline fn offset(va: u32) u12 {
-    return @truncate(va & 0xFFF);
+    return @truncate(va & PAGE_MASK);
 }
 
 /// Assumes that the current PD is recursively mapped.
@@ -195,7 +194,7 @@ fn allocatePagesAt(pti: u10, start_pg: u10, num_pages: u32, user: bool, writable
 /// Allocate a number of pages at the given virtual address (page-aligned).
 /// Does not check for existing allocations at that location.
 pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool) []u8 {
-    if (addr & 0xFFF != 0) {
+    if (addr & PAGE_MASK != 0) {
         @panic("Virtual address must be page-aligned");
     }
 
@@ -216,9 +215,29 @@ pub fn allocateMemoryAt(addr: usize, num_pages: u32, user: bool, writable: bool)
     return page_start[0 .. num_pages * PAGE];
 }
 
+pub fn mapContiguousRangeAt(addr: usize, phys_addr: usize, num_pages: u32, user: bool, writable: bool, disable_cache: bool) void {
+    if (addr & PAGE_MASK != 0 or phys_addr & PAGE_MASK != 0) {
+        @panic("Addresses must be page-aligned");
+    }
+
+    var cursor = addr;
+    var pcursor = phys_addr;
+
+    var i: u32 = 0;
+
+    while (i < num_pages) : (i += 1) {
+        const pti = pageTableIndex(cursor);
+        ensurePageTableAt(pti, user);
+
+        mapped_pts[pti][pageIndex(cursor)] = .{ .user = user, .writable = writable, .cache_disable = disable_cache, .write_through = disable_cache, .page_addr = @truncate(pcursor >> 12) };
+        cursor += PAGE;
+        pcursor += PAGE;
+    }
+}
+
 /// Change the permissions for a contiguous range of already-mapped pages.
 pub fn changePermissionsAt(addr: u32, num_pages: u32, user: bool, writable: bool) void {
-    if (addr & 0xFFF != 0) {
+    if (addr & PAGE_MASK != 0) {
         @panic("Permission range must be page-aligned");
     }
 
@@ -243,7 +262,7 @@ fn pageTableIsEmpty(pti: u10) bool {
 
 /// Unmap a contiguous range of pages and free their physical backing.
 pub fn unmapPagesAt(addr: u32, num_pages: u32) void {
-    if (addr & 0xFFF != 0) {
+    if (addr & PAGE_MASK != 0) {
         @panic("Unmap range must be page-aligned");
     }
 
@@ -268,6 +287,7 @@ pub fn unmapPagesAt(addr: u32, num_pages: u32) void {
 }
 
 pub const PAGE = 4096;
+pub const PAGE_MASK: u32 = PAGE - 1;
 
 pub inline fn roundDown(p: u32, comptime size: u32) u32 {
     return p & (~(size - 1));
@@ -297,7 +317,7 @@ pub const VMemRange = struct {
 
     /// Initialize the struct and allocate a contiguous range of virtual memory pages starting at the given virtual address.
     pub fn allocate(range: *VMemRange, va: u32, va_end: u32, is_user: bool, is_writable: bool) []u8 {
-        if (va & 0xFFF != 0) {
+        if (va & PAGE_MASK != 0) {
             @panic("VMemRange must be page-aligned");
         }
         if (va_end < va) {

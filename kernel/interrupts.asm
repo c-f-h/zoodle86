@@ -1,9 +1,9 @@
 [bits 32]
 section .text
 
-extern _bss_start, _bss_end
 extern syscall_dispatch, exception_handler, page_fault_handler
 extern save_kernel_stack_ptr
+extern lapic_eoi
 
 ; exports
 global interrupts_init
@@ -16,78 +16,11 @@ global keyboard_scancode_head
 global keyboard_scancode_tail
 global keyboard_overflow_count
 
-; port numbers for master and slave PIC
-PIC1_COMMAND    equ 0x20
-PIC1_DATA       equ 0x21
-PIC2_COMMAND    equ 0xA0
-PIC2_DATA       equ 0xA1
-
-; PIC commands
-PIC_INIT        equ 0x11
-PIC_EOI         equ 0x20    ; end of interrupt
-PIC_READ_IRR    equ 0x0a    ; OCW3 irq ready next CMD read
-PIC_READ_ISR    equ 0x0b    ; OCW3 irq service next CMD read
-
 KEYBOARD_BUFFER_SIZE equ 16
 KEYBOARD_BUFFER_MASK equ KEYBOARD_BUFFER_SIZE - 1
 USER_CODE_SELECTOR equ (3 << 3) | 3
 USER_DATA_SELECTOR equ (4 << 3) | 3
 KERNEL_DATA_SELECTOR equ (2 << 3)
-
-interrupts_init:
-    pushad
-    call remap_pic
-    call unmask_keyboard_irq
-    sti
-    popad
-    ret
-
-remap_pic:
-    push eax
-
-    ; Move legacy PIC IRQs away from the CPU exception vectors and into the range 0x20..0x2F
-    ; Therefore, IRQ1 = 0x21 after remapping
-
-    ; initialize PICs - they then expect 3 further init words
-    mov al, PIC_INIT
-    out PIC1_COMMAND, al
-    out PIC2_COMMAND, al
-
-    ; init word 1: vector offset
-    mov al, 0x20
-    out PIC1_DATA, al
-    mov al, 0x28
-    out PIC2_DATA, al
-
-    ; init word 2: master/slave wiring
-    mov al, 1 << 2          ; tell PIC1 that slave is at IRQ2
-    out PIC1_DATA, al
-    mov al, 0x02            ; tell slave PIC its cascade identity
-    out PIC2_DATA, al
-
-    ; init word 3: environment
-    mov al, 0x01            ; use 8086/88 mode
-    out PIC1_DATA, al
-    out PIC2_DATA, al
-
-    ; IMR: mask everything until we explicitly enable IRQ1.
-    mov al, 0xFF
-    out PIC1_DATA, al
-    out PIC2_DATA, al
-
-    pop eax
-    ret
-
-unmask_keyboard_irq:
-    push eax
-
-    ; IRQ1 is bit 1 in the master PIC mask register (IMR)
-    in al, PIC1_DATA
-    and al, 11111101b
-    out PIC1_DATA, al
-
-    pop eax
-    ret
 
 global keyboard_isr
 keyboard_isr:
@@ -120,9 +53,7 @@ keyboard_isr:
     inc dword [keyboard_overflow_count]
 
 .send_eoi:
-    mov al, PIC_EOI
-    out PIC1_COMMAND, al
-    ; NB: for IRQs >= 8, we have to send EOI to both PICs
+    call lapic_eoi
 
     popad
     pop es
@@ -183,7 +114,6 @@ exception_isr 0A
 exception_isr 0B
 exception_isr 0C
 exception_isr 0D
-exception_isr 0E
 
 general_exception_handler:
     ; We don't worry about returning from an exception for now: we either
