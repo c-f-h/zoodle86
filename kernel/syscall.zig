@@ -1,4 +1,5 @@
 const filedesc = @import("filedesc.zig");
+const interrupt_frame = @import("interrupt_frame.zig");
 const kernel = @import("kernel.zig");
 const paging = @import("paging.zig");
 const task = @import("task.zig");
@@ -207,7 +208,11 @@ fn sys_set_child_reap() u32 {
 }
 
 /// Dispatches the int 0x80 syscall ABI invoked by user-mode executables.
-pub export fn syscall_dispatch(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) callconv(.c) u32 {
+pub export fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) callconv(.c) u32 {
+    const nr: Syscall = @enumFromInt(frame.interrupt.regs.eax);
+    const arg1 = frame.interrupt.regs.ebx;
+    const arg2 = frame.interrupt.regs.ecx;
+    const arg3 = frame.interrupt.regs.edx;
     return switch (nr) {
         .Close => sys_close(arg1),
         .Exit => kernel.exitCurrentTask(arg1),

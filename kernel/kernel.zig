@@ -4,6 +4,7 @@
 /// management, task management, syscalls, filesystem, and the interactive shell.
 const console = @import("console.zig");
 const filedesc = @import("filedesc.zig");
+const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
@@ -138,7 +139,11 @@ fn initGdt() void {
     gdt.ltr(tss_selector_cpu0); // load TSS for the first CPU and marks the TSS as busy
 }
 
-export fn exception_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) noreturn {
+export fn exception_handler(frame: *const interrupt_frame.InterruptFrame) callconv(.c) noreturn {
+    const vector: u8 = @truncate(frame.vector);
+    const errcode = frame.error_code;
+    const eip = frame.eip;
+    const cs: u16 = @truncate(frame.cs);
     const err_template = "Exception: 00, error code: 00000000. Source: cs=0000 eip=00000000";
     var err: [err_template.len]u8 = undefined;
     @memcpy(&err, err_template);
@@ -556,9 +561,9 @@ fn handlePageFault(va: usize, errcode: u32) bool {
 
 /// Page fault dispatcher: handles growable user stacks; terminates the program on
 /// unrecoverable faults; panics if the fault happened in kernel mode.
-pub export fn page_fault_handler(vector: u8, errcode: u32, eip: u32, cs: u16) callconv(.c) void {
-    _ = vector;
-    _ = cs;
+pub export fn page_fault_handler(frame: *const interrupt_frame.InterruptFrame) callconv(.c) void {
+    const errcode = frame.error_code;
+    const eip = frame.eip;
 
     // Read CR2 to get faulting address
     const fault_va = asm volatile ("mov %%cr2, %%eax"

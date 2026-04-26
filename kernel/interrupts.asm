@@ -95,6 +95,8 @@ spurious_isr:
 
 global syscall_isr
 syscall_isr:
+    push dword 0
+    push dword 0x80
     push ds
     push es
     pushad
@@ -109,17 +111,9 @@ syscall_isr:
     call save_kernel_stack_ptr
     add esp, 4
 
-    ; restore eax, ecx, edx from pushad
-    mov eax, dword [esp + 28]
-    mov ecx, dword [esp + 24]
-    mov edx, dword [esp + 20]
-
-    push edx    ; arg3
-    push ecx    ; arg2
-    push ebx    ; arg1
-    push eax    ; nr
+    push esp
     call syscall_dispatch
-    add esp, 16
+    add esp, 4
 
     ; move result into stack position from which popad will restore eax
     mov [esp + 28], eax
@@ -128,6 +122,7 @@ return_to_userspace:
     popad
     pop es
     pop ds
+    add esp, 8              ; drop vector + error code
     iretd
 
 task_switch:
@@ -138,7 +133,10 @@ task_switch:
 %macro exception_isr 1
 global exception_isr_int%1
 exception_isr_int%1:
-    mov ebx, 0x%1
+    push dword 0x%1
+    push ds
+    push es
+    pushad
     jmp general_exception_handler
 %endmacro
 
@@ -155,17 +153,14 @@ general_exception_handler:
     mov ds, ax
     mov es, ax
 
-    ; reusing arguments already on the stack:
-    ; - original CS
-    ; - original EIP
-    ; - error code
-    push ebx        ; interrupt vector
+    push esp
     call exception_handler
     ; stack here: interrupt vector, error code, eip, cs, eflags, [esp, ss]
     jmp $   ; we should never reach this
 
 global page_fault_isr
 page_fault_isr:
+    push dword 0x0e
     push ds
     push es
     pushad
@@ -174,20 +169,10 @@ page_fault_isr:
     mov ds, ax
     mov es, ax
 
-    ; call handler with (0x0e, error code, original EIP, original CS)
-    mov ebp, esp
-    push dword [ebp + 48]   ; original CS
-    push dword [ebp + 44]   ; original EIP
-    push dword [ebp + 40]   ; error code
-    push 0x0e               ; page fault
+    push esp
     call page_fault_handler
-    add esp, 4 * 4          ; drop handler arguments
-
-    popad
-    pop es
-    pop ds
-    add esp, 4              ; drop error code
-    iretd
+    add esp, 4
+    jmp return_to_userspace
 
 
 section .bss

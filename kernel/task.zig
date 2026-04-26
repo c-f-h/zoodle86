@@ -1,4 +1,5 @@
 const gdt = @import("gdt.zig");
+const interrupt_frame = @import("interrupt_frame.zig");
 const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
@@ -91,19 +92,35 @@ pub const Task = struct {
         next_pid += 1;
         task.initFdTable();
 
-        const stack_frame = @as([*]u32, @ptrCast(&task.kernel_stack)) + KERNEL_STACK_SIZE / 4 - 5;
-        stack_frame[4] = kernel.user_data_selector;
-        stack_frame[3] = 0;
-        stack_frame[2] = 0x202;
-        stack_frame[1] = kernel.user_code_selector;
-        stack_frame[0] = 0;
+        const frame_addr = @intFromPtr(&task.kernel_stack) + KERNEL_STACK_SIZE - @sizeOf(interrupt_frame.UserInterruptFrame);
+        const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(frame_addr);
+        frame.* = .{
+            .interrupt = .{
+                .regs = .{
+                    .edi = 0,
+                    .esi = 0,
+                    .ebp = 0,
+                    .esp = 0,
+                    .ebx = 0,
+                    .edx = 0,
+                    .ecx = 0,
+                    .eax = 0,
+                },
+                .es = kernel.user_data_selector,
+                .ds = kernel.user_data_selector,
+                .vector = 0,
+                .error_code = 0,
+                .eip = 0,
+                .cs = kernel.user_code_selector,
+                .eflags = 0x202,
+            },
+            .user = .{
+                .user_esp = 0,
+                .user_ss = kernel.user_data_selector,
+            },
+        };
 
-        const regs = (stack_frame - 10)[0..10];
-        @memset(regs, 0);
-        regs[8] = kernel.user_data_selector;
-        regs[9] = kernel.user_data_selector;
-
-        task.kernel_esp = @intFromPtr(regs);
+        task.kernel_esp = frame_addr;
         task.state = .active;
         task.initPaging();
     }
@@ -160,8 +177,8 @@ pub const Task = struct {
     pub fn setSyscallReturn(t: *Task, val: u32) void {
         if (t.state != .waiting or t.kernel_esp == 0)
             @panic("setSyscallReturn called on task that is not waiting");
-        const saved_eax: *u32 = @ptrFromInt(t.kernel_esp + 28);
-        saved_eax.* = val;
+        const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(t.kernel_esp);
+        frame.setReturnValue(val);
     }
 
     /// Finds the first free userspace-visible file descriptor slot.
@@ -197,9 +214,9 @@ pub const Task = struct {
 
     /// Sets the initial instruction and stack pointers for entry into user space.
     pub fn setEntryPoint(task: *Task, eip: u32, esp: u32) void {
-        const stack_frame = @as([*]u32, @ptrCast(&task.kernel_stack)) + KERNEL_STACK_SIZE / 4 - 5;
-        stack_frame[3] = esp;
-        stack_frame[0] = eip;
+        const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(task.kernel_esp);
+        frame.user.user_esp = esp;
+        frame.interrupt.eip = eip;
     }
 
     /// Writes argv onto the top mapped stack page and returns the adjusted initial
