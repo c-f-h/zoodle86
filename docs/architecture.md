@@ -10,19 +10,19 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses 
 
 ## Virtual Memory Layout
 
-The kernel uses a higher-half design with paging enabled. The first 1 MB of physical RAM is identity-mapped at both 0x0 (for boot compatibility) and 0xC0000000+ (for kernel code/data). A recursive page directory entry at PD[1023] → PD allows the kernel to calculate physical addresses and manipulate page tables without additional data structures. User-mode code and data execute in the lower half (0x0–0x3FFFFFFF) with dedicated per-process page directories.
+The kernel uses paging with 1 MB of identity mapping at both 0x0 (low memory) and 0xC0000000+ (higher half). Stage 2 runs at low memory (VA/physical 0x8000) and loads the kernel into the higher half (VA 0xC0010000, physical 0x10000). A recursive page directory entry at PD[1023] → PD allows the kernel to calculate physical addresses and manipulate page tables directly. User-mode code and data execute in the lower half (0x0–0x3FFFFFFF) with dedicated per-process page directories.
 
 | Virtual Address | Size | Purpose |
 |---|---|---|
-| 0x0000_0000 - 0x0010_0000 | 1 MB | Identity-mapped low memory (boot, real-mode data) |
+| 0x0000_0000 - 0x0010_0000 | 1 MB | Identity-mapped low memory (boot, real-mode data, stage2) |
 | 0x0040_0000 - 0x1000_0000 | ~252 MB | User-mode text (code) |
 | 0x1000_0000 - 0x4000_0000 | ~768 MB | User-mode rodata/data/heap (per-process) |
 | 0x4000_0000 - 0x7000_0000 | ~768 MB | Unused |
 | 0x7000_0000 - 0x8000_0000 | 256 MB | User-mode stack reservation (grows downward from 0x80000000) |
 | 0x8000_0000 - 0xC000_0000 | 1 GB | Unused |
-| 0xC000_8000 - 0xC000_A200 | ~8 KB | Stage-2 loader code/data/BSS |
-| 0xC001_0000 - 0xC002_0000 | 64 KB | Kernel module (`kernel.elf`), loaded from FS into conventional memory at boot |
-| 0xC004_0000 - 0xC004_2000 | 8 KB | Bootstrap page directory + first page table (set up by stage-2) |
+| 0xC000_8000 - 0xC000_A200 | ~8 KB | Stage-2 loader (VA), physically at 0x8000 |
+| 0xC001_0000 - 0xC002_0000 | 64 KB | Kernel module (`kernel.elf`), physically at 0x10000 |
+| 0xC004_0000 - 0xC004_2000 | 8 KB | Bootstrap page directory + first page table (physical 0x40000-0x42000) |
 | 0xE000_0000 - 0xE040_0000 | 4 MB | Kernel heap (fixed-buffer allocator) |
 | 0xE040_0000 - 0xE050_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
 | 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |

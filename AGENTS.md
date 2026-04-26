@@ -26,20 +26,16 @@ Inject a one-off `autoexec` script (do **not** use an environment variable):
 scons run AUTOEXEC="serial on\nrun hello\nshutdown"
 ```
 
-There is no separate unit-test suite. A successful build is the current baseline check. Running the `hello 3 3` (PID, spawning, basic syscalls), `fs_stress` (syscall-heavy file operations), and `alloc_stress` (userspace memory manipulation) programs can serve as additional checks.
-
-## Debugging
-
-- Serial output is captured to `build/serial.txt`. Use `serial on` inside the shell to mirror console output there.
-- Use `objdump` to disassemble the kernel binary for resolving crash addresses.
-- Prefix any `scons run`/`scons debug` invocation with `AUTOEXEC="..."` to inject startup commands. End scripts with `shutdown` for a clean exit.
+There is no separate unit-test suite. A successful build is the current baseline check. Invoking the `hello 3 3` (PID, spawning, basic syscalls), `fs_stress` (syscall-heavy file operations), and `alloc_stress` (userspace memory manipulation) programs using the `run` command from the kernel shell can serve as additional checks.
 
 ## General Guidelines
 
 - Use Zig 0.16.
 - Every public Zig function should have at least a one-line doc comment.
-- Debugging tips:
-  - Use `objdump` to disassemble the kernel binary for resolving crash addresses.
-  - For startup commands, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`. Do **not** use an environment variable for this. End with `shutdown` to terminate cleanly.
-  - Make use of serial output logging to `build/serial.txt` for tracing exceptions and program state. Use the `serial on` shell command to mirror console output to the serial output.
 - Whenever the design of the project changes, keep AGENTS.md and the documentation up to date!
+
+## Debugging
+
+- Use `objdump` to disassemble the kernel binary for resolving crash addresses.
+- To run shell commands on startup, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`. Do **not** use an environment variable for this. End scripts with `shutdown` to terminate cleanly.
+- Serial output is captured to `build/serial.txt`. Use `serial on` on the shell to mirror console output there.

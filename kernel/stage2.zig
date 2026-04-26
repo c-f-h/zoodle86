@@ -127,7 +127,20 @@ fn mountFs() !void {
 }
 
 fn loader_main() noreturn {
-    // Zero stage2 BSS inline (no NASM dependency)
+    // Physical 0–1MB is mapped at VA 0, with the recursive page directory entry at PD[1023],
+    // so that kernel.elf (linked at 0xC0010000 = physical 0x10000) is reachable after paging
+    // is enabled.
+    {
+        const max_physical = 0x10_0000; // 1MB; one page table covers exactly this range
+        const page_tables = @as([*]paging.PageTable, @ptrFromInt(page_dir_phys + paging.PAGE));
+        paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
+        paging.loadPageDir(page_dir_phys);
+        paging.enable();
+    }
+
+    ensureStage2BssFitsBootstrapPageTables();
+
+    // Zero stage2 BSS
     const bss_start_addr = @intFromPtr(&_bss_start);
     const bss_end_addr = @intFromPtr(&_bss_end);
     if (bss_end_addr > bss_start_addr) {
@@ -148,29 +161,8 @@ fn loader_main() noreturn {
 }
 
 /// Loader entry point called by the bootloader at physical 0x8000.
-/// Sets up 4MB identity paging and jumps to the higher half, then calls loader_main.
+/// Sets up 1MB identity paging and calls loader_main.
 export fn _start() void {
-    // _start runs at physical 0x8000 before paging is on; the code is position-independent
-    // (no absolute data references, no long calls) until after the higher-half jump.
-    //
-    // Physical 0–4MB is mapped at both VA 0 and VA 0xC0000000 so that kernel.elf
-    // (linked at 0xC0010000 = physical 0x10000, in conventional memory) is reachable
-    // after paging is enabled.
-    {
-        const max_physical = 0x40_0000; // 4MB; one page table covers exactly this range
-        const page_tables = @as([*]paging.PageTable, @ptrFromInt(page_dir_phys + paging.PAGE));
-        paging.initIdentityPaging(@ptrFromInt(page_dir_phys), page_tables, max_physical);
-        paging.loadPageDir(page_dir_phys);
-        paging.enable();
-        asm volatile (
-            \\ add $0xC0000000, %%esp
-            \\ leal higher_half_jump_target, %%eax
-            \\ jmp *%%eax
-            \\ higher_half_jump_target:
-            ::: .{ .eax = true });
-    }
-
-    ensureStage2BssFitsBootstrapPageTables();
     loader_main();
 }
 
