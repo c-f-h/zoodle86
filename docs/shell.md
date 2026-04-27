@@ -13,6 +13,7 @@ The kernel provides an interactive shell with the following commands:
 | **mv** | `<old> <new>` | Rename a file. |
 | **mkfs** | (none) | Reformat the filesystem. |
 | **dumpmem** | `<hex-address>` | Dump memory at a hex address. |
+| **memmap** | (none) | Interactive full-screen page directory/table viewer. |
 | **memstat** | (none) | Show page allocator memory statistics. |
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
 | **run** | `<executable> [<arg> ...]` | Run an ELF executable with command-line arguments. (argv[0] = executable name, plus optional args.) |

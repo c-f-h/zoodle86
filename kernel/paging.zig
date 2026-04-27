@@ -91,6 +91,12 @@ pub fn getMappedPageDirectory() *PageDirectory {
     return mapped_pd;
 }
 
+/// Return a read-only pointer to the recursively-mapped page table for PDE index `pdi`.
+/// Only valid when `getMappedPageDirectory()[pdi].present` is true.
+pub fn getMappedPageTable(pdi: u10) *const PageTable {
+    return &mapped_pts[pdi];
+}
+
 /// Enable paging and write-protect flags
 pub inline fn enable() void {
     asm volatile (

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const app_keylog = @import("app_keylog.zig");
+const app_memmap = @import("app_memmap.zig");
 const console = @import("console.zig");
 const fs = @import("fs.zig");
 const io = @import("io.zig");
@@ -37,6 +38,7 @@ const commands = [_]Command{
     .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
+    .{ .name = "memmap", .description = "Interactive page directory/table memory map viewer.", .handler = cmdMemmap },
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
@@ -122,6 +124,19 @@ fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {
     defer app.deinit();
 
     while (true) {
+        keyboard.pollingLoop();
+    }
+}
+
+fn cmdMemmap(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    _ = args;
+
+    var app: app_memmap.Memmap = .{};
+    app.init();
+    defer app.deinit();
+
+    while (!app.done) {
         keyboard.pollingLoop();
     }
 }
