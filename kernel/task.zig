@@ -67,7 +67,11 @@ pub const Task = struct {
     page_dir: paging.PageDirectory align(4096) = undefined,
     page_dir_phys_addr: u32 = undefined,
     pid: u32 = undefined,
+
+    /// Should always point to a full UserInterruptFrame on this task's kernel stack. Used to
+    /// resume this task after having been blocked by a syscall or descheduled.
     kernel_esp: usize = 0,
+
     state: TaskState = .free,
     parent_pid: u32 = 0, // PID of spawning task; 0 = created by kernel/shell (auto-reap)
     reap_children: bool = false, // if true, children are auto-reaped instead of becoming zombies
@@ -349,7 +353,7 @@ comptime {
     if (@offsetOf(Task, "kernel_stack") != 0) @compileError("Task.kernel_stack must remain the first field");
 }
 
-/// Saves the kernel stack pointer for the current task so it can be resumed later.
-pub fn saveKernelStackPtr(kernel_esp: usize) void {
-    getCurrentTask().kernel_esp = kernel_esp;
+/// Saves the pointer to the UserInterruptFrame for later resumption of the current task.
+pub fn saveReturnFrame(frame: *interrupt_frame.UserInterruptFrame) void {
+    getCurrentTask().kernel_esp = @intFromPtr(frame);
 }

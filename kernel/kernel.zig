@@ -139,14 +139,16 @@ export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c
     if (frame.vector == VECTOR_KEYBOARD or frame.vector == VECTOR_TIMER) {
         // Acknowledge EOI on LAPIC interrups
         apic.lapic_eoi();
-    } else if (frame.vector == VECTOR_SYSCALL) {
-        // TODO: Should be called on other vectors as well, but is currently only
-        // safe on entry from a user stack - figure out exact semantics
-        task.saveKernelStackPtr(@intFromPtr(frame));
     }
+    if (frame.fromUserMode())
+        task.saveReturnFrame(@ptrCast(frame));
 
     switch (frame.vector) {
-        VECTOR_TIMER => pit.timer_irq_handler(),
+        VECTOR_TIMER => {
+            pit.timer_irq_handler();
+            if (frame.fromUserMode())
+                reschedule();
+        },
         VECTOR_KEYBOARD => keyboard.keyboard_dispatch(frame),
         VECTOR_SYSCALL => syscall.syscall_dispatch(@ptrCast(frame)),
         VECTOR_DOUBLE_FAULT, VECTOR_INVALID_TSS, VECTOR_NOSEGMENT, VECTOR_SS_FAULT, VECTOR_GPF => exception_handler(frame),
@@ -341,7 +343,7 @@ fn kernel_enter() !noreturn {
     acpi.init();
     filedesc.init();
 
-    pit.initRateGenerator(18); // note: lowest frequency is ~18.2Hz
+    pit.initRateGenerator(100);
 
     apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer
     apic.assignInterruptVector(0, 1, VECTOR_KEYBOARD); // IRQ1: keyboard

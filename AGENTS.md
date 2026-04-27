@@ -1,13 +1,13 @@
 # `zoodle86` - Project Overview
 
-A tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in Zig. Builds a bootable disk image with a freestanding kernel and a small command-driven text UI. Supports virtual memory paging, cooperative multitasking, a simple inode-based custom filesystem, and basic ACPI functionality.
+A tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in Zig. Builds a bootable disk image with a freestanding kernel and a small command-driven text UI. Supports virtual memory paging, timer-driven userspace preemption with non-preemptive kernel execution, a simple inode-based custom filesystem, and basic ACPI functionality.
 
 ## Documentation
 
 - [docs/modules.md](docs/modules.md) — Every source file and its role
 - [docs/architecture.md](docs/architecture.md) — Boot, paging, virtual memory layout, memory management
 - [docs/interrupts.md](docs/interrupts.md) — GDT/IDT, ACPI/APIC initialization, exception handling
-- [docs/processes.md](docs/processes.md) — Tasks, cooperative scheduling, context switch flow, process lifecycle
+- [docs/processes.md](docs/processes.md) — Tasks, userspace-preemptive scheduling, context switch flow, process lifecycle
 - [docs/syscalls.md](docs/syscalls.md) — Syscall ABI reference table
 - [docs/storage.md](docs/storage.md) — Disk image layout, ZOD2 filesystem, IDE driver, build artifacts
 - [docs/shell.md](docs/shell.md) — Available kernel shell commands and startup script injection
