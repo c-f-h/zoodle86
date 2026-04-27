@@ -47,7 +47,8 @@ fn scanRange(start: usize, end: usize) ?*const RSDP {
 }
 
 // Cursor for mapping ACPI tables into virtual memory
-var next_table_va: usize = 0xFC00_0000;
+const initial_table_va: usize = 0xFC00_0000;
+var next_table_va: usize = initial_table_va;
 const final_table_va: usize = 0xFE00_0000; // for bounds checking
 
 /// Map the ACPI table at the given physical address into virtual memory and return a pointer to it.
@@ -55,9 +56,20 @@ fn mapTable(phys_addr: u32) *const SDTHeader {
     const phys_page = phys_addr & ~paging.PAGE_MASK;
     const phys_offset = phys_addr & paging.PAGE_MASK;
 
-    paging.mapContiguousRangeAt(next_table_va, phys_page, 1, false, false, false);
-    const header: *const SDTHeader = @ptrFromInt(next_table_va + phys_offset);
-    next_table_va += paging.PAGE;
+    // Check previous table VA for possible reuse
+    const prev_table_va = next_table_va - paging.PAGE;
+    var header: *const SDTHeader = undefined;
+
+    if (next_table_va > initial_table_va and paging.hasPte(prev_table_va) and paging.virtualToPhysical(@ptrFromInt(prev_table_va)) == phys_page) {
+        // The last mapped page already has the physical address we need
+        // (common with several small ACPI tables packed together in the same physical page)
+        header = @ptrFromInt(prev_table_va + phys_offset);
+    } else {
+        // Different physical page (nor none mapped yet), so create a new mapping
+        paging.mapContiguousRangeAt(next_table_va, phys_page, 1, false, false, false);
+        header = @ptrFromInt(next_table_va + phys_offset);
+        next_table_va += paging.PAGE;
+    }
 
     // Is the table longer than 1 page? Then we need to map additional memory
     const total_pages = paging.numPagesBetween(phys_addr, phys_addr + header.length);

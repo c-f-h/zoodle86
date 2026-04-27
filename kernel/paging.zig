@@ -79,6 +79,15 @@ pub fn getPte(va: u32) *PTE {
     return &mapped_pts[pageTableIndex(va)][pageIndex(va)];
 }
 
+pub fn hasPde(va: u32) bool {
+    return mapped_pd[pageTableIndex(va)].present;
+}
+
+pub fn hasPte(va: u32) bool {
+    if (!hasPde(va)) return false;
+    return getPte(va).present;
+}
+
 /// Get the physical address which the given (virtual) pointer points to.
 /// Uses the recursively mapped page directory.
 pub fn virtualToPhysical(ptr: *anyopaque) u32 {
