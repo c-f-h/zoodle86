@@ -324,7 +324,7 @@ fn kernel_enter() !noreturn {
     pageallocator.setPhysicalMemoryRange(mem_base, mem_base + mem_size);
 
     // kernel data
-    const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, true, true);
+    const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, false, true);
     @memset(kernel_data, 0xDD);
     kernel_fba = std.heap.FixedBufferAllocator.init(kernel_data);
     alloc = kernel_fba.allocator();
