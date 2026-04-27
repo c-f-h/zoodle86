@@ -41,8 +41,8 @@ pub const VECTOR_NOSEGMENT = 0x0B; // Segment Not Present
 pub const VECTOR_SS_FAULT = 0x0C; // Stack Segment Fault
 pub const VECTOR_GPF = 0x0D; // General Protection Fault
 pub const VECTOR_PAGEFAULT = 0x0E; // Page Fault
-pub const VECTOR_TIMER = 0x20;
-pub const VECTOR_KEYBOARD = 0x21;
+pub const VECTOR_TIMER = 0xE8;
+pub const VECTOR_KEYBOARD = 0xD8;
 pub const VECTOR_SYSCALL = 0x80;
 pub const VECTOR_SPURIOUS = 0xFF;
 
@@ -343,10 +343,11 @@ fn kernel_enter() !noreturn {
     acpi.init();
     filedesc.init();
 
-    pit.initRateGenerator(100);
-
-    apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer
+    //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer
     apic.assignInterruptVector(0, 1, VECTOR_KEYBOARD); // IRQ1: keyboard
+
+    apic.initTimer(VECTOR_TIMER, apic.Divider.div16);
+    apic.startTimer(0x100);
 
     try mountFs();
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion

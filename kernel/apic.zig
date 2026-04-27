@@ -92,6 +92,12 @@ pub fn parseApicEntries(p_madt: *const acpi.MADT) void {
 
 const LAPIC_ID = 0x20;
 
+// LAPIC Timer Registers
+const LAPIC_LVT_TIMER = 0x320; // Local Vector Table Timer Register
+const LAPIC_TIMER_INITIAL = 0x380; // Timer Initial Count Register
+const LAPIC_TIMER_CURRENT = 0x390; // Timer Current Count Register
+const LAPIC_TIMER_DIVIDE = 0x3E0; // Timer Divide Configuration Register
+
 const IOAPIC_REGSEL = 0x00;
 const IOAPIC_WINDOW = 0x10;
 
@@ -142,8 +148,30 @@ fn testIoApic(ioapic_base: usize, min_num_entries: u32) void {
     }
 }
 
+/// Remap the legacy PIC to the vectors 0x20-0x2F and mask all IRQs.
+/// It may still generate spurious IRQs in this range on some hardware.
 fn disablePic() void {
-    // mask all IRQs on legacy PIC
+    // Remap PICs to vectors 0x20-0x2F and mask all IRQs
+    // PIC1 handles IRQs 0-7 -> vectors 0x20-0x27
+    // PIC2 handles IRQs 8-15 -> vectors 0x28-0x2F
+
+    // ICW1: Initialize both PICs
+    io.outb(0x20, 0x11); // PIC1 command port
+    io.outb(0xA0, 0x11); // PIC2 command port
+
+    // ICW2: Set interrupt vector offsets
+    io.outb(0x21, 0x20); // PIC1: base vector = 0x20
+    io.outb(0xA1, 0x28); // PIC2: base vector = 0x28
+
+    // ICW3: Configure cascade mode
+    io.outb(0x21, 0x04); // PIC1: slave on IR2
+    io.outb(0xA1, 0x02); // PIC2: slave ID = 2
+
+    // ICW4: Set 8086 mode
+    io.outb(0x21, 0x01); // PIC1: 8086 mode
+    io.outb(0xA1, 0x01); // PIC2: 8086 mode
+
+    // Mask all IRQs on both PICs
     io.outb(0x21, 0xFF); // PIC1 data port
     io.outb(0xA1, 0xFF); // PIC2 data port
 }
@@ -194,6 +222,60 @@ pub fn assignInterruptVector(bus: u8, irq: u8, vector: u8) void {
 pub export fn lapic_eoi() callconv(.c) void {
     const EOI = 0xB0;
     lapicWrite(lapic_va, EOI, 0);
+}
+
+const TIMER_MODE_PERIODIC: u32 = 1 << 17;
+const TIMER_MASKED: u32 = 1 << 16;
+
+pub const Divider = enum(u8) {
+    div1 = 0x00,
+    div2 = 0x01,
+    div4 = 0x02,
+    div16 = 0x03,
+    div32 = 0x08,
+    div64 = 0x09,
+    div128 = 0x0A,
+    div256 = 0x0B,
+};
+
+/// Initialize the APIC timer with the specified interrupt vector.
+/// This configures the timer to use periodic mode (not one-shot).
+pub fn initTimer(vector: u8, divider: Divider) void {
+    // Set divide configuration: divide by 16
+    setTimerDivider(divider);
+
+    // Set up LVT Timer register: periodic mode, masked, vector
+    lapicWrite(lapic_va, LAPIC_LVT_TIMER, TIMER_MASKED | TIMER_MODE_PERIODIC | vector);
+
+    // Clear the counter
+    lapicWrite(lapic_va, LAPIC_TIMER_INITIAL, 0);
+}
+
+/// Start the APIC timer with the given initial count.
+/// The timer will decrement and fire interrupts at the configured vector.
+pub fn startTimer(initial_count: u32) void {
+    // Unmask the timer interrupt by clearing bit 16 of the LVT Timer register
+    const lvt_current = lapicRead(lapic_va, LAPIC_LVT_TIMER);
+    lapicWrite(lapic_va, LAPIC_LVT_TIMER, lvt_current & ~TIMER_MASKED);
+
+    // Set the initial count to start the timer
+    lapicWrite(lapic_va, LAPIC_TIMER_INITIAL, initial_count);
+}
+
+/// Stop the APIC timer by masking its interrupt.
+pub fn stopTimer() void {
+    const lvt_current = lapicRead(lapic_va, LAPIC_LVT_TIMER);
+    lapicWrite(lapic_va, LAPIC_LVT_TIMER, lvt_current | TIMER_MASKED);
+}
+
+/// Get the current count of the APIC timer.
+pub fn getTimerCurrentCount() u32 {
+    return lapicRead(lapic_va, LAPIC_TIMER_CURRENT);
+}
+
+/// Set the APIC timer divide configuration.
+pub inline fn setTimerDivider(divider: Divider) void {
+    lapicWrite(lapic_va, LAPIC_TIMER_DIVIDE, @intFromEnum(divider) & 0x0F);
 }
 
 pub fn initApic() void {

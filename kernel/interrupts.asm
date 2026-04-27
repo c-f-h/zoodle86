@@ -10,12 +10,16 @@ extern interrupt_dispatch
 
 global return_to_userspace
 
+VECTOR_TIMER      equ 0xE8
+VECTOR_KEYBOARD   equ 0xD8
+VECTOR_SYSCALL    equ 0x80
+
 KERNEL_DATA_SELECTOR equ (2 << 3)
 
 global keyboard_isr
 keyboard_isr:
-    push dword 0      ; error_code
-    push dword 0x21   ; vector 0x21
+    push dword 0                 ; error_code
+    push dword VECTOR_KEYBOARD   ; vector
 generic_handler:
     push ds
     push es
@@ -37,14 +41,14 @@ return_to_userspace:        ; esp -> InterruptFrame
 
 global timer_isr
 timer_isr:
-    push dword 0      ; error_code
-    push dword 0x20   ; vector
+    push dword 0                ; error_code
+    push dword VECTOR_TIMER     ; vector
     jmp generic_handler
 
 global syscall_isr
 syscall_isr:
-    push dword 0      ; error_code
-    push dword 0x80   ; vector
+    push dword 0                ; error_code
+    push dword VECTOR_SYSCALL   ; vector
     jmp generic_handler
 
 ; macro for exception IRQs which already push an error code onto the stack
