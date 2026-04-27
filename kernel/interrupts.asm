@@ -82,6 +82,25 @@ spurious_isr:
     ; LAPIC spurious interrupts do not require EOI.
     iretd
 
+global cpuid_query
+cpuid_query:
+    push ebx
+    push edi
+
+    mov eax, [esp + 12]
+    mov ecx, [esp + 16]
+    cpuid
+
+    mov edi, [esp + 20]
+    mov [edi + 0], eax
+    mov [edi + 4], ebx
+    mov [edi + 8], ecx
+    mov [edi + 12], edx
+
+    pop edi
+    pop ebx
+    ret
+
 
 section .bss
 

@@ -11,10 +11,12 @@ The kernel provides an interactive shell with the following commands:
 | **write** | `<name>` | Write a file from console input. (Single `.` line saves.) |
 | **rm** | `<name>` | Delete a file. |
 | **mv** | `<old> <new>` | Rename a file. |
+| **cpuid** | `[<leaf> [<subleaf>]]` | Show vendor/clock-related CPUID leaves, or dump a specific raw leaf/subleaf. |
 | **mkfs** | (none) | Reformat the filesystem. |
 | **dumpmem** | `<hex-address>` | Dump memory at a hex address. |
 | **memmap** | (none) | Interactive full-screen page directory/table viewer. |
 | **memstat** | (none) | Show page allocator memory statistics. |
+| **taskswitch** | (none) | Show the number of scheduler task-to-task switches since boot. |
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
 | **run** | `<executable> [<arg> ...]` | Run an ELF executable with command-line arguments. (argv[0] = executable name, plus optional args.) |
 | **multirun** | `<executable> [<executable> ...]` | Load and execute several ELF executables concurrently. |

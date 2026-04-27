@@ -65,6 +65,7 @@ pub const KeyboardHandler = struct {
 };
 
 var cur_kb_handler: ?KeyboardHandler = null;
+var task_switch_count: u32 = 0;
 
 /// Install the global keyboard event handler.  Only one handler may be active at a time.
 pub fn setKeyboardHandler(handler: *const fn (?*anyopaque, *const keyboard.KeyEvent) u32, ctx: ?*anyopaque) void {
@@ -346,8 +347,11 @@ fn kernel_enter() !noreturn {
     //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer
     apic.assignInterruptVector(0, 1, VECTOR_KEYBOARD); // IRQ1: keyboard
 
+    // The APIC timer frequency should be calibrated, e.g., from PIT.
+    // This appears to be inconsistent on emulators. For now I'm using a hardcoded value
+    // that seems to produce a timer frequency in the ballpark of 100 Hz on Bochs and QEMU.
     apic.initTimer(VECTOR_TIMER, apic.Divider.div16);
-    apic.startTimer(0x100);
+    apic.startTimer(100000);
 
     try mountFs();
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
@@ -396,10 +400,18 @@ fn kernel_reenter() noreturn {
     enterKernelShell();
 }
 
+/// Return the number of scheduler-driven task-to-task switches since boot.
+pub fn getTaskSwitchCount() u32 {
+    return task_switch_count;
+}
+
 /// Switch to the next active task, if any, or re-enter the kernel if no other task is runnable.
 pub fn reschedule() noreturn {
     const current_task = task.getCurrentTask();
     if (taskman.getNextActiveTask(current_task)) |next_task| {
+        if (next_task != current_task) {
+            task_switch_count += 1;
+        }
         next_task.switchTo(&tss_cpu0);
     } else if (current_task.state == .active) {
         // No other task is runnable; switch back to the current one if it is still active

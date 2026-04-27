@@ -13,6 +13,7 @@ Complete listing of every source file and its role.
 - `kernel/pit.zig`: Simple Programmable Interval Timer (PIT) driver.
 - `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
+- `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, and file descriptor mappings.
 - `kernel/interrupt_frame.zig`: standard stack frame layout used when entering the kernel.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
@@ -44,7 +45,7 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `cat`, `write`, `rm`, `mv`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `keylog`, `shutdown`, `break`). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `cat`, `write`, `rm`, `mv`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `keylog`, `shutdown`, `break`). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 
@@ -56,6 +57,7 @@ Complete listing of every source file and its role.
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
+- `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results and can spawn a child instance.
 - `userspace/fs_stress.zig`: filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/alloc_stress.zig`: heap allocator stress test covering allocate/free/realloc behavior.
@@ -74,6 +76,7 @@ Complete listing of every source file and its role.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.
+- `build/fib.elf`: linked from `userspace/fib.zig` and copied into the filesystem image as `fib`.
 - `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
 - `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`.

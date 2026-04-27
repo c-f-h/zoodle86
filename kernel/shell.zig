@@ -3,6 +3,7 @@ const std = @import("std");
 const app_keylog = @import("app_keylog.zig");
 const app_memmap = @import("app_memmap.zig");
 const console = @import("console.zig");
+const cpuid = @import("cpuid.zig");
 const fs = @import("fs.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
@@ -36,10 +37,12 @@ const commands = [_]Command{
     .{ .name = "write", .description = "Write a file from console input.", .handler = cmdWrite },
     .{ .name = "rm", .description = "Delete a file.", .handler = cmdRm },
     .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
+    .{ .name = "cpuid", .description = "Show CPUID clock leaves or query a raw leaf/subleaf.", .handler = cmdCpuid },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
     .{ .name = "memmap", .description = "Interactive page directory/table memory map viewer.", .handler = cmdMemmap },
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
+    .{ .name = "taskswitch", .description = "Show the scheduler task-to-task switch count.", .handler = cmdTaskSwitch },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
     .{ .name = "multirun", .description = "Load several ELF binary executables and launch the first one.", .handler = cmdMultiRun },
@@ -194,6 +197,95 @@ fn cmdMv(shell: *Shell, args: *ArgsIterator) !void {
     renameFile(shell.disk_fs, old_name, new_name);
 }
 
+fn cmdCpuid(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+
+    const leaf_arg = args.next();
+    if (leaf_arg) |raw_leaf| {
+        const leaf = parseNumericArg(raw_leaf) catch {
+            printUsage("cpuid");
+            return;
+        };
+        const subleaf = if (args.next()) |raw_subleaf|
+            parseNumericArg(raw_subleaf) catch {
+                printUsage("cpuid");
+                return;
+            }
+        else
+            0;
+        if (args.next() != null) {
+            printUsage("cpuid");
+            return;
+        }
+        printCpuidLeaf(leaf, subleaf);
+        return;
+    }
+
+    const vendor = cpuid.vendorInfo();
+    console.puts("CPUID vendor: ");
+    console.puts(vendor.vendor[0..]);
+    console.newline();
+
+    console.puts("Max basic leaf: ");
+    console.putHexU32(vendor.max_basic_leaf);
+    console.newline();
+
+    const max_extended = cpuid.maxExtendedLeaf();
+    console.puts("Max extended leaf: ");
+    console.putHexU32(max_extended);
+    console.newline();
+
+    if (vendor.max_basic_leaf >= 0x01) {
+        const leaf1 = cpuid.query(0x01, 0);
+        console.puts("Local APIC present: ");
+        console.puts(if ((leaf1.edx & (1 << 9)) != 0) "yes" else "no");
+        console.newline();
+    }
+
+    if (vendor.max_basic_leaf >= 0x15) {
+        const leaf15 = cpuid.query(0x15, 0);
+        console.put(.{ "Leaf 00000015: eax=", leaf15.eax, " ebx=", leaf15.ebx, " ecx=", leaf15.ecx, " edx=", leaf15.edx, "\n" });
+
+        if (leaf15.eax != 0 and leaf15.ebx != 0) {
+            console.puts("  TSC/crystal ratio: ");
+            console.putDecU32(leaf15.ebx);
+            console.puts("/");
+            console.putDecU32(leaf15.eax);
+            console.newline();
+        }
+        if (leaf15.ecx != 0) {
+            console.puts("  Crystal clock (Hz): ");
+            console.putDecU32(leaf15.ecx);
+            console.newline();
+        }
+    } else {
+        console.puts("Leaf 00000015 not supported.\n");
+    }
+
+    if (vendor.max_basic_leaf >= 0x16) {
+        const leaf16 = cpuid.query(0x16, 0);
+        console.put(.{ "Leaf 00000016: eax=", leaf16.eax, " ebx=", leaf16.ebx, " ecx=", leaf16.ecx, " edx=", leaf16.edx, "\n" });
+
+        if (leaf16.eax != 0) {
+            console.puts("  Base frequency (MHz): ");
+            console.putDecU32(leaf16.eax);
+            console.newline();
+        }
+        if (leaf16.ebx != 0) {
+            console.puts("  Max frequency (MHz): ");
+            console.putDecU32(leaf16.ebx);
+            console.newline();
+        }
+        if (leaf16.ecx != 0) {
+            console.puts("  Bus/reference frequency (MHz): ");
+            console.putDecU32(leaf16.ecx);
+            console.newline();
+        }
+    } else {
+        console.puts("Leaf 00000016 not supported.\n");
+    }
+}
+
 fn cmdMkfs(shell: *Shell, args: *ArgsIterator) !void {
     _ = args;
     try shell.disk_fs.format();
@@ -253,6 +345,18 @@ fn cmdMemstat(shell: *Shell, args: *ArgsIterator) !void {
     console.putDecU32(@intCast(stats.current_word_index));
     console.puts("]: ");
     console.putBinaryU32(stats.current_word_bits);
+    console.newline();
+}
+
+fn cmdTaskSwitch(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+    if (args.next() != null) {
+        printUsage("taskswitch");
+        return;
+    }
+
+    console.puts("Task switches: ");
+    console.putDecU32(kernel.getTaskSwitchCount());
     console.newline();
 }
 
@@ -333,6 +437,18 @@ fn cmdDebugBreak(shell: *Shell, args: *ArgsIterator) !void {
     kernel.bochsDebugBreak();
 }
 
+fn parseNumericArg(raw: []const u8) !u32 {
+    if (std.mem.startsWith(u8, raw, "0x") or std.mem.startsWith(u8, raw, "0X")) {
+        return try std.fmt.parseInt(u32, raw[2..], 16);
+    }
+    return try std.fmt.parseInt(u32, raw, 10);
+}
+
+fn printCpuidLeaf(leaf: u32, subleaf: u32) void {
+    const regs = cpuid.query(leaf, subleaf);
+    console.put(.{ "CPUID ", leaf, ":", subleaf, " -> eax=", regs.eax, " ebx=", regs.ebx, " ecx=", regs.ecx, " edx=", regs.edx, "\n" });
+}
+
 fn printUsage(name: []const u8) void {
     if (findCommand(name)) |command| {
         console.puts("Usage: ");
@@ -345,9 +461,13 @@ fn printUsage(name: []const u8) void {
             console.puts(" <name>");
         } else if (std.mem.eql(u8, command.name, "mv")) {
             console.puts(" <old> <new>");
+        } else if (std.mem.eql(u8, command.name, "cpuid")) {
+            console.puts(" [<leaf> [<subleaf>]]");
         } else if (std.mem.eql(u8, command.name, "dumpmem")) {
             console.puts(" <hex-address>");
         } else if (std.mem.eql(u8, command.name, "memstat")) {
+            console.puts(" (no arguments)");
+        } else if (std.mem.eql(u8, command.name, "taskswitch")) {
             console.puts(" (no arguments)");
         } else if (std.mem.eql(u8, command.name, "serial")) {
             console.puts(" <on|off>");

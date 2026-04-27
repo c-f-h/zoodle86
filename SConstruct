@@ -28,6 +28,7 @@ ZIG_STAGE2_SRC = ROOT / "kernel" / "stage2.zig"
 KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 USERSPACE_SOURCES = [
     ROOT / "userspace" / "hello.zig",
+    ROOT / "userspace" / "fib.zig",
     ROOT / "userspace" / "fs_stress.zig",
     ROOT / "userspace" / "alloc_stress.zig",
 ]
