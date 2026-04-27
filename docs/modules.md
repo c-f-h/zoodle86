@@ -57,7 +57,7 @@ Complete listing of every source file and its role.
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
-- `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results and can spawn a child instance.
+- `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
 - `userspace/fs_stress.zig`: filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek` semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/alloc_stress.zig`: heap allocator stress test covering allocate/free/realloc behavior.

@@ -8,7 +8,7 @@ User-mode execution uses flat-addressed segments backed by the user memory regio
 
 ## Argv ABI
 
-Command-line arguments are passed to a new process via `Task.setArgs(args)` and written into the userspace stack. `_start` (naked) pushes ESP and calls `argvStartup`, which reconstructs `[]const []const u8` from the ABI layout and passes it to `main(argv)`. The `run <executable> [<arg>...]` shell command launches a program with arguments (argv[0] = executable name); `multirun` launches several executables with no arguments.
+Command-line arguments are passed to a new process via `Task.setArgs(args)` and written into the userspace stack. `_start` (naked) pushes ESP and calls `argvStartup`, which reconstructs `[]const []const u8` from the ABI layout and passes it to `main(argv)`. The `run <executable> [<arg>...]` shell command launches one program with arguments (argv[0] = executable name); `multirun <count> <executable> [<arg>...]` launches `count` copies of the same program with the same argv.
 
 ## Scheduling & Preemption
 

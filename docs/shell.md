@@ -19,7 +19,7 @@ The kernel provides an interactive shell with the following commands:
 | **taskswitch** | (none) | Show the number of scheduler task-to-task switches since boot. |
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
 | **run** | `<executable> [<arg> ...]` | Run an ELF executable with command-line arguments. (argv[0] = executable name, plus optional args.) |
-| **multirun** | `<executable> [<executable> ...]` | Load and execute several ELF executables concurrently. |
+| **multirun** | `<count> <executable> [<arg> ...]` | Run `count` concurrent copies of one ELF executable, forwarding the same argv to each copy. |
 | **shutdown** | (none) | Power off Bochs/QEMU. |
 | **break** | (none) | Invoke a Bochs magic breakpoint. |
 

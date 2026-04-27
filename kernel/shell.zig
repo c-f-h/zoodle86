@@ -45,7 +45,7 @@ const commands = [_]Command{
     .{ .name = "taskswitch", .description = "Show the scheduler task-to-task switch count.", .handler = cmdTaskSwitch },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
-    .{ .name = "multirun", .description = "Load several ELF binary executables and launch the first one.", .handler = cmdMultiRun },
+    .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
@@ -383,18 +383,47 @@ fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
 
 fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
-    var first_task: ?*task.Task = null;
-    if (args.peek() == null) {
-        console.puts("Usage: multirun <executable> [<executable> ...]\n");
+    const raw_count = args.next() orelse {
+        console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
+        return;
+    };
+    const copy_count = parseNumericArg(raw_count) catch {
+        console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
+        return;
+    };
+    const fname = args.next() orelse {
+        console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
+        return;
+    };
+
+    if (copy_count == 0) {
+        console.puts("multirun count must be at least 1.\n");
         return;
     }
 
-    while (args.next()) |fname| {
-        const ptask = try kernel.loadUserspaceElf(fname, &.{});
+    // argv[0] is the executable name; remaining tokens follow.
+    var argv_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
+    var argc: usize = 0;
+    argv_buf[argc] = fname;
+    argc += 1;
+    while (args.next()) |arg| {
+        if (argc >= argv_buf.len) {
+            console.puts("Too many arguments.\n");
+            return;
+        }
+        argv_buf[argc] = arg;
+        argc += 1;
+    }
+
+    var first_task: ?*task.Task = null;
+    var remaining = copy_count;
+    while (remaining != 0) : (remaining -= 1) {
+        const ptask = try kernel.loadUserspaceElf(fname, argv_buf[0..argc]);
         if (first_task == null) {
             first_task = ptask;
         }
     }
+
     kernel.run(first_task.?);
 }
 
