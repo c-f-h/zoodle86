@@ -61,13 +61,3 @@ pub fn busySleep(duration_ms: u32) void {
         remaining_ticks -= chunk;
     }
 }
-
-var ticks: u32 = 0;
-
-const vga = @import("vgatext.zig");
-
-pub fn timer_irq_handler() void {
-    ticks += 1;
-    const attr: u8 = if ((ticks & 0x100) != 0) 0x70 else 0x07;
-    vga.putCharAt(0, 79, @truncate(ticks & 0xFF), attr);
-}

@@ -69,6 +69,14 @@ pub const KeyboardHandler = struct {
 var cur_kb_handler: ?KeyboardHandler = null;
 var task_switch_count: u32 = 0;
 
+var timer_ticks: u32 = 0;
+
+fn timerIrqHandler() void {
+    timer_ticks += 1;
+    //const attr: u8 = if ((timer_ticks & 0x100) != 0) 0x70 else 0x07;
+    //console.putCharAt(0, 79, @truncate(timer_ticks & 0xFF), attr);
+}
+
 /// Install the global keyboard event handler.  Only one handler may be active at a time.
 pub fn setKeyboardHandler(handler: *const fn (?*anyopaque, *const keyboard.KeyEvent) u32, ctx: ?*anyopaque) void {
     if (cur_kb_handler != null) {
@@ -148,7 +156,7 @@ export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c
 
     switch (frame.vector) {
         VECTOR_TIMER => {
-            pit.timer_irq_handler();
+            timerIrqHandler();
             if (frame.fromUserMode())
                 reschedule();
         },
@@ -360,15 +368,21 @@ fn kernel_enter() !noreturn {
     // that seems to produce a timer frequency in the ballpark of 100 Hz on Bochs and QEMU.
     apic.initTimer(VECTOR_TIMER, apic.Divider.div16);
     apic.startTimer(100000);
+    asm volatile ("sti");
 
     try mountFs();
 
     if (graphical) {
+        const ticks_before = timer_ticks;
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions
         try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
         try framebuf.initConsolePanel();
         console.refresh();
+
+        serial.puts("Ticks for framebuf init: ");
+        serial.putHexU32(timer_ticks - ticks_before);
+        serial.puts("\n");
     }
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
