@@ -156,8 +156,6 @@ pub fn enableFramebufBackend() void {
     backend = .framebuf;
     vga.disableCursor();
 
-    // Copy existing VGA console contents into the new framebuffer-backed console buffer.
-    @memcpy(&console_buffer, console_cells[0..SCREEN_CELLS]);
     console_cells = &console_buffer;
 }
 
