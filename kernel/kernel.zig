@@ -25,6 +25,8 @@ const apic = @import("apic.zig");
 
 const std = @import("std");
 
+var graphical = false;
+
 const VGA_ATTR: u8 = 0x07;
 
 // GDT selectors
@@ -317,7 +319,12 @@ fn kernel_enter() !noreturn {
         idt.load();
     }
 
-    console.console_init(VGA_ATTR);
+    console.init(VGA_ATTR);
+    if (video_info_phys_addr != 0) {
+        graphical = true;
+        console.enableFramebufBackend();
+    }
+
     console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow(false);
@@ -355,8 +362,14 @@ fn kernel_enter() !noreturn {
     apic.startTimer(100000);
 
     try mountFs();
-    try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
-    _ = console.tryEnableFramebufBackend();
+
+    if (graphical) {
+        try framebuf.init(video_info_phys_addr);
+        // Font size must be known before determining console panel dimensions
+        try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
+        try framebuf.initConsolePanel();
+        console.refresh();
+    }
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
 }
@@ -636,12 +649,15 @@ fn kernel_enter_trampoline() noreturn {
     kernel_enter() catch |err| panicOnError(err);
 }
 
+var video_info_phys_addr: u32 = 0;
+
 /// Kernel entry point called by the stage2 boot loader after loading this ELF.
 /// `pd_phys` is the physical address of the bootstrap page directory set up by stage2.
 /// `video_info_phys` points to boot video metadata prepared by the bootloader.
 pub export fn kernel_init(pd_phys: u32, video_info_phys: u32) callconv(.c) noreturn {
     page_dir_phys = pd_phys;
-    framebuf.init(video_info_phys);
+    video_info_phys_addr = video_info_phys;
+
     // Switch to the kernel's own initial stack before touching any globals.
     const stack_top = @intFromPtr(&kernel_shell_stack) + kernel_shell_stack.len;
     asm volatile (

@@ -6,6 +6,9 @@ pub const TEXT_WIDTH: u32 = vga.TEXT_WIDTH;
 pub const TEXT_HEIGHT: u32 = vga.TEXT_HEIGHT;
 
 const SCREEN_CELLS = TEXT_WIDTH * TEXT_HEIGHT;
+
+pub const Cell = u16;
+
 const Backend = enum {
     vga,
     framebuf,
@@ -17,7 +20,11 @@ var console_attr: u8 = 0x07;
 var serial_mirror_enabled: bool = false;
 var cursor_visible: bool = true;
 var backend: Backend = .vga;
-var console_cells: [SCREEN_CELLS]u16 = [_]u16{0} ** SCREEN_CELLS;
+var console_cells: [*]u16 = undefined; // Points to either VGA memory or a console buffer, depending on backend.
+
+// Only used for framebuffer backend.
+// TODO: allocate on demand and make larger for efficient append/rollback
+var console_buffer: [SCREEN_CELLS]u16 = undefined;
 
 inline fn cellIndex(row: u32, col: u32) u32 {
     return row * TEXT_WIDTH + col;
@@ -27,36 +34,11 @@ inline fn makeCell(ch: u8, attr: u8) u16 {
     return (@as(u16, attr) << 8) | ch;
 }
 
-fn clearCells(attr: u8) void {
-    @memset(&console_cells, makeCell(' ', attr));
-}
-
-fn renderCell(row: u32, col: u32) void {
-    const cell = console_cells[cellIndex(row, col)];
-    const ch: u8 = @truncate(cell & 0x00FF);
-    const attr: u8 = @truncate(cell >> 8);
-
-    switch (backend) {
-        .vga => vga.putCharAt(row, col, ch, attr),
-        .framebuf => framebuf.renderConsoleCell(&console_cells, row, col),
-    }
-}
-
-fn renderAll() void {
-    switch (backend) {
-        .vga => {
-            var row: u32 = 0;
-            while (row < TEXT_HEIGHT) : (row += 1) {
-                var col: u32 = 0;
-                while (col < TEXT_WIDTH) : (col += 1) {
-                    const cell = console_cells[cellIndex(row, col)];
-                    vga.putCharAt(row, col, @truncate(cell & 0x00FF), @truncate(cell >> 8));
-                }
-            }
-            syncCursor();
-        },
-        .framebuf => framebuf.renderConsole(&console_cells, console_row, console_col, cursor_visible),
-    }
+/// If required by the backend, update the screen.
+pub fn refresh() void {
+    if (backend == .framebuf)
+        framebuf.renderConsole(console_cells, console_row, console_col, cursor_visible);
+    // VGA backend is updated automatically by hardware when we write to video memory.
 }
 
 fn syncCursor() void {
@@ -69,7 +51,7 @@ fn syncCursor() void {
                 vga.disableCursor();
             }
         },
-        .framebuf => framebuf.setConsoleCursor(&console_cells, console_row, console_col, cursor_visible),
+        .framebuf => framebuf.setConsoleCursor(console_cells, console_row, console_col, cursor_visible),
     }
 }
 
@@ -90,7 +72,7 @@ fn scrollIfNeeded() void {
     }
 
     console_row = TEXT_HEIGHT - 1;
-    renderAll();
+    refresh();
 }
 
 fn advanceLine() void {
@@ -99,21 +81,25 @@ fn advanceLine() void {
     scrollIfNeeded();
 }
 
-pub export fn console_init(attr: u8) void {
+pub export fn init(attr: u8) void {
     backend = .vga;
+    console_cells = @ptrCast(@volatileCast(vga.memory));
     console_attr = attr;
     console_row = 0;
     console_col = 0;
     cursor_visible = true;
     clearCells(console_attr);
-    renderAll();
+}
+
+pub fn clearCells(attr: u8) void {
+    @memset(console_cells[0..SCREEN_CELLS], makeCell(' ', attr));
+    refresh();
 }
 
 pub fn clear() void {
     console_row = 0;
     console_col = 0;
     clearCells(console_attr);
-    renderAll();
 }
 
 pub fn setCursor(row: u32, col: u32) void {
@@ -130,7 +116,7 @@ pub fn setAttr(attr: u8) void {
     console_attr = attr;
 }
 
-/// Show or hide the active console cursor for the current backend.
+/// Show or hide the active console cursor.
 pub fn setCursorVisible(visible: bool) void {
     cursor_visible = visible;
     syncCursor();
@@ -152,29 +138,27 @@ pub fn readCell(row: u32, col: u32) u16 {
     return console_cells[cellIndex(row, col)];
 }
 
-/// Fill every cell with a space using the given attribute.
-pub fn clearAll(attr: u8) void {
-    @memset(&console_cells, makeCell(' ', attr));
-    renderAll();
-}
-
 /// Write a single character cell directly into the console grid.
 pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
     if (row >= TEXT_HEIGHT or col >= TEXT_WIDTH) return;
 
     console_cells[cellIndex(row, col)] = makeCell(ch, attr);
-    renderCell(row, col);
+
+    if (backend == .framebuf) {
+        framebuf.renderConsoleCell(console_cells, row, col);
+    }
 }
 
 /// Switch console rendering to the framebuffer text backend when graphics mode is available.
-pub fn tryEnableFramebufBackend() bool {
-    if (backend == .framebuf) return true;
-    if (!framebuf.tryInitConsoleBackend()) return false;
+pub fn enableFramebufBackend() void {
+    if (backend == .framebuf) return;
 
     backend = .framebuf;
     vga.disableCursor();
-    framebuf.renderConsole(&console_cells, console_row, console_col, cursor_visible);
-    return true;
+
+    // Copy existing VGA console contents into the new framebuffer-backed console buffer.
+    @memcpy(&console_buffer, console_cells[0..SCREEN_CELLS]);
+    console_cells = &console_buffer;
 }
 
 pub fn newline() void {

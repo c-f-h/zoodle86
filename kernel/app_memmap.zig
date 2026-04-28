@@ -65,7 +65,7 @@ pub const Memmap = struct {
 // ---------------------------------------------------------------------------
 
 fn drawAll(self: *Memmap) void {
-    console.clearAll(ATTR_STATUS);
+    console.clearCells(ATTR_STATUS);
     drawHeader(self);
     drawRuler();
     drawGrid(self);

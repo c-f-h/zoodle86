@@ -7,20 +7,19 @@ const VGA_BASE: usize = 0xB8000;
 const VGA_CRTC_INDEX: u16 = 0x3D4;
 const VGA_CRTC_DATA: u16 = 0x3D5;
 
-const vga: *volatile [TEXT_HEIGHT * TEXT_WIDTH]u16 =
-    @ptrFromInt(VGA_BASE);
+pub const memory: *volatile [TEXT_HEIGHT * TEXT_WIDTH]u16 = @ptrFromInt(VGA_BASE);
 
 pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
-    vga[row * TEXT_WIDTH + col] = (@as(u16, attr) << 8) | ch;
+    memory[row * TEXT_WIDTH + col] = (@as(u16, attr) << 8) | ch;
 }
 
 pub fn readCell(row: u32, col: u32) u16 {
-    return vga[row * TEXT_WIDTH + col];
+    return memory[row * TEXT_WIDTH + col];
 }
 
 pub fn clear(attr: u8) void {
     const blank: u16 = (@as(u16, attr) << 8) | ' ';
-    @memset(vga, blank);
+    @memset(memory, blank);
 }
 
 pub fn enableCursor() void {

@@ -7,9 +7,7 @@ const console = @import("../console.zig");
 
 const fb_demo_va: u32 = 0xD000_0000;
 const boot_video_info_magic: u32 = 0x3044_4956; // "VID0"
-const ConsoleCells = [console.TEXT_WIDTH * console.TEXT_HEIGHT]u16;
 
-var boot_video_info_phys: u32 = 0;
 var active_font: psf.PSFFont = font8x8.font;
 var active_font_label: []const u8 = "embedded psf1 8x8 bitmap";
 
@@ -34,8 +32,9 @@ const BootVideoInfo = packed struct {
     phys_base_ptr: u32,
 };
 
-var console_info: BootVideoInfo = undefined;
-var console_fb_base: [*]volatile u8 = undefined;
+var info: *align(1) const BootVideoInfo = undefined;
+var fb_base: [*]volatile u8 = undefined;
+
 var console_origin_x: u32 = 0;
 var console_origin_y: u32 = 0;
 var console_panel_x: u32 = 0;
@@ -96,19 +95,17 @@ const vga_palette = [16][3]u8{
     .{ 245, 248, 252 },
 };
 
-fn getBootVideoInfo() ?*align(1) const BootVideoInfo {
-    if (boot_video_info_phys == 0) return null;
-
-    const info: *align(1) const BootVideoInfo = @ptrFromInt(boot_video_info_phys);
-    if (info.magic != boot_video_info_magic) return null;
-    if (info.display_kind != 1) return null;
-    if (info.width == 0 or info.height == 0 or info.pitch_bytes == 0) return null;
-    if (info.bpp < 15) return null;
-    if (info.phys_base_ptr == 0) return null;
-    return info;
+fn getBootVideoInfo(boot_video_info_phys: usize) !void {
+    // NB: assumes identity mapping!
+    info = @ptrFromInt(boot_video_info_phys);
+    if (info.magic != boot_video_info_magic) return error.InvalidVideoInfo;
+    if (info.display_kind != 1) return error.InvalidVideoInfo;
+    if (info.width == 0 or info.height == 0 or info.pitch_bytes == 0) return error.InvalidVideoInfo;
+    if (info.bpp < 15) return error.InvalidVideoInfo;
+    if (info.phys_base_ptr == 0) return error.InvalidVideoInfo;
 }
 
-fn packRgb(info: *align(1) const BootVideoInfo, r: u8, g: u8, b: u8) u32 {
+fn packRgb(r: u8, g: u8, b: u8) u32 {
     var value: u32 = 0;
 
     if (info.red_mask_size != 0) {
@@ -130,16 +127,16 @@ fn packRgb(info: *align(1) const BootVideoInfo, r: u8, g: u8, b: u8) u32 {
     return value;
 }
 
-fn packPaletteColor(info: *align(1) const BootVideoInfo, idx: u8) u32 {
+fn packPaletteColor(idx: u8) u32 {
     const rgb = vga_palette[idx & 0x0F];
-    return packRgb(info, rgb[0], rgb[1], rgb[2]);
+    return packRgb(rgb[0], rgb[1], rgb[2]);
 }
 
 fn swapAttr(attr: u8) u8 {
     return (attr << 4) | (attr >> 4);
 }
 
-fn putPixel(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32, y: u32, color: u32) void {
+fn putPixel(x: u32, y: u32, color: u32) void {
     if (x >= info.width or y >= info.height) return;
 
     const bytes_per_pixel: u32 = @divTrunc(@as(u32, info.bpp) + 7, 8);
@@ -152,7 +149,7 @@ fn putPixel(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32
     }
 }
 
-fn fillRect(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32, y: u32, w: u32, h: u32, color: u32) void {
+fn fillRect(x: u32, y: u32, w: u32, h: u32, color: u32) void {
     const x_end = @min(@as(u32, info.width), x + w);
     const y_end = @min(@as(u32, info.height), y + h);
 
@@ -160,7 +157,7 @@ fn fillRect(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32
     while (py < y_end) : (py += 1) {
         var px = x;
         while (px < x_end) : (px += 1) {
-            putPixel(fb_base, info, px, py, color);
+            putPixel(px, py, color);
         }
     }
 }
@@ -172,7 +169,7 @@ fn glyphPixelIsSet(font: *const psf.PSFFont, glyph: []const u8, row: u32, col: u
     return (glyph[byte_index] & mask) != 0;
 }
 
-fn drawGlyph(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32, y: u32, font: *const psf.PSFFont, ch: u8, color: u32) void {
+fn drawGlyph(x: u32, y: u32, font: *const psf.PSFFont, ch: u8, color: u32) void {
     const glyph = font.getGlyph(ch);
 
     var row: u32 = 0;
@@ -180,14 +177,12 @@ fn drawGlyph(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u3
         var col: u32 = 0;
         while (col < font.glyph_width) : (col += 1) {
             if (!glyphPixelIsSet(font, glyph, row, col)) continue;
-            putPixel(fb_base, info, x + col, y + row, color);
+            putPixel(x + col, y + row, color);
         }
     }
 }
 
 fn drawGlyphCell(
-    fb_base: [*]volatile u8,
-    info: *align(1) const BootVideoInfo,
     x: u32,
     y: u32,
     font: *const psf.PSFFont,
@@ -196,27 +191,24 @@ fn drawGlyphCell(
     highlight: bool,
 ) void {
     const effective_attr = if (highlight) swapAttr(attr) else attr;
-    const bg = packPaletteColor(info, @truncate(effective_attr >> 4));
-    const fg = packPaletteColor(info, effective_attr & 0x0F);
+    const bg = packPaletteColor(@truncate(effective_attr >> 4));
+    const fg = packPaletteColor(effective_attr & 0x0F);
 
-    fillRect(fb_base, info, x, y, font.glyph_width, font.glyph_height, bg);
-    drawGlyph(fb_base, info, x, y, font, ch, fg);
+    fillRect(x, y, font.glyph_width, font.glyph_height, bg);
+    drawGlyph(x, y, font, ch, fg);
 }
 
-fn drawText(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u32) u32 {
+fn drawText(x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u32) u32 {
     var cursor_x = x;
     for (text) |ch| {
-        drawGlyph(fb_base, info, cursor_x, y, font, ch, color);
+        drawGlyph(cursor_x, y, font, ch, color);
         cursor_x += font.glyph_width;
     }
     return cursor_x;
 }
 
-fn mapFramebuffer() ?struct {
-    info: *align(1) const BootVideoInfo,
-    fb_base: [*]volatile u8,
-} {
-    const info = getBootVideoInfo() orelse return null;
+pub fn init(boot_video_info_phys: usize) !void {
+    try getBootVideoInfo(boot_video_info_phys);
 
     const fb_size: u32 = @as(u32, info.pitch_bytes) * @as(u32, info.height);
     const phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
@@ -226,11 +218,7 @@ fn mapFramebuffer() ?struct {
     paging.mapContiguousRangeAt(fb_demo_va, phys_start, num_pages, false, true, true);
 
     const fb_offset = info.phys_base_ptr - phys_start;
-    const fb_base: [*]volatile u8 = @ptrFromInt(fb_demo_va + fb_offset);
-    return .{
-        .info = info,
-        .fb_base = fb_base,
-    };
+    fb_base = @ptrFromInt(fb_demo_va + fb_offset);
 }
 
 fn consoleCellIndex(row: u32, col: u32) usize {
@@ -247,8 +235,6 @@ fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
     const py = console_origin_y + row * font.glyph_height;
 
     drawGlyphCell(
-        console_fb_base,
-        &console_info,
         px,
         py,
         font,
@@ -261,17 +247,15 @@ fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
 fn drawConsoleFrame() void {
     if (!console_ready) return;
 
-    const bg = packRgb(&console_info, 8, 14, 23);
-    const panel = packRgb(&console_info, 18, 28, 42);
-    const border = packRgb(&console_info, 56, 86, 125);
-    const title_bg = packRgb(&console_info, 40, 92, 170);
-    const title_fg = packRgb(&console_info, 218, 232, 249);
+    const bg = packRgb(8, 14, 23);
+    const panel = packRgb(18, 28, 42);
+    const border = packRgb(56, 86, 125);
+    const title_bg = packRgb(40, 92, 170);
+    const title_fg = packRgb(218, 232, 249);
 
-    fillRect(console_fb_base, &console_info, 0, 0, console_info.width, console_info.height, bg);
-    fillRect(console_fb_base, &console_info, console_panel_x, console_panel_y, console_panel_w, console_panel_h, border);
+    fillRect(0, 0, info.width, info.height, bg);
+    fillRect(console_panel_x, console_panel_y, console_panel_w, console_panel_h, border);
     fillRect(
-        console_fb_base,
-        &console_info,
         console_panel_x + panel_border,
         console_panel_y + panel_border,
         console_panel_w - panel_border * 2,
@@ -279,8 +263,6 @@ fn drawConsoleFrame() void {
         panel,
     );
     fillRect(
-        console_fb_base,
-        &console_info,
         console_panel_x + panel_border,
         console_panel_y + panel_border,
         console_panel_w - panel_border * 2,
@@ -288,19 +270,12 @@ fn drawConsoleFrame() void {
         title_bg,
     );
     _ = drawText(
-        console_fb_base,
-        &console_info,
         console_panel_x + panel_border + title_padding_x,
         console_panel_y + panel_border + title_padding_y,
         &active_font,
         console_title,
         title_fg,
     );
-}
-
-/// Record the physical address of boot video metadata prepared by stage 2.
-pub fn init(video_info_phys: u32) void {
-    boot_video_info_phys = video_info_phys;
 }
 
 /// Load a PSF font file from the root filesystem and make it the active framebuffer font.
@@ -313,10 +288,9 @@ pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, pat
 }
 
 /// Map the boot framebuffer and prepare the 80x25 text console renderer when graphics mode is usable.
-pub fn tryInitConsoleBackend() bool {
-    if (console_ready) return true;
+pub fn initConsolePanel() !void {
+    if (console_ready) return;
 
-    const mapping = mapFramebuffer() orelse return false;
     const font = &active_font;
     const text_width = console.TEXT_WIDTH * font.glyph_width;
     const text_height = console.TEXT_HEIGHT * font.glyph_height;
@@ -325,12 +299,10 @@ pub fn tryInitConsoleBackend() bool {
     const min_inner_w = @max(text_width + panel_padding_x * 2, title_text_w + title_padding_x * 2);
     const panel_w = min_inner_w + panel_border * 2;
     const panel_h = text_height + title_h + panel_padding_y * 2 + panel_border * 2;
-    if (mapping.info.width < panel_w or mapping.info.height < panel_h) return false;
+    if (info.width < panel_w or info.height < panel_h) return error.WindowTooLarge;
 
-    console_info = mapping.info.*;
-    console_fb_base = mapping.fb_base;
-    console_panel_x = (console_info.width - panel_w) / 2;
-    console_panel_y = (console_info.height - panel_h) / 2;
+    console_panel_x = (info.width - panel_w) / 2;
+    console_panel_y = (info.height - panel_h) / 2;
     console_panel_w = panel_w;
     console_panel_h = panel_h;
     console_title_h = title_h;
@@ -342,11 +314,10 @@ pub fn tryInitConsoleBackend() bool {
     console_ready = true;
 
     drawConsoleFrame();
-    return true;
 }
 
 /// Redraw the full 80x25 console grid into the framebuffer backend.
-pub fn renderConsole(cells: *const ConsoleCells, cursor_row: u32, cursor_col: u32, cursor_visible: bool) void {
+pub fn renderConsole(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, cursor_visible: bool) void {
     if (!console_ready) return;
 
     var row: u32 = 0;
@@ -367,7 +338,7 @@ pub fn renderConsole(cells: *const ConsoleCells, cursor_row: u32, cursor_col: u3
 }
 
 /// Redraw a single console cell in the framebuffer backend.
-pub fn renderConsoleCell(cells: *const ConsoleCells, row: u32, col: u32) void {
+pub fn renderConsoleCell(cells: [*]console.Cell, row: u32, col: u32) void {
     if (!console_ready) return;
     if (row >= console.TEXT_HEIGHT or col >= console.TEXT_WIDTH) return;
 
@@ -376,7 +347,7 @@ pub fn renderConsoleCell(cells: *const ConsoleCells, row: u32, col: u32) void {
 }
 
 /// Update the highlighted framebuffer cursor by redrawing the affected console cells.
-pub fn setConsoleCursor(cells: *const ConsoleCells, row: u32, col: u32, visible: bool) void {
+pub fn setConsoleCursor(cells: [*]const console.Cell, row: u32, col: u32, visible: bool) void {
     if (!console_ready) return;
 
     if (console_cursor_visible) {
@@ -394,9 +365,6 @@ pub fn setConsoleCursor(cells: *const ConsoleCells, row: u32, col: u32, visible:
 
 /// Map the boot framebuffer and draw a text-mode style diagnostic demo when VBE metadata is valid.
 pub fn tryDrawBootDemo() void {
-    const mapping = mapFramebuffer() orelse return;
-    const info = mapping.info;
-    const fb_base = mapping.fb_base;
     const font = &active_font;
 
     const width = @as(u32, info.width);

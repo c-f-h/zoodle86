@@ -14,6 +14,8 @@ const std = @import("std");
 
 extern fn stage2_video_probe_and_set() callconv(.c) u32;
 
+const graphical = true;
+
 extern const _bss_start: u8;
 extern const _bss_end: u8;
 
@@ -118,7 +120,7 @@ fn loadKernelElfAndJump() noreturn {
     }
 
     const entry: *const fn (u32, u32) callconv(.c) noreturn = @ptrFromInt(ehdr.e_entry);
-    entry(page_dir_phys, boot_video_info_phys);
+    entry(page_dir_phys, if (graphical) boot_video_info_phys else 0);
 }
 
 fn mountFs() !void {
@@ -130,7 +132,9 @@ fn mountFs() !void {
 }
 
 fn loader_main() noreturn {
-    _ = stage2_video_probe_and_set();
+    if (graphical) {
+        _ = stage2_video_probe_and_set();
+    }
 
     // Physical 0–1MB is mapped at VA 0, with the recursive page directory entry at PD[1023],
     // so that kernel.elf (linked at 0xC0010000 = physical 0x10000) is reachable after paging
