@@ -19,7 +19,6 @@ const paging = @import("paging.zig");
 const pageallocator = @import("pageallocator.zig");
 const serial = @import("serial.zig");
 const syscall = @import("syscall.zig");
-const vgatext = @import("vgatext.zig");
 const pit = @import("pit.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");

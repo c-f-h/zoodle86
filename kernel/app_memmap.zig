@@ -4,7 +4,7 @@
 const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");
 const paging = @import("paging.zig");
-const vga = @import("vgatext.zig");
+const console = @import("console.zig");
 
 // VGA attribute bytes: bits 6-4 = background colour, bits 3-0 = foreground colour.
 const ATTR_HEADER: u8 = 0x1F; // bright white on blue
@@ -29,8 +29,8 @@ const STATUS_ROW = SEP_ROW + 1; // status bar row 19
 
 const View = enum { pd, pt };
 
-// VGA screen buffer: 80 columns × 25 rows = 2000 u16 cells
-const ScreenBuffer = [vga.TEXT_WIDTH * vga.TEXT_HEIGHT]u16;
+// Console screen buffer: 80 columns × 25 rows = 2000 u16 cells
+const ScreenBuffer = [console.TEXT_WIDTH * console.TEXT_HEIGHT]u16;
 
 /// Interactive full-screen page directory / page table ASCII viewer.
 pub const Memmap = struct {
@@ -65,7 +65,7 @@ pub const Memmap = struct {
 // ---------------------------------------------------------------------------
 
 fn drawAll(self: *Memmap) void {
-    vga.clear(ATTR_STATUS);
+    console.clearAll(ATTR_STATUS);
     drawHeader(self);
     drawRuler();
     drawGrid(self);
@@ -94,7 +94,7 @@ fn drawRuler() void {
     var i: u32 = 0;
     while (i < ENTRIES_PER_ROW) : (i += 1) {
         const ch: u8 = if (i % 16 == 0) "0123456789ABCDEF"[i / 16] else '-';
-        vga.putCharAt(1, GRID_START_COL + i, ch, ATTR_DIM);
+        console.putCharAt(1, GRID_START_COL + i, ch, ATTR_DIM);
     }
 }
 
@@ -105,7 +105,7 @@ fn drawGrid(self: *Memmap) void {
         const row_base: u16 = @intCast(row * ENTRIES_PER_ROW);
         // Row label: 3-digit hex index of the first entry in this row
         putHex3At(GRID_START_ROW + row, 0, @intCast(row_base), ATTR_DIM);
-        vga.putCharAt(GRID_START_ROW + row, 3, ' ', ATTR_DIM);
+        console.putCharAt(GRID_START_ROW + row, 3, ' ', ATTR_DIM);
         var col: u32 = 0;
         while (col < ENTRIES_PER_ROW) : (col += 1) {
             const idx: u16 = row_base + @as(u16, @intCast(col));
@@ -142,13 +142,13 @@ fn drawCell(self: *Memmap, row: u32, col: u32, idx: u16, pd: *const paging.PageD
         else if (is_user)
             if (present) ATTR_PRESENT_USER else ATTR_ABSENT_USER
         else if (present) ATTR_PRESENT_KERN else ATTR_ABSENT_KERN;
-    vga.putCharAt(row, col, ch, attr);
+    console.putCharAt(row, col, ch, attr);
 }
 
 fn drawSep() void {
     var col: u32 = 0;
-    while (col < vga.TEXT_WIDTH) : (col += 1) {
-        vga.putCharAt(SEP_ROW, col, '-', ATTR_DIM);
+    while (col < console.TEXT_WIDTH) : (col += 1) {
+        console.putCharAt(SEP_ROW, col, '-', ATTR_DIM);
     }
 }
 
@@ -269,15 +269,15 @@ fn keyHandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
 
 fn clearRow(row: u32, attr: u8) void {
     var col: u32 = 0;
-    while (col < vga.TEXT_WIDTH) : (col += 1) {
-        vga.putCharAt(row, col, ' ', attr);
+    while (col < console.TEXT_WIDTH) : (col += 1) {
+        console.putCharAt(row, col, ' ', attr);
     }
 }
 
 fn putStrAt(row: u32, col: u32, str: []const u8, attr: u8) void {
     var c: u32 = col;
     for (str) |ch| {
-        vga.putCharAt(row, c, ch, attr);
+        console.putCharAt(row, c, ch, attr);
         c += 1;
     }
 }
@@ -285,22 +285,22 @@ fn putStrAt(row: u32, col: u32, str: []const u8, attr: u8) void {
 /// Write a 32-bit value as 8 uppercase hex digits starting at (row, col).
 fn putHex8At(row: u32, col: u32, value: u32, attr: u8) void {
     const hex = "0123456789ABCDEF";
-    vga.putCharAt(row, col + 0, hex[(value >> 28) & 0xF], attr);
-    vga.putCharAt(row, col + 1, hex[(value >> 24) & 0xF], attr);
-    vga.putCharAt(row, col + 2, hex[(value >> 20) & 0xF], attr);
-    vga.putCharAt(row, col + 3, hex[(value >> 16) & 0xF], attr);
-    vga.putCharAt(row, col + 4, hex[(value >> 12) & 0xF], attr);
-    vga.putCharAt(row, col + 5, hex[(value >> 8) & 0xF], attr);
-    vga.putCharAt(row, col + 6, hex[(value >> 4) & 0xF], attr);
-    vga.putCharAt(row, col + 7, hex[(value >> 0) & 0xF], attr);
+    console.putCharAt(row, col + 0, hex[(value >> 28) & 0xF], attr);
+    console.putCharAt(row, col + 1, hex[(value >> 24) & 0xF], attr);
+    console.putCharAt(row, col + 2, hex[(value >> 20) & 0xF], attr);
+    console.putCharAt(row, col + 3, hex[(value >> 16) & 0xF], attr);
+    console.putCharAt(row, col + 4, hex[(value >> 12) & 0xF], attr);
+    console.putCharAt(row, col + 5, hex[(value >> 8) & 0xF], attr);
+    console.putCharAt(row, col + 6, hex[(value >> 4) & 0xF], attr);
+    console.putCharAt(row, col + 7, hex[(value >> 0) & 0xF], attr);
 }
 
 /// Write a 10-bit value (0x000–0x3FF) as 3 uppercase hex digits starting at (row, col).
 fn putHex3At(row: u32, col: u32, value: u10, attr: u8) void {
     const hex = "0123456789ABCDEF";
-    vga.putCharAt(row, col + 0, hex[@as(u32, value >> 8)], attr);
-    vga.putCharAt(row, col + 1, hex[@as(u32, (value >> 4) & 0xF)], attr);
-    vga.putCharAt(row, col + 2, hex[@as(u32, value & 0xF)], attr);
+    console.putCharAt(row, col + 0, hex[@as(u32, value >> 8)], attr);
+    console.putCharAt(row, col + 1, hex[@as(u32, (value >> 4) & 0xF)], attr);
+    console.putCharAt(row, col + 2, hex[@as(u32, value & 0xF)], attr);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,21 +309,21 @@ fn putHex3At(row: u32, col: u32, value: u10, attr: u8) void {
 
 fn saveScreen(buf: *ScreenBuffer) void {
     var row: u32 = 0;
-    while (row < vga.TEXT_HEIGHT) : (row += 1) {
+    while (row < console.TEXT_HEIGHT) : (row += 1) {
         var col: u32 = 0;
-        while (col < vga.TEXT_WIDTH) : (col += 1) {
-            buf[row * vga.TEXT_WIDTH + col] = vga.readCell(row, col);
+        while (col < console.TEXT_WIDTH) : (col += 1) {
+            buf[row * console.TEXT_WIDTH + col] = console.readCell(row, col);
         }
     }
 }
 
 fn restoreScreen(buf: *const ScreenBuffer) void {
     var row: u32 = 0;
-    while (row < vga.TEXT_HEIGHT) : (row += 1) {
+    while (row < console.TEXT_HEIGHT) : (row += 1) {
         var col: u32 = 0;
-        while (col < vga.TEXT_WIDTH) : (col += 1) {
-            const cell = buf[row * vga.TEXT_WIDTH + col];
-            vga.putCharAt(row, col, @truncate(cell & 0xFF), @truncate((cell >> 8) & 0xFF));
+        while (col < console.TEXT_WIDTH) : (col += 1) {
+            const cell = buf[row * console.TEXT_WIDTH + col];
+            console.putCharAt(row, col, @truncate(cell & 0xFF), @truncate((cell >> 8) & 0xFF));
         }
     }
 }

@@ -19,7 +19,7 @@ var cursor_visible: bool = true;
 var backend: Backend = .vga;
 var console_cells: [SCREEN_CELLS]u16 = [_]u16{0} ** SCREEN_CELLS;
 
-fn cellIndex(row: u32, col: u32) u32 {
+inline fn cellIndex(row: u32, col: u32) u32 {
     return row * TEXT_WIDTH + col;
 }
 
@@ -144,6 +144,18 @@ pub fn setSerialMirrorEnabled(enabled: bool) void {
 /// Return whether console output is currently mirrored to serial.
 pub fn isSerialMirrorEnabled() bool {
     return serial_mirror_enabled;
+}
+
+/// Read a raw u16 cell (attr<<8 | char) from the console grid at (row, col).
+pub fn readCell(row: u32, col: u32) u16 {
+    if (row >= TEXT_HEIGHT or col >= TEXT_WIDTH) return 0;
+    return console_cells[cellIndex(row, col)];
+}
+
+/// Fill every cell with a space using the given attribute.
+pub fn clearAll(attr: u8) void {
+    @memset(&console_cells, makeCell(' ', attr));
+    renderAll();
 }
 
 /// Write a single character cell directly into the console grid.

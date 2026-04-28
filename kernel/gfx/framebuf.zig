@@ -3,11 +3,11 @@ const fs = @import("../fs.zig");
 const paging = @import("../paging.zig");
 const psf = @import("psf.zig");
 const std = @import("std");
-const vga = @import("../vgatext.zig");
+const console = @import("../console.zig");
 
 const fb_demo_va: u32 = 0xD000_0000;
 const boot_video_info_magic: u32 = 0x3044_4956; // "VID0"
-const ConsoleCells = [vga.TEXT_WIDTH * vga.TEXT_HEIGHT]u16;
+const ConsoleCells = [console.TEXT_WIDTH * console.TEXT_HEIGHT]u16;
 
 var boot_video_info_phys: u32 = 0;
 var active_font: psf.PSFFont = font8x8.font;
@@ -234,7 +234,7 @@ fn mapFramebuffer() ?struct {
 }
 
 fn consoleCellIndex(row: u32, col: u32) usize {
-    return @as(usize, @intCast(row)) * @as(usize, vga.TEXT_WIDTH) + @as(usize, @intCast(col));
+    return @as(usize, @intCast(row)) * @as(usize, console.TEXT_WIDTH) + @as(usize, @intCast(col));
 }
 
 fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
@@ -318,8 +318,8 @@ pub fn tryInitConsoleBackend() bool {
 
     const mapping = mapFramebuffer() orelse return false;
     const font = &active_font;
-    const text_width = vga.TEXT_WIDTH * font.glyph_width;
-    const text_height = vga.TEXT_HEIGHT * font.glyph_height;
+    const text_width = console.TEXT_WIDTH * font.glyph_width;
+    const text_height = console.TEXT_HEIGHT * font.glyph_height;
     const title_text_w = console_title.len * font.glyph_width;
     const title_h = font.glyph_height + title_padding_y * 2;
     const min_inner_w = @max(text_width + panel_padding_x * 2, title_text_w + title_padding_x * 2);
@@ -350,15 +350,15 @@ pub fn renderConsole(cells: *const ConsoleCells, cursor_row: u32, cursor_col: u3
     if (!console_ready) return;
 
     var row: u32 = 0;
-    while (row < vga.TEXT_HEIGHT) : (row += 1) {
+    while (row < console.TEXT_HEIGHT) : (row += 1) {
         var col: u32 = 0;
-        while (col < vga.TEXT_WIDTH) : (col += 1) {
+        while (col < console.TEXT_WIDTH) : (col += 1) {
             drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, false);
         }
     }
 
-    console_cursor_row = if (cursor_row < vga.TEXT_HEIGHT) cursor_row else vga.TEXT_HEIGHT - 1;
-    console_cursor_col = if (cursor_col < vga.TEXT_WIDTH) cursor_col else vga.TEXT_WIDTH - 1;
+    console_cursor_row = if (cursor_row < console.TEXT_HEIGHT) cursor_row else console.TEXT_HEIGHT - 1;
+    console_cursor_col = if (cursor_col < console.TEXT_WIDTH) cursor_col else console.TEXT_WIDTH - 1;
     console_cursor_visible = cursor_visible;
 
     if (console_cursor_visible) {
@@ -369,7 +369,7 @@ pub fn renderConsole(cells: *const ConsoleCells, cursor_row: u32, cursor_col: u3
 /// Redraw a single console cell in the framebuffer backend.
 pub fn renderConsoleCell(cells: *const ConsoleCells, row: u32, col: u32) void {
     if (!console_ready) return;
-    if (row >= vga.TEXT_HEIGHT or col >= vga.TEXT_WIDTH) return;
+    if (row >= console.TEXT_HEIGHT or col >= console.TEXT_WIDTH) return;
 
     const highlight = console_cursor_visible and row == console_cursor_row and col == console_cursor_col;
     drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, highlight);
@@ -383,8 +383,8 @@ pub fn setConsoleCursor(cells: *const ConsoleCells, row: u32, col: u32, visible:
         drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, false);
     }
 
-    console_cursor_row = if (row < vga.TEXT_HEIGHT) row else vga.TEXT_HEIGHT - 1;
-    console_cursor_col = if (col < vga.TEXT_WIDTH) col else vga.TEXT_WIDTH - 1;
+    console_cursor_row = if (row < console.TEXT_HEIGHT) row else console.TEXT_HEIGHT - 1;
+    console_cursor_col = if (col < console.TEXT_WIDTH) col else console.TEXT_WIDTH - 1;
     console_cursor_visible = visible;
 
     if (console_cursor_visible) {
