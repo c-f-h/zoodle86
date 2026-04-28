@@ -6,7 +6,7 @@ The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stag
 
 ## Kernel Loading
 
-During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses its program headers, allocates physical pages for each PT_LOAD segment at the virtual addresses specified by the ELF, copies the segment data, and jumps to the entry point directly in kernel mode (ring 0). It also passes the physical address of the boot video metadata block so `kernel/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available. The kernel is loaded as a single monolithic ELF binary and execution continues from its entry point. This is distinct from userspace ELF loading, which is handled separately by the kernel's syscall handler when user processes are spawned.
+During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses its program headers, allocates physical pages for each PT_LOAD segment at the virtual addresses specified by the ELF, copies the segment data, and jumps to the entry point directly in kernel mode (ring 0). It also passes the physical address of the boot video metadata block so `kernel/framebuf.zig` can validate the chosen VBE mode, map the framebuffer if one is available, and render an early boot text demo using an embedded 8x8 bitmap font. The kernel is loaded as a single monolithic ELF binary and execution continues from its entry point. This is distinct from userspace ELF loading, which is handled separately by the kernel's syscall handler when user processes are spawned.
 
 ## Virtual Memory Layout
 
