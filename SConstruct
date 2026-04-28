@@ -21,6 +21,7 @@ BOCHS_DIR = BOCHS_EXE.parent
 
 BOOT_ASM = ROOT / "boot.asm"
 INTERRUPTS_ASM = ROOT / "kernel" / "interrupts.asm"
+STAGE2_VIDEO_ASM = ROOT / "kernel" / "stage2_video_rm.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 USERSPACE_LINKER_SCRIPT = ROOT / "userspace.ld"
 KERNEL_LINKER_SCRIPT = ROOT / "kernel.ld"
@@ -74,6 +75,7 @@ def get_autoexec_script():
 
 BOOT_BIN = build_artifact(BOOT_ASM, ".bin")
 INTERRUPTS_OBJ = build_artifact(INTERRUPTS_ASM, ".o")
+STAGE2_VIDEO_OBJ = build_artifact(STAGE2_VIDEO_ASM, ".o")
 STAGE2_EXE = BUILD_DIR / "stage2.elf"
 STAGE2_BIN = build_artifact(STAGE2_EXE, ".bin")
 STAGE2_META = build_artifact(STAGE2_EXE, ".meta")
@@ -124,6 +126,13 @@ def assemble_interrupts(target, source, env):
         raise RuntimeError("NASM did not produce interrupts.o.")
 
 
+def assemble_stage2_video(target, source, env):
+    ensure_parent(STAGE2_VIDEO_OBJ)
+    run([str(NASM_EXE), "-f", "elf32", str(STAGE2_VIDEO_ASM), "-o", str(STAGE2_VIDEO_OBJ)])
+    if not STAGE2_VIDEO_OBJ.exists():
+        raise RuntimeError("NASM did not produce stage2_video_rm.o.")
+
+
 COMMON_ZIG_OPTS = [
     "--cache-dir", str(ZIG_CACHE_DIR),
     "--global-cache-dir", str(ZIG_GLOBAL_CACHE_DIR),
@@ -139,6 +148,8 @@ def build_stage2(target, source, env):
     STT_FUNC symbol table entries for every non-inlined internal function; useful for
     debugging."""
     output_path = pathlib.Path(str(target[0]))
+    source_path = pathlib.Path(str(source[0]))
+    stage2_video_obj = str(source[1])
     linker_script = str(source[-1])
     ensure_parent(output_path)
     if output_path.exists():
@@ -153,7 +164,8 @@ def build_stage2(target, source, env):
             "-fno-strip",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
-            str(ZIG_STAGE2_SRC),
+            stage2_video_obj,
+            str(source_path),
         ]
     )
 
@@ -367,8 +379,9 @@ env = Environment(ENV=os.environ)
 
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
 interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
+stage2_video_obj = env.Command(str(STAGE2_VIDEO_OBJ), str(STAGE2_VIDEO_ASM), Action(assemble_stage2_video, "Assembling $TARGET"))
 # Always rebuild: zig imports are not tracked by scons, let zig handle caching.
-stage2_exe = AlwaysBuild(env.Command(str(STAGE2_EXE), [str(ZIG_STAGE2_SRC), STAGE2_LINKER_SCRIPT], Action(build_stage2, "Compiling and linking $TARGET")))
+stage2_exe = AlwaysBuild(env.Command(str(STAGE2_EXE), [str(ZIG_STAGE2_SRC), stage2_video_obj, STAGE2_LINKER_SCRIPT], Action(build_stage2, "Compiling and linking $TARGET")))
 stage2_payload = env.Command(
     [str(STAGE2_BIN), str(STAGE2_META)],
     stage2_exe,

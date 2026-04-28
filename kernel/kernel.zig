@@ -4,6 +4,7 @@
 /// management, task management, syscalls, filesystem, and the interactive shell.
 const console = @import("console.zig");
 const filedesc = @import("filedesc.zig");
+const framebuf = @import("framebuf.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
@@ -326,6 +327,8 @@ fn kernel_enter() !noreturn {
     pageallocator.init(memory_bitmap_va[0..256]); // 1 page is enough to map 128 MiB of RAM
     pageallocator.setPhysicalMemoryRange(mem_base, mem_base + mem_size);
 
+    framebuf.tryDrawBootDemo();
+
     // kernel data
     const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, false, true);
     @memset(kernel_data, 0xDD);
@@ -635,8 +638,10 @@ fn kernel_enter_trampoline() noreturn {
 
 /// Kernel entry point called by the stage2 boot loader after loading this ELF.
 /// `pd_phys` is the physical address of the bootstrap page directory set up by stage2.
-pub export fn kernel_init(pd_phys: u32) callconv(.c) noreturn {
+/// `video_info_phys` points to boot video metadata prepared by the bootloader.
+pub export fn kernel_init(pd_phys: u32, video_info_phys: u32) callconv(.c) noreturn {
     page_dir_phys = pd_phys;
+    framebuf.init(video_info_phys);
     // Switch to the kernel's own initial stack before touching any globals.
     const stack_top = @intFromPtr(&kernel_shell_stack) + kernel_shell_stack.len;
     asm volatile (

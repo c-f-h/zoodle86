@@ -6,6 +6,7 @@ Complete listing of every source file and its role.
 
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
+- `kernel/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and draws the early graphics demo.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
 - `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
@@ -39,6 +40,7 @@ Complete listing of every source file and its role.
 ## Assembly & Low-Level
 
 - `boot.asm`: boot sector and stage-2 loader.
+- `kernel/stage2_video_rm.asm`: real-mode thunk used by stage 2 to query VBE modes, switch to the best linear-framebuffer mode, and export boot video metadata.
 - `interrupts.asm`: low-level exception/IRQ entry stubs that dispatch through `kernel.interrupt_dispatch()`.
 
 ## Shell & Applications
@@ -72,7 +74,7 @@ Complete listing of every source file and its role.
 
 ## Build Pipeline Artifacts
 
-- `build/stage2.elf`: linked from `kernel/stage2.zig` and `interrupts.asm`.
+- `build/stage2.elf`: linked from `kernel/stage2.zig` and `kernel/stage2_video_rm.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.

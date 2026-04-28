@@ -12,12 +12,15 @@ const vgatext = @import("vgatext.zig");
 
 const std = @import("std");
 
+extern fn stage2_video_probe_and_set() callconv(.c) u32;
+
 extern const _bss_start: u8;
 extern const _bss_end: u8;
 
 // Linker-assigned physical address of the bootstrap page directory.
 // Kept well above the stage2 binary (which loads at 0x8000) and its BSS.
 const page_dir_phys: u32 = 0x4_0000;
+const boot_video_info_phys: u32 = 0x0600;
 
 var disk_fs: fs.FileSystem = undefined;
 var disk_block_device: ide.IdeBlockDevice = undefined;
@@ -114,8 +117,8 @@ fn loadKernelElfAndJump() noreturn {
         @memset(dest[phdr.p_filesz..phdr.p_memsz], 0);
     }
 
-    const entry: *const fn (u32) callconv(.c) noreturn = @ptrFromInt(ehdr.e_entry);
-    entry(page_dir_phys);
+    const entry: *const fn (u32, u32) callconv(.c) noreturn = @ptrFromInt(ehdr.e_entry);
+    entry(page_dir_phys, boot_video_info_phys);
 }
 
 fn mountFs() !void {
@@ -127,6 +130,8 @@ fn mountFs() !void {
 }
 
 fn loader_main() noreturn {
+    _ = stage2_video_probe_and_set();
+
     // Physical 0–1MB is mapped at VA 0, with the recursive page directory entry at PD[1023],
     // so that kernel.elf (linked at 0xC0010000 = physical 0x10000) is reachable after paging
     // is enabled.
