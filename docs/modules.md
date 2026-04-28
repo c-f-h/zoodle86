@@ -6,7 +6,7 @@ Complete listing of every source file and its role.
 
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
-- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, loads a PSF font from the root filesystem, and draws the text rendering demo from runtime font metrics.
+- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, loads a PSF font from the root filesystem, and renders the console's 80x25 cell grid inside a framed graphics-mode pane with a title bar.
 - `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
 - `kernel/gfx/font8x8.zig`: embedded public-domain 8x8 bitmap fallback wrapped as a PSF1 image for framebuffer text rendering.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
@@ -25,9 +25,9 @@ Complete listing of every source file and its role.
 
 ## Console & Input/Output
 
-- `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, and memory dumps.
+- `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, memory dumps, and backend switching between VGA text mode and framebuffer text rendering.
 - `kernel/serial.zig`: COM1 serial driver for debug output and exception logging to the host via Bochs.
-- `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write, cursor control.
+- `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write and hardware cursor control for the text-mode console backend.
 - `kernel/keyboard.zig`: scancode-to-keycode conversion, extended key support, modifier tracking, ASCII conversion.
 - `kernel/readline.zig`: line editing with cursor navigation, character insertion/deletion, line clearing.
 

@@ -357,7 +357,7 @@ fn kernel_enter() !noreturn {
 
     try mountFs();
     try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
-    framebuf.tryDrawBootDemo();
+    _ = console.tryEnableFramebufBackend();
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
 }

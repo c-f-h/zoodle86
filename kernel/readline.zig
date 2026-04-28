@@ -1,7 +1,6 @@
 const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");
 const console = @import("console.zig");
-const vga = @import("vgatext.zig");
 
 const VGA_ATTR: u8 = 0x07;
 const READLINE_BUF_MAX_LEN: usize = 80;
@@ -151,7 +150,7 @@ fn readlineKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
         switch (ev.keycode) {
             keyboard.VK_ENTER => {
                 self.done = true;
-                vga.disableCursor();
+                console.setCursorVisible(false);
             },
             keyboard.VK_HOME => readline.cursor = 0,
             keyboard.VK_END => readline.cursor = readline.len,
@@ -180,16 +179,16 @@ fn readlineKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
 
     var i: u32 = 0;
     while (i < readline.len) : (i += 1) {
-        vga.putCharAt(readline_row, i, readline.buf[i], VGA_ATTR);
+        console.putCharAt(readline_row, i, readline.buf[i], VGA_ATTR);
     }
     // it's usually sufficient to blank out one char past the end of the buffer
     if (readline.len < READLINE_BUF_MAX_LEN) {
-        vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
+        console.putCharAt(readline_row, i, ' ', VGA_ATTR);
     }
     // only if we killed a longer portion of the buffer
     if (redraw_all) {
         while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-            vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
+            console.putCharAt(readline_row, i, ' ', VGA_ATTR);
         }
     }
 
@@ -209,12 +208,12 @@ pub const ReadlineApp = struct {
         self.readline = .{};
 
         console.setCursor(readline_row, 0);
-        vga.enableCursor();
+        console.setCursorVisible(true);
 
         // clear display row
         var i: u32 = 0;
         while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-            vga.putCharAt(readline_row, i, ' ', VGA_ATTR);
+            console.putCharAt(readline_row, i, ' ', VGA_ATTR);
         }
     }
 

@@ -2,11 +2,15 @@
 
 ## Boot & Real-Mode Setup
 
-The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stage-2 image at `0x8000`, and switches to 32-bit protected mode before jumping into Zig code. On hard-disk boots it uses BIOS extended LBA reads for stage 2; the older CHS path is only used for floppy-style boots. Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer mode it finds, and write boot video metadata at physical `0x0600` for the kernel.
+The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stage-2 image at `0x8000`, and switches to 32-bit protected mode before jumping into Zig code. On hard-disk boots it uses BIOS extended LBA reads for stage 2; the older CHS path is only used for floppy-style boots.
 
 ## Kernel Loading
 
-During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses its program headers, allocates physical pages for each PT_LOAD segment at the virtual addresses specified by the ELF, copies the segment data, and jumps to the entry point directly in kernel mode (ring 0). It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode, map the framebuffer if one is available, and render a boot text demo using a PSF font loaded from the mounted filesystem (falling back to the embedded 8x8 font image if needed). The kernel is loaded as a single monolithic ELF binary and execution continues from its entry point. This is distinct from userspace ELF loading, which is handled separately by the kernel's syscall handler when user processes are spawned.
+During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses its program headers, allocates physical pages for each PT_LOAD segment at the virtual addresses specified by the ELF, copies the segment data, and jumps to the entry point directly in kernel mode (ring 0). The kernel is loaded as a single monolithic ELF binary and execution continues from its entry point. This is distinct from userspace ELF loading, which is handled separately by the kernel's syscall handler when user processes are spawned.
+
+## Graphical subsystem
+
+Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode, map the framebuffer if one is available, and let `kernel/console.zig` switch from VGA text mode to a framebuffer text backend. In graphics mode that backend draws a framed pane with a title bar around the fixed 80x25 console grid.
 
 ## Virtual Memory Layout
 

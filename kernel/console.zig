@@ -1,33 +1,96 @@
+const framebuf = @import("gfx/framebuf.zig");
 const serial = @import("serial.zig");
 const vga = @import("vgatext.zig");
+
+pub const TEXT_WIDTH: u32 = vga.TEXT_WIDTH;
+pub const TEXT_HEIGHT: u32 = vga.TEXT_HEIGHT;
+
+const SCREEN_CELLS = TEXT_WIDTH * TEXT_HEIGHT;
+const Backend = enum {
+    vga,
+    framebuf,
+};
 
 var console_row: u32 = 0;
 var console_col: u32 = 0;
 var console_attr: u8 = 0x07;
 var serial_mirror_enabled: bool = false;
+var cursor_visible: bool = true;
+var backend: Backend = .vga;
+var console_cells: [SCREEN_CELLS]u16 = [_]u16{0} ** SCREEN_CELLS;
+
+fn cellIndex(row: u32, col: u32) u32 {
+    return row * TEXT_WIDTH + col;
+}
+
+inline fn makeCell(ch: u8, attr: u8) u16 {
+    return (@as(u16, attr) << 8) | ch;
+}
+
+fn clearCells(attr: u8) void {
+    @memset(&console_cells, makeCell(' ', attr));
+}
+
+fn renderCell(row: u32, col: u32) void {
+    const cell = console_cells[cellIndex(row, col)];
+    const ch: u8 = @truncate(cell & 0x00FF);
+    const attr: u8 = @truncate(cell >> 8);
+
+    switch (backend) {
+        .vga => vga.putCharAt(row, col, ch, attr),
+        .framebuf => framebuf.renderConsoleCell(&console_cells, row, col),
+    }
+}
+
+fn renderAll() void {
+    switch (backend) {
+        .vga => {
+            var row: u32 = 0;
+            while (row < TEXT_HEIGHT) : (row += 1) {
+                var col: u32 = 0;
+                while (col < TEXT_WIDTH) : (col += 1) {
+                    const cell = console_cells[cellIndex(row, col)];
+                    vga.putCharAt(row, col, @truncate(cell & 0x00FF), @truncate(cell >> 8));
+                }
+            }
+            syncCursor();
+        },
+        .framebuf => framebuf.renderConsole(&console_cells, console_row, console_col, cursor_visible),
+    }
+}
 
 fn syncCursor() void {
-    vga.setCursorPos(console_row, console_col);
+    switch (backend) {
+        .vga => {
+            if (cursor_visible) {
+                vga.enableCursor();
+                vga.setCursorPos(console_row, console_col);
+            } else {
+                vga.disableCursor();
+            }
+        },
+        .framebuf => framebuf.setConsoleCursor(&console_cells, console_row, console_col, cursor_visible),
+    }
 }
 
 fn scrollIfNeeded() void {
-    if (console_row < vga.TEXT_HEIGHT) return;
+    if (console_row < TEXT_HEIGHT) return;
 
     var row: u32 = 1;
-    while (row < vga.TEXT_HEIGHT) : (row += 1) {
+    while (row < TEXT_HEIGHT) : (row += 1) {
         var col: u32 = 0;
-        while (col < vga.TEXT_WIDTH) : (col += 1) {
-            const cell: u16 = vga.readCell(row, col);
-            vga.putCharAt(row - 1, col, @truncate(cell & 0x00FF), @truncate(cell >> 8));
+        while (col < TEXT_WIDTH) : (col += 1) {
+            console_cells[cellIndex(row - 1, col)] = console_cells[cellIndex(row, col)];
         }
     }
 
     var col: u32 = 0;
-    while (col < vga.TEXT_WIDTH) : (col += 1) {
-        vga.putCharAt(vga.TEXT_HEIGHT - 1, col, ' ', console_attr);
+    while (col < TEXT_WIDTH) : (col += 1) {
+        console_cells[cellIndex(TEXT_HEIGHT - 1, col)] = makeCell(' ', console_attr);
     }
 
-    console_row = vga.TEXT_HEIGHT - 1;
+    console_row = TEXT_HEIGHT - 1;
+    renderAll();
 }
 
 fn advanceLine() void {
@@ -37,24 +100,25 @@ fn advanceLine() void {
 }
 
 pub export fn console_init(attr: u8) void {
+    backend = .vga;
     console_attr = attr;
     console_row = 0;
     console_col = 0;
-    vga.enableCursor();
-    vga.clear(console_attr);
-    syncCursor();
+    cursor_visible = true;
+    clearCells(console_attr);
+    renderAll();
 }
 
 pub fn clear() void {
-    vga.clear(console_attr);
     console_row = 0;
     console_col = 0;
-    syncCursor();
+    clearCells(console_attr);
+    renderAll();
 }
 
 pub fn setCursor(row: u32, col: u32) void {
-    console_row = if (row >= vga.TEXT_HEIGHT) vga.TEXT_HEIGHT - 1 else row;
-    console_col = if (col >= vga.TEXT_WIDTH) vga.TEXT_WIDTH - 1 else col;
+    console_row = if (row >= TEXT_HEIGHT) TEXT_HEIGHT - 1 else row;
+    console_col = if (col >= TEXT_WIDTH) TEXT_WIDTH - 1 else col;
     syncCursor();
 }
 
@@ -66,6 +130,12 @@ pub fn setAttr(attr: u8) void {
     console_attr = attr;
 }
 
+/// Show or hide the active console cursor for the current backend.
+pub fn setCursorVisible(visible: bool) void {
+    cursor_visible = visible;
+    syncCursor();
+}
+
 /// Enable or disable mirroring console output to the serial port.
 pub fn setSerialMirrorEnabled(enabled: bool) void {
     serial_mirror_enabled = enabled;
@@ -74,6 +144,25 @@ pub fn setSerialMirrorEnabled(enabled: bool) void {
 /// Return whether console output is currently mirrored to serial.
 pub fn isSerialMirrorEnabled() bool {
     return serial_mirror_enabled;
+}
+
+/// Write a single character cell directly into the console grid.
+pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
+    if (row >= TEXT_HEIGHT or col >= TEXT_WIDTH) return;
+
+    console_cells[cellIndex(row, col)] = makeCell(ch, attr);
+    renderCell(row, col);
+}
+
+/// Switch console rendering to the framebuffer text backend when graphics mode is available.
+pub fn tryEnableFramebufBackend() bool {
+    if (backend == .framebuf) return true;
+    if (!framebuf.tryInitConsoleBackend()) return false;
+
+    backend = .framebuf;
+    vga.disableCursor();
+    framebuf.renderConsole(&console_cells, console_row, console_col, cursor_visible);
+    return true;
 }
 
 pub fn newline() void {
@@ -104,9 +193,9 @@ pub fn putch(ch: u8) void {
     if (serial_mirror_enabled and serial.isInitialized()) {
         serial.putch(ch);
     }
-    vga.putCharAt(console_row, console_col, ch, console_attr);
+    putCharAt(console_row, console_col, ch, console_attr);
     console_col += 1;
-    if (console_col >= vga.TEXT_WIDTH) {
+    if (console_col >= TEXT_WIDTH) {
         advanceLine();
     }
     syncCursor();

@@ -3,9 +3,11 @@ const fs = @import("../fs.zig");
 const paging = @import("../paging.zig");
 const psf = @import("psf.zig");
 const std = @import("std");
+const vga = @import("../vgatext.zig");
 
 const fb_demo_va: u32 = 0xD000_0000;
 const boot_video_info_magic: u32 = 0x3044_4956; // "VID0"
+const ConsoleCells = [vga.TEXT_WIDTH * vga.TEXT_HEIGHT]u16;
 
 var boot_video_info_phys: u32 = 0;
 var active_font: psf.PSFFont = font8x8.font;
@@ -30,6 +32,68 @@ const BootVideoInfo = packed struct {
     blue_position: u8,
     _reserved2: u8,
     phys_base_ptr: u32,
+};
+
+var console_info: BootVideoInfo = undefined;
+var console_fb_base: [*]volatile u8 = undefined;
+var console_origin_x: u32 = 0;
+var console_origin_y: u32 = 0;
+var console_panel_x: u32 = 0;
+var console_panel_y: u32 = 0;
+var console_panel_w: u32 = 0;
+var console_panel_h: u32 = 0;
+var console_title_h: u32 = 0;
+var console_cursor_row: u32 = 0;
+var console_cursor_col: u32 = 0;
+var console_cursor_visible: bool = false;
+var console_ready: bool = false;
+
+const screen_margin: u32 = 12;
+const panel_border: u32 = 1;
+const panel_padding_x: u32 = 2;
+const panel_padding_y: u32 = 2;
+const title_padding_y: u32 = 3;
+const title_padding_x: u32 = 10;
+const console_title = "zoodle86 framebuffer console";
+
+// Default VGA 16-color palette
+//const vga_palette = [16][3]u8{
+//    .{ 0x00, 0x00, 0x00 },
+//    .{ 0x00, 0x00, 0xAA },
+//    .{ 0x00, 0xAA, 0x00 },
+//    .{ 0x00, 0xAA, 0xAA },
+//    .{ 0xAA, 0x00, 0x00 },
+//    .{ 0xAA, 0x00, 0xAA },
+//    .{ 0xAA, 0x55, 0x00 },
+//    .{ 0xAA, 0xAA, 0xAA },
+//    .{ 0x55, 0x55, 0x55 },
+//    .{ 0x55, 0x55, 0xFF },
+//    .{ 0x55, 0xFF, 0x55 },
+//    .{ 0x55, 0xFF, 0xFF },
+//    .{ 0xFF, 0x55, 0x55 },
+//    .{ 0xFF, 0x55, 0xFF },
+//    .{ 0xFF, 0xFF, 0x55 },
+//    .{ 0xFF, 0xFF, 0xFF },
+//};
+
+// Prettier, blue-ish palette
+const vga_palette = [16][3]u8{
+    .{ 18, 28, 42 },
+    .{ 40, 92, 170 },
+    .{ 0x00, 0xAA, 0x00 },
+    .{ 0x00, 0xAA, 0xAA },
+    .{ 0xAA, 0x00, 0x00 },
+    .{ 0xAA, 0x00, 0xAA },
+    .{ 0xAA, 0x55, 0x00 },
+    .{ 218, 232, 249 },
+    .{ 138, 160, 188 },
+    .{ 0x55, 0x55, 0xFF },
+    .{ 0x55, 0xFF, 0x55 },
+    .{ 0x55, 0xFF, 0xFF },
+    .{ 0xFF, 0x55, 0x55 },
+    .{ 0xFF, 0x55, 0xFF },
+    .{ 0xFF, 0xFF, 0x55 },
+    .{ 245, 248, 252 },
 };
 
 fn getBootVideoInfo() ?*align(1) const BootVideoInfo {
@@ -64,6 +128,15 @@ fn packRgb(info: *align(1) const BootVideoInfo, r: u8, g: u8, b: u8) u32 {
     }
 
     return value;
+}
+
+fn packPaletteColor(info: *align(1) const BootVideoInfo, idx: u8) u32 {
+    const rgb = vga_palette[idx & 0x0F];
+    return packRgb(info, rgb[0], rgb[1], rgb[2]);
+}
+
+fn swapAttr(attr: u8) u8 {
+    return (attr << 4) | (attr >> 4);
 }
 
 fn putPixel(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32, y: u32, color: u32) void {
@@ -112,6 +185,24 @@ fn drawGlyph(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u3
     }
 }
 
+fn drawGlyphCell(
+    fb_base: [*]volatile u8,
+    info: *align(1) const BootVideoInfo,
+    x: u32,
+    y: u32,
+    font: *const psf.PSFFont,
+    ch: u8,
+    attr: u8,
+    highlight: bool,
+) void {
+    const effective_attr = if (highlight) swapAttr(attr) else attr;
+    const bg = packPaletteColor(info, @truncate(effective_attr >> 4));
+    const fg = packPaletteColor(info, effective_attr & 0x0F);
+
+    fillRect(fb_base, info, x, y, font.glyph_width, font.glyph_height, bg);
+    drawGlyph(fb_base, info, x, y, font, ch, fg);
+}
+
 fn drawText(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u32) u32 {
     var cursor_x = x;
     for (text) |ch| {
@@ -119,6 +210,92 @@ fn drawText(fb_base: [*]volatile u8, info: *align(1) const BootVideoInfo, x: u32
         cursor_x += font.glyph_width;
     }
     return cursor_x;
+}
+
+fn mapFramebuffer() ?struct {
+    info: *align(1) const BootVideoInfo,
+    fb_base: [*]volatile u8,
+} {
+    const info = getBootVideoInfo() orelse return null;
+
+    const fb_size: u32 = @as(u32, info.pitch_bytes) * @as(u32, info.height);
+    const phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
+    const phys_end = paging.roundToNext(info.phys_base_ptr + fb_size, paging.PAGE);
+    const num_pages: u32 = @divExact(phys_end - phys_start, paging.PAGE);
+
+    paging.mapContiguousRangeAt(fb_demo_va, phys_start, num_pages, false, true, true);
+
+    const fb_offset = info.phys_base_ptr - phys_start;
+    const fb_base: [*]volatile u8 = @ptrFromInt(fb_demo_va + fb_offset);
+    return .{
+        .info = info,
+        .fb_base = fb_base,
+    };
+}
+
+fn consoleCellIndex(row: u32, col: u32) usize {
+    return @as(usize, @intCast(row)) * @as(usize, vga.TEXT_WIDTH) + @as(usize, @intCast(col));
+}
+
+fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
+    if (!console_ready) return;
+
+    const font = &active_font;
+    const ch: u8 = @truncate(cell & 0x00FF);
+    const attr: u8 = @truncate(cell >> 8);
+    const px = console_origin_x + col * font.glyph_width;
+    const py = console_origin_y + row * font.glyph_height;
+
+    drawGlyphCell(
+        console_fb_base,
+        &console_info,
+        px,
+        py,
+        font,
+        if (ch == 0) ' ' else ch,
+        attr,
+        highlight,
+    );
+}
+
+fn drawConsoleFrame() void {
+    if (!console_ready) return;
+
+    const bg = packRgb(&console_info, 8, 14, 23);
+    const panel = packRgb(&console_info, 18, 28, 42);
+    const border = packRgb(&console_info, 56, 86, 125);
+    const title_bg = packRgb(&console_info, 40, 92, 170);
+    const title_fg = packRgb(&console_info, 218, 232, 249);
+
+    fillRect(console_fb_base, &console_info, 0, 0, console_info.width, console_info.height, bg);
+    fillRect(console_fb_base, &console_info, console_panel_x, console_panel_y, console_panel_w, console_panel_h, border);
+    fillRect(
+        console_fb_base,
+        &console_info,
+        console_panel_x + panel_border,
+        console_panel_y + panel_border,
+        console_panel_w - panel_border * 2,
+        console_panel_h - panel_border * 2,
+        panel,
+    );
+    fillRect(
+        console_fb_base,
+        &console_info,
+        console_panel_x + panel_border,
+        console_panel_y + panel_border,
+        console_panel_w - panel_border * 2,
+        console_title_h,
+        title_bg,
+    );
+    _ = drawText(
+        console_fb_base,
+        &console_info,
+        console_panel_x + panel_border + title_padding_x,
+        console_panel_y + panel_border + title_padding_y,
+        &active_font,
+        console_title,
+        title_fg,
+    );
 }
 
 /// Record the physical address of boot video metadata prepared by stage 2.
@@ -135,20 +312,92 @@ pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, pat
     active_font_label = path;
 }
 
+/// Map the boot framebuffer and prepare the 80x25 text console renderer when graphics mode is usable.
+pub fn tryInitConsoleBackend() bool {
+    if (console_ready) return true;
+
+    const mapping = mapFramebuffer() orelse return false;
+    const font = &active_font;
+    const text_width = vga.TEXT_WIDTH * font.glyph_width;
+    const text_height = vga.TEXT_HEIGHT * font.glyph_height;
+    const title_text_w = console_title.len * font.glyph_width;
+    const title_h = font.glyph_height + title_padding_y * 2;
+    const min_inner_w = @max(text_width + panel_padding_x * 2, title_text_w + title_padding_x * 2);
+    const panel_w = min_inner_w + panel_border * 2;
+    const panel_h = text_height + title_h + panel_padding_y * 2 + panel_border * 2;
+    if (mapping.info.width < panel_w or mapping.info.height < panel_h) return false;
+
+    console_info = mapping.info.*;
+    console_fb_base = mapping.fb_base;
+    console_panel_x = (console_info.width - panel_w) / 2;
+    console_panel_y = (console_info.height - panel_h) / 2;
+    console_panel_w = panel_w;
+    console_panel_h = panel_h;
+    console_title_h = title_h;
+    console_origin_x = console_panel_x + panel_border + panel_padding_x;
+    console_origin_y = console_panel_y + panel_border + console_title_h + panel_padding_y;
+    console_cursor_row = 0;
+    console_cursor_col = 0;
+    console_cursor_visible = false;
+    console_ready = true;
+
+    drawConsoleFrame();
+    return true;
+}
+
+/// Redraw the full 80x25 console grid into the framebuffer backend.
+pub fn renderConsole(cells: *const ConsoleCells, cursor_row: u32, cursor_col: u32, cursor_visible: bool) void {
+    if (!console_ready) return;
+
+    var row: u32 = 0;
+    while (row < vga.TEXT_HEIGHT) : (row += 1) {
+        var col: u32 = 0;
+        while (col < vga.TEXT_WIDTH) : (col += 1) {
+            drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, false);
+        }
+    }
+
+    console_cursor_row = if (cursor_row < vga.TEXT_HEIGHT) cursor_row else vga.TEXT_HEIGHT - 1;
+    console_cursor_col = if (cursor_col < vga.TEXT_WIDTH) cursor_col else vga.TEXT_WIDTH - 1;
+    console_cursor_visible = cursor_visible;
+
+    if (console_cursor_visible) {
+        drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, true);
+    }
+}
+
+/// Redraw a single console cell in the framebuffer backend.
+pub fn renderConsoleCell(cells: *const ConsoleCells, row: u32, col: u32) void {
+    if (!console_ready) return;
+    if (row >= vga.TEXT_HEIGHT or col >= vga.TEXT_WIDTH) return;
+
+    const highlight = console_cursor_visible and row == console_cursor_row and col == console_cursor_col;
+    drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, highlight);
+}
+
+/// Update the highlighted framebuffer cursor by redrawing the affected console cells.
+pub fn setConsoleCursor(cells: *const ConsoleCells, row: u32, col: u32, visible: bool) void {
+    if (!console_ready) return;
+
+    if (console_cursor_visible) {
+        drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, false);
+    }
+
+    console_cursor_row = if (row < vga.TEXT_HEIGHT) row else vga.TEXT_HEIGHT - 1;
+    console_cursor_col = if (col < vga.TEXT_WIDTH) col else vga.TEXT_WIDTH - 1;
+    console_cursor_visible = visible;
+
+    if (console_cursor_visible) {
+        drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, true);
+    }
+}
+
 /// Map the boot framebuffer and draw a text-mode style diagnostic demo when VBE metadata is valid.
 pub fn tryDrawBootDemo() void {
-    const info = getBootVideoInfo() orelse return;
+    const mapping = mapFramebuffer() orelse return;
+    const info = mapping.info;
+    const fb_base = mapping.fb_base;
     const font = &active_font;
-
-    const fb_size: u32 = @as(u32, info.pitch_bytes) * @as(u32, info.height);
-    const phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
-    const phys_end = paging.roundToNext(info.phys_base_ptr + fb_size, paging.PAGE);
-    const num_pages: u32 = @divExact(phys_end - phys_start, paging.PAGE);
-
-    paging.mapContiguousRangeAt(fb_demo_va, phys_start, num_pages, false, true, true);
-
-    const fb_offset = info.phys_base_ptr - phys_start;
-    const fb_base: [*]volatile u8 = @ptrFromInt(fb_demo_va + fb_offset);
 
     const width = @as(u32, info.width);
     const height = @as(u32, info.height);
@@ -168,7 +417,7 @@ pub fn tryDrawBootDemo() void {
 
     const bg = packRgb(info, 8, 14, 23);
     const panel = packRgb(info, 18, 28, 42);
-    const panel_border = packRgb(info, 56, 86, 125);
+    const panel_border_color = packRgb(info, 56, 86, 125);
     const title_bg = packRgb(info, 40, 92, 170);
     const fg = packRgb(info, 218, 232, 249);
     const dim = packRgb(info, 138, 160, 188);
@@ -176,7 +425,7 @@ pub fn tryDrawBootDemo() void {
     const green = packRgb(info, 110, 212, 126);
 
     fillRect(fb_base, info, 0, 0, width, height, bg);
-    fillRect(fb_base, info, panel_x, panel_y, panel_w, panel_h, panel_border);
+    fillRect(fb_base, info, panel_x, panel_y, panel_w, panel_h, panel_border_color);
     fillRect(fb_base, info, panel_x + 1, panel_y + 1, panel_w - 2, panel_h - 2, panel);
     fillRect(fb_base, info, panel_x + 1, panel_y + 1, panel_w - 2, title_h, title_bg);
 
