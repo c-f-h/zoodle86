@@ -28,6 +28,8 @@ scons run AUTOEXEC="serial on\nrun hello\nshutdown"
 
 There is no separate unit-test suite. A successful build is the current baseline check. Invoking the `hello 3 3` (PID, spawning, basic syscalls), `fs_stress` (syscall-heavy file operations), and `alloc_stress` (userspace memory manipulation) programs using the `run` command from the kernel shell can serve as additional checks.
 
+Regular files from `static/` are copied into the root of the filesystem image during the build. The framebuffer demo currently loads its PSF font from there.
+
 ## General Guidelines
 
 - Use Zig 0.16.

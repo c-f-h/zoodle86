@@ -37,6 +37,7 @@ BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 SERIALOUT = BUILD_DIR / "serial.txt"
 AUTOEXEC_FILENAME = "autoexec"
+STATIC_DIR = ROOT / "static"
 
 IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
@@ -90,6 +91,7 @@ KERNEL_EXE = BUILD_DIR / "kernel.elf"
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 IMAGE_SIZE_SECTORS = IMAGE_SIZE // 512
+STATIC_INPUTS = [str(path) for path in sorted(STATIC_DIR.iterdir()) if path.is_file()]
 
 
 def write_bochsrc(target, source, env):
@@ -299,6 +301,13 @@ def build_fs_image(target, source, env):
     kernel_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))
     shutil.copy2(kernel_path, FS_IMAGE_DIR / "kernel")
 
+    # Copy static assets into the root of the filesystem image.
+    for static_path in sorted(STATIC_DIR.iterdir()):
+        if static_path.is_dir():
+            raise RuntimeError(f"Directories inside static/ are not supported: {static_path.name}")
+        if static_path.is_file():
+            shutil.copy2(static_path, FS_IMAGE_DIR / static_path.name)
+
     autoexec_path = FS_IMAGE_DIR / AUTOEXEC_FILENAME
     autoexec_script = get_autoexec_script()
     if autoexec_script:
@@ -394,7 +403,7 @@ userspace_exes = [
 ]
 kernel_mod_exe = AlwaysBuild(env.Command(str(KERNEL_EXE), [str(KERNEL_SRC), KERNEL_LINKER_SCRIPT, interrupts_obj], Action(build_kernel, "Compiling $TARGET")))
 autoexec_value = env.Value(get_autoexec_script())
-fsimage = env.Command(str(FS_IMAGE), userspace_exes + [kernel_mod_exe, autoexec_value], Action(build_fs_image, "Building $TARGET"))
+fsimage = env.Command(str(FS_IMAGE), userspace_exes + [kernel_mod_exe, autoexec_value] + STATIC_INPUTS, Action(build_fs_image, "Building $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)
 

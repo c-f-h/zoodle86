@@ -209,27 +209,31 @@ score_mode:
     mov cx, bx
 
     mov ax, 0x4F01
-    int 0x10
-    cmp ax, 0x004F
+    int 0x10           ; get mode info
+    cmp ax, 0x004F     ; successful?
     jne .bad
 
     mov ax, [di + 0x00]
-    test ax, 0x0080
+    test ax, 0x0080    ; linear framebuffer mode supported?
     jz .bad
 
     mov al, [di + 0x19]
-    cmp al, 15
+    cmp al, 15         ; bits per pixel at least 15?
     jb .bad
 
-    mov al, [di + 0x1B]
-    cmp al, 4
+    mov al, [di + 0x1B] ; memory model type
+    cmp al, 4          ; packed pixel?
     je .good
-    cmp al, 6
+    cmp al, 6          ; RGB?
     jne .bad
 
 .good:
     movzx eax, word [di + 0x12]
     movzx edx, word [di + 0x14]
+
+    cmp edx, 1000              ; height > 1000?
+    ja .bad
+
     imul eax, edx
     pop bx
     ret

@@ -4,7 +4,7 @@
 /// management, task management, syscalls, filesystem, and the interactive shell.
 const console = @import("console.zig");
 const filedesc = @import("filedesc.zig");
-const framebuf = @import("framebuf.zig");
+const framebuf = @import("gfx/framebuf.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const ide = @import("ide.zig");
@@ -268,6 +268,7 @@ fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
 fn panicOnError(err: anyerror) noreturn {
     @panic(switch (err) {
         error.OutOfMemory => "Out of memory",
+        error.FileNotFound => "File not found",
         error.BufferTooSmall => "Buffer too small",
         error.InvalidELF => "Invalid ELF",
         ide.IdeError.Timeout => "IDE timeout",
@@ -327,8 +328,6 @@ fn kernel_enter() !noreturn {
     pageallocator.init(memory_bitmap_va[0..256]); // 1 page is enough to map 128 MiB of RAM
     pageallocator.setPhysicalMemoryRange(mem_base, mem_base + mem_size);
 
-    framebuf.tryDrawBootDemo();
-
     // kernel data
     const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, false, true);
     @memset(kernel_data, 0xDD);
@@ -357,6 +356,8 @@ fn kernel_enter() !noreturn {
     apic.startTimer(100000);
 
     try mountFs();
+    try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
+    framebuf.tryDrawBootDemo();
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
 }

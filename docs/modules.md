@@ -6,8 +6,9 @@ Complete listing of every source file and its role.
 
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
-- `kernel/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and draws the early text rendering demo.
-- `kernel/font8x8.zig`: embedded public-domain 8x8 bitmap font used by the framebuffer text demo.
+- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, loads a PSF font from the root filesystem, and draws the text rendering demo from runtime font metrics.
+- `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
+- `kernel/gfx/font8x8.zig`: embedded public-domain 8x8 bitmap fallback wrapped as a PSF1 image for framebuffer text rendering.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
 - `kernel/pageallocator.zig`: page-level bitmap allocator for user processes and kernel structures.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
@@ -69,7 +70,7 @@ Complete listing of every source file and its role.
 ## Build Configuration
 
 - `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel respectively.
-- `SConstruct`: SCons build and run entrypoints.
+- `SConstruct`: SCons build and run entrypoints. Builds `build/fsimage/` from kernel/userspace outputs plus files copied from `static/`.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
 - Bochs serial output is captured to `build/serial.txt` via the generated `build/bochsrc.txt`.
 
@@ -82,5 +83,5 @@ Complete listing of every source file and its role.
 - `build/fib.elf`: linked from `userspace/fib.zig` and copied into the filesystem image as `fib`.
 - `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
 - `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.
-- `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`.
+- `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including files copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.

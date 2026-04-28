@@ -6,7 +6,7 @@ The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stag
 
 ## Kernel Loading
 
-During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses its program headers, allocates physical pages for each PT_LOAD segment at the virtual addresses specified by the ELF, copies the segment data, and jumps to the entry point directly in kernel mode (ring 0). It also passes the physical address of the boot video metadata block so `kernel/framebuf.zig` can validate the chosen VBE mode, map the framebuffer if one is available, and render an early boot text demo using an embedded 8x8 bitmap font. The kernel is loaded as a single monolithic ELF binary and execution continues from its entry point. This is distinct from userspace ELF loading, which is handled separately by the kernel's syscall handler when user processes are spawned.
+During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses its program headers, allocates physical pages for each PT_LOAD segment at the virtual addresses specified by the ELF, copies the segment data, and jumps to the entry point directly in kernel mode (ring 0). It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode, map the framebuffer if one is available, and render a boot text demo using a PSF font loaded from the mounted filesystem (falling back to the embedded 8x8 font image if needed). The kernel is loaded as a single monolithic ELF binary and execution continues from its entry point. This is distinct from userspace ELF loading, which is handled separately by the kernel's syscall handler when user processes are spawned.
 
 ## Virtual Memory Layout
 
@@ -23,7 +23,7 @@ The kernel uses paging with 1 MB of identity mapping at both 0x0 (low memory) an
 | 0xC000_8000 - 0xC000_A200 | ~8 KB | Stage-2 loader (VA), physically at 0x8000 |
 | 0xC001_0000 - 0xC002_0000 | 64 KB | Kernel module (`kernel.elf`), physically at 0x10000 |
 | 0xC004_0000 - 0xC004_2000 | 8 KB | Bootstrap page directory + first page table (physical 0x40000-0x42000) |
-| 0xD000_0000 - dynamic | dynamic | Early framebuffer mapping window used by `kernel/framebuf.zig` |
+| 0xD000_0000 - dynamic | dynamic | Early framebuffer mapping window used by `kernel/gfx/framebuf.zig` |
 | 0xE000_0000 - 0xE040_0000 | 4 MB | Kernel heap (fixed-buffer allocator) |
 | 0xE040_0000 - 0xE050_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
 | 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |
