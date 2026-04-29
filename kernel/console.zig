@@ -159,18 +159,22 @@ pub fn enableFramebufBackend() void {
     console_cells = &console_buffer;
 }
 
-pub fn newline() void {
+fn newlineInternal(sync_cursor: bool) void {
     if (serial_mirror_enabled and serial.isInitialized()) {
         serial.putch('\n');
     }
     advanceLine();
-    syncCursor();
+    if (sync_cursor) syncCursor();
 }
 
-pub fn putch(ch: u8) void {
+pub fn newline() void {
+    newlineInternal(true);
+}
+
+fn putchInternal(ch: u8, sync_cursor: bool) void {
     switch (ch) {
         '\n' => {
-            newline();
+            newlineInternal(sync_cursor);
             return;
         },
         '\r' => {
@@ -178,7 +182,7 @@ pub fn putch(ch: u8) void {
                 serial.putch(ch);
             }
             console_col = 0;
-            syncCursor();
+            if (sync_cursor) syncCursor();
             return;
         },
         else => {},
@@ -192,12 +196,30 @@ pub fn putch(ch: u8) void {
     if (console_col >= TEXT_WIDTH) {
         advanceLine();
     }
-    syncCursor();
+    if (sync_cursor) syncCursor();
+}
+
+pub fn putch(ch: u8) void {
+    putchInternal(ch, true);
 }
 
 pub fn puts(s: []const u8) void {
+    if (backend == .framebuf and cursor_visible and s.len > 1) {
+        cursor_visible = false;
+        syncCursor();
+        defer {
+            cursor_visible = true;
+            syncCursor();
+        }
+
+        for (s) |ch| {
+            putchInternal(ch, false);
+        }
+        return;
+    }
+
     for (s) |ch| {
-        putch(ch);
+        putchInternal(ch, true);
     }
 }
 

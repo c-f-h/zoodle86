@@ -97,6 +97,9 @@ const vga_palette = [16][3]u8{
     .{ 245, 248, 252 },
 };
 
+// Pre-packed color values for the specific pixel format of the framebuffer
+var packed_vga_palette: [16]u32 = undefined;
+
 fn getBootVideoInfo(boot_video_info_phys: usize) !void {
     // NB: assumes identity mapping!
     info = @ptrFromInt(boot_video_info_phys);
@@ -158,14 +161,17 @@ inline fn fillScanline16(ptr: [*]u8, length: u32, color: u16) void {
     }
 }
 
-inline fn blitScanline16(ptr: [*]u8, bitmap: []const u8, bit_count: u32, color0: u16, color1: u16) void {
+inline fn blitScanline16(ptr: [*]u8, row_bitmap: u8, color0: u16, color1: u16) void {
     var p: [*]u16 = @ptrCast(@alignCast(ptr));
-    var bit: u32 = 0;
-    while (bit < bit_count) : (bit += 1) {
-        const byte = bitmap[@as(usize, @intCast(@divTrunc(bit, 8)))];
-        const mask: u8 = @as(u8, 0x80) >> @intCast(bit & 0x07);
-        p[bit] = if ((byte & mask) != 0) color1 else color0;
-    }
+
+    p[0] = if ((row_bitmap & 0x80) != 0) color1 else color0;
+    p[1] = if ((row_bitmap & 0x40) != 0) color1 else color0;
+    p[2] = if ((row_bitmap & 0x20) != 0) color1 else color0;
+    p[3] = if ((row_bitmap & 0x10) != 0) color1 else color0;
+    p[4] = if ((row_bitmap & 0x08) != 0) color1 else color0;
+    p[5] = if ((row_bitmap & 0x04) != 0) color1 else color0;
+    p[6] = if ((row_bitmap & 0x02) != 0) color1 else color0;
+    p[7] = if ((row_bitmap & 0x01) != 0) color1 else color0;
 }
 
 fn fillRect(x: u32, y: u32, w: u32, h: u32, color: u32) void {
@@ -183,11 +189,9 @@ fn fillRect(x: u32, y: u32, w: u32, h: u32, color: u32) void {
     }
 }
 
-fn glyphPixelIsSet(font: *const psf.PSFFont, glyph: []const u8, row: u32, col: u32) bool {
-    const row_start = @as(usize, row * font.bytes_per_row);
-    const byte_index = row_start + @as(usize, @intCast(@divTrunc(col, 8)));
-    const mask: u8 = @as(u8, 0x80) >> @as(u3, @intCast(col % 8));
-    return (glyph[byte_index] & mask) != 0;
+fn glyphPixelIsSet(row_bitmap: u8, col: u32) bool {
+    const mask: u8 = @as(u8, 0x80) >> @as(u3, @intCast(col));
+    return (row_bitmap & mask) != 0;
 }
 
 fn drawGlyph(x: u32, y: u32, font: *const psf.PSFFont, ch: u8, color: u32) void {
@@ -195,33 +199,31 @@ fn drawGlyph(x: u32, y: u32, font: *const psf.PSFFont, ch: u8, color: u32) void 
 
     var row: u32 = 0;
     while (row < font.glyph_height) : (row += 1) {
+        const row_bitmap = glyph[row];
         var col: u32 = 0;
-        while (col < font.glyph_width) : (col += 1) {
-            if (!glyphPixelIsSet(font, glyph, row, col)) continue;
-            putPixel(x + col, y + row, color);
+        while (col < 8) : (col += 1) {
+            if (glyphPixelIsSet(row_bitmap, col))
+                putPixel(x + col, y + row, color);
         }
     }
 }
 
-fn drawGlyphCell(
-    x: u32,
-    y: u32,
+fn drawGlyphCellAt(
+    pix_ptr: [*]u8,
     font: *const psf.PSFFont,
     ch: u8,
     attr: u8,
-    highlight: bool,
 ) void {
-    const effective_attr = if (highlight) swapAttr(attr) else attr;
-    const bg: u16 = @truncate(packPaletteColor(@truncate(effective_attr >> 4)));
-    const fg: u16 = @truncate(packPaletteColor(effective_attr & 0x0F));
+    const bg: u16 = @truncate(packed_vga_palette[@truncate(attr >> 4)]);
+    const fg: u16 = @truncate(packed_vga_palette[@truncate(attr & 0x0F)]);
     const glyph = font.getGlyph(ch);
 
     var row: u32 = 0;
+    var row_ptr = pix_ptr;
     while (row < font.glyph_height) : (row += 1) {
-        const row_start = @as(usize, row * font.bytes_per_row);
-        const row_bitmap = glyph[row_start .. row_start + @as(usize, font.bytes_per_row)];
-        const pix_ptr = fb_base + (y + row) * info.pitch_bytes + x * bytes_per_pixel;
-        blitScanline16(@ptrCast(pix_ptr), row_bitmap, font.glyph_width, bg, fg);
+        const row_bitmap = glyph[row];
+        blitScanline16(@ptrCast(row_ptr), row_bitmap, bg, fg);
+        row_ptr += info.pitch_bytes;
     }
 }
 
@@ -266,14 +268,15 @@ fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
     const attr: u8 = @truncate(cell >> 8);
     const px = console_origin_x + col * font.glyph_width;
     const py = console_origin_y + row * font.glyph_height;
+    const pix_ptr = fb_base + py * info.pitch_bytes + px * bytes_per_pixel;
 
-    drawGlyphCell(
-        px,
-        py,
+    const effective_attr = if (highlight) swapAttr(attr) else attr;
+
+    drawGlyphCellAt(
+        pix_ptr,
         font,
         if (ch == 0) ' ' else ch,
-        attr,
-        highlight,
+        effective_attr,
     );
 }
 
@@ -317,12 +320,19 @@ pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, pat
     defer allocator.free(file_data);
 
     active_font = try psf.loadFromBytes(allocator, file_data, '?');
+    if (active_font.glyph_width > 8) {
+        return error.UnsupportedFont; // optimized renderer for 8px wide glyphs only
+    }
     active_font_label = path;
 }
 
 /// Map the boot framebuffer and prepare the 80x25 text console renderer when graphics mode is usable.
 pub fn initConsolePanel() !void {
     if (console_ready) return;
+
+    for (0..16) |i| {
+        packed_vga_palette[i] = packPaletteColor(@truncate(i));
+    }
 
     const font = &active_font;
     const text_width = console.TEXT_WIDTH * font.glyph_width;
@@ -353,12 +363,27 @@ pub fn initConsolePanel() !void {
 pub fn renderConsole(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, cursor_visible: bool) void {
     if (!console_ready) return;
 
+    const font = &active_font;
+    const cell_width_bytes: usize = @as(usize, @intCast(font.glyph_width * bytes_per_pixel));
+    const cell_height_bytes: usize = @as(usize, info.pitch_bytes) * @as(usize, @intCast(font.glyph_height));
+    var cell_ptr: [*]const console.Cell = cells;
+    var fb_row_ptr = fb_base + console_origin_y * info.pitch_bytes + console_origin_x * bytes_per_pixel;
     var row: u32 = 0;
     while (row < console.TEXT_HEIGHT) : (row += 1) {
+        var fb_cell_ptr = fb_row_ptr;
         var col: u32 = 0;
         while (col < console.TEXT_WIDTH) : (col += 1) {
-            drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, false);
+            const cell = cell_ptr[0];
+            drawGlyphCellAt(
+                fb_cell_ptr,
+                font,
+                if ((cell & 0x00FF) == 0) ' ' else @truncate(cell & 0x00FF),
+                @truncate(cell >> 8),
+            );
+            cell_ptr += 1;
+            fb_cell_ptr += cell_width_bytes;
         }
+        fb_row_ptr += cell_height_bytes;
     }
 
     console_cursor_row = if (cursor_row < console.TEXT_HEIGHT) cursor_row else console.TEXT_HEIGHT - 1;
