@@ -5,6 +5,7 @@
 const console = @import("console.zig");
 const filedesc = @import("filedesc.zig");
 const framebuf = @import("gfx/framebuf.zig");
+const vconsole = @import("gfx/vconsole.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const kprof = @import("kprof.zig");
@@ -347,8 +348,8 @@ fn kernel_enter() !noreturn {
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions
-        try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
-        try framebuf.initConsolePanel();
+        try vconsole.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
+        try vconsole.init();
         console.refresh();
     }
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion

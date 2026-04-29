@@ -1,5 +1,5 @@
-const framebuf = @import("gfx/framebuf.zig");
 const serial = @import("serial.zig");
+const vconsole = @import("gfx/vconsole.zig");
 const vga = @import("vgatext.zig");
 
 pub const TEXT_WIDTH: u32 = vga.TEXT_WIDTH;
@@ -37,7 +37,7 @@ inline fn makeCell(ch: u8, attr: u8) u16 {
 /// If required by the backend, update the screen.
 pub fn refresh() void {
     if (backend == .framebuf)
-        framebuf.renderConsole(console_cells, console_row, console_col, cursor_visible);
+        vconsole.render(console_cells, console_row, console_col, cursor_visible);
     // VGA backend is updated automatically by hardware when we write to video memory.
 }
 
@@ -51,7 +51,7 @@ fn syncCursor() void {
                 vga.disableCursor();
             }
         },
-        .framebuf => framebuf.setConsoleCursor(console_cells, console_row, console_col, cursor_visible),
+        .framebuf => vconsole.setCursor(console_cells, console_row, console_col, cursor_visible),
     }
 }
 
@@ -59,7 +59,7 @@ fn scrollIfNeeded() void {
     if (console_row < TEXT_HEIGHT) return;
 
     if (backend == .framebuf and cursor_visible) {
-        framebuf.setConsoleCursor(console_cells, console_row, console_col, false);
+        vconsole.setCursor(console_cells, console_row, console_col, false);
     }
 
     var row: u32 = 1;
@@ -77,7 +77,7 @@ fn scrollIfNeeded() void {
 
     console_row = TEXT_HEIGHT - 1;
     if (backend == .framebuf) {
-        framebuf.scrollConsole(console_cells);
+        vconsole.scroll(console_cells);
     } else {
         refresh();
     }
@@ -153,7 +153,7 @@ pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
     console_cells[cellIndex(row, col)] = makeCell(ch, attr);
 
     if (backend == .framebuf) {
-        framebuf.renderConsoleCell(console_cells, row, col);
+        vconsole.renderCell(console_cells, row, col);
     }
 }
 

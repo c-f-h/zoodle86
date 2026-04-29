@@ -10,7 +10,7 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses 
 
 ## Graphical subsystem
 
-Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode, map the framebuffer if one is available, and let `kernel/console.zig` switch from VGA text mode to a framebuffer text backend. In graphics mode that backend draws a framed pane with a title bar around the fixed 80x25 console grid.
+Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/gfx/vconsole.zig` renders the framebuffer-backed text console that `kernel/console.zig` can switch to. In graphics mode that backend draws a framed pane with a title bar around the fixed 80x25 console grid.
 
 ## Virtual Memory Layout
 
