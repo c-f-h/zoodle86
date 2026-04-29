@@ -373,16 +373,11 @@ fn kernel_enter() !noreturn {
     try mountFs();
 
     if (graphical) {
-        const ticks_before = timer_ticks;
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions
         try framebuf.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
         try framebuf.initConsolePanel();
         console.refresh();
-
-        serial.puts("Ticks for framebuf init: ");
-        serial.putHexU32(timer_ticks - ticks_before);
-        serial.puts("\n");
     }
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
@@ -433,6 +428,11 @@ fn kernel_reenter() noreturn {
 /// Return the number of scheduler-driven task-to-task switches since boot.
 pub fn getTaskSwitchCount() u32 {
     return task_switch_count;
+}
+
+/// Return the number of timer IRQ ticks handled since boot.
+pub fn getTimerTicks() u32 {
+    return timer_ticks;
 }
 
 /// Switch to the next active task, if any, or re-enter the kernel if no other task is runnable.

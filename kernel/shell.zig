@@ -10,6 +10,7 @@ const keyboard = @import("keyboard.zig");
 const pageallocator = @import("pageallocator.zig");
 const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
+const serial = @import("serial.zig");
 const task = @import("task.zig");
 
 const autoexec_name = "autoexec";
@@ -43,6 +44,7 @@ const commands = [_]Command{
     .{ .name = "memmap", .description = "Interactive page directory/table memory map viewer.", .handler = cmdMemmap },
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
     .{ .name = "taskswitch", .description = "Show the scheduler task-to-task switch count.", .handler = cmdTaskSwitch },
+    .{ .name = "ticks", .description = "Write current timer ticks to serial, appending arguments.", .handler = cmdTicks },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
     .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
@@ -358,6 +360,21 @@ fn cmdTaskSwitch(shell: *Shell, args: *ArgsIterator) !void {
     console.puts("Task switches: ");
     console.putDecU32(kernel.getTaskSwitchCount());
     console.newline();
+}
+
+fn cmdTicks(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+
+    var tick_buf: [10]u8 = undefined;
+    const tick_text = try std.fmt.bufPrint(&tick_buf, "{}", .{kernel.getTimerTicks()});
+    serial.puts("ticks ");
+    serial.puts(tick_text);
+
+    while (args.next()) |arg| {
+        serial.putch(' ');
+        serial.puts(arg);
+    }
+    serial.putch('\n');
 }
 
 fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
