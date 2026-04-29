@@ -7,6 +7,7 @@ const cpuid = @import("cpuid.zig");
 const fs = @import("fs.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
+const kprof = @import("kprof.zig");
 const pageallocator = @import("pageallocator.zig");
 const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
@@ -45,6 +46,7 @@ const commands = [_]Command{
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
     .{ .name = "taskswitch", .description = "Show the scheduler task-to-task switch count.", .handler = cmdTaskSwitch },
     .{ .name = "ticks", .description = "Write current timer ticks to serial, appending arguments.", .handler = cmdTicks },
+    .{ .name = "profile", .description = "Kernel EIP profiler control: profile start|stop.", .handler = cmdProfile },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
     .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
@@ -377,6 +379,50 @@ fn cmdTicks(shell: *Shell, args: *ArgsIterator) !void {
     serial.putch('\n');
 }
 
+fn cmdProfile(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+
+    const action = args.next() orelse {
+        printUsage("profile");
+        return;
+    };
+
+    if (args.next() != null) {
+        printUsage("profile");
+        return;
+    }
+
+    if (std.mem.eql(u8, action, "start")) {
+        kprof.start() catch |err| {
+            switch (err) {
+                error.AlreadyRunning => console.puts("Profiler already running.\n"),
+                error.NotInitialized => console.puts("Profiler not initialized.\n"),
+                error.OutOfMemory => console.puts("Profiler could not allocate sampling page(s).\n"),
+                else => return err,
+            }
+            return;
+        };
+        console.puts("Profiler started.\n");
+        return;
+    }
+
+    if (std.mem.eql(u8, action, "stop")) {
+        kprof.stop() catch |err| {
+            switch (err) {
+                error.NotRunning => console.puts("Profiler is not running.\n"),
+                error.NotInitialized => console.puts("Profiler not initialized.\n"),
+                error.OutOfMemory => console.puts("Profiler aggregation ran out of memory.\n"),
+                else => return err,
+            }
+            return;
+        };
+        console.puts("Profiler stopped; histogram written to serial.\n");
+        return;
+    }
+
+    printUsage("profile");
+}
+
 fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
 
@@ -515,6 +561,8 @@ fn printUsage(name: []const u8) void {
             console.puts(" (no arguments)");
         } else if (std.mem.eql(u8, command.name, "taskswitch")) {
             console.puts(" (no arguments)");
+        } else if (std.mem.eql(u8, command.name, "profile")) {
+            console.puts(" <start|stop>");
         } else if (std.mem.eql(u8, command.name, "serial")) {
             console.puts(" <on|off>");
         }

@@ -7,6 +7,7 @@ const filedesc = @import("filedesc.zig");
 const framebuf = @import("gfx/framebuf.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
+const kprof = @import("kprof.zig");
 const ide = @import("ide.zig");
 const fs = @import("fs.zig");
 const gdt = @import("gdt.zig");
@@ -71,8 +72,9 @@ var task_switch_count: u32 = 0;
 
 var timer_ticks: u32 = 0;
 
-fn timerIrqHandler() void {
+fn timerIrqHandler(frame: *const interrupt_frame.InterruptFrame) void {
     timer_ticks += 1;
+    kprof.onTimerTick(frame.eip);
     //const attr: u8 = if ((timer_ticks & 0x100) != 0) 0x70 else 0x07;
     //console.putCharAt(0, 79, @truncate(timer_ticks & 0xFF), attr);
 }
@@ -156,7 +158,7 @@ export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c
 
     switch (frame.vector) {
         VECTOR_TIMER => {
-            timerIrqHandler();
+            timerIrqHandler(frame);
             if (frame.fromUserMode())
                 reschedule();
         },
@@ -347,6 +349,7 @@ fn kernel_enter() !noreturn {
     @memset(kernel_data, 0xDD);
     kernel_fba = std.heap.FixedBufferAllocator.init(kernel_data);
     alloc = kernel_fba.allocator();
+    kprof.init(alloc);
     taskman.init();
 
     console.put(.{

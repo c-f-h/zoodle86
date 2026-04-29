@@ -14,6 +14,7 @@ Complete listing of every source file and its role.
 - `kernel/gdt.zig`: Global Descriptor Table structures (segments, TSS, access flags).
 - `kernel/idt.zig`: Interrupt Descriptor Table structures and gate types.
 - `kernel/pit.zig`: Simple Programmable Interval Timer (PIT) driver.
+- `kernel/kprof.zig`: kernel timer-tick profiler that samples interrupted EIP values into page-backed buffers and emits a serial histogram on stop.
 - `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
@@ -49,7 +50,7 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `cat`, `write`, `rm`, `mv`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `keylog`, `shutdown`, `break`). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `cat`, `write`, `rm`, `mv`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `keylog`, `shutdown`, `break`). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 

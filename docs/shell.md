@@ -18,6 +18,7 @@ The kernel provides an interactive shell with the following commands:
 | **memstat** | (none) | Show page allocator memory statistics. |
 | **taskswitch** | (none) | Show the number of scheduler task-to-task switches since boot. |
 | **ticks** | `[<arg> ...]` | Write current timer ticks to COM1 and append any provided arguments on the same line. |
+| **profile** | `<start\|stop>` | Control the kernel timer-tick EIP profiler. `start` begins sampling to page-backed buffers; `stop` writes a descending EIP count histogram to COM1. |
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
 | **run** | `<executable> [<arg> ...]` | Run an ELF executable with command-line arguments. (argv[0] = executable name, plus optional args.) |
 | **multirun** | `<count> <executable> [<arg> ...]` | Run `count` concurrent copies of one ELF executable, forwarding the same argv to each copy. |
