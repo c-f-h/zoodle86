@@ -58,6 +58,10 @@ fn syncCursor() void {
 fn scrollIfNeeded() void {
     if (console_row < TEXT_HEIGHT) return;
 
+    if (backend == .framebuf and cursor_visible) {
+        framebuf.setConsoleCursor(console_cells, console_row, console_col, false);
+    }
+
     var row: u32 = 1;
     while (row < TEXT_HEIGHT) : (row += 1) {
         var col: u32 = 0;
@@ -72,7 +76,11 @@ fn scrollIfNeeded() void {
     }
 
     console_row = TEXT_HEIGHT - 1;
-    refresh();
+    if (backend == .framebuf) {
+        framebuf.scrollConsole(console_cells);
+    } else {
+        refresh();
+    }
 }
 
 fn advanceLine() void {

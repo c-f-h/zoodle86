@@ -1,11 +1,15 @@
 const font8x8 = @import("font8x8.zig");
+const psf = @import("psf.zig");
+
 const fs = @import("../fs.zig");
 const paging = @import("../paging.zig");
-const psf = @import("psf.zig");
-const std = @import("std");
 const console = @import("../console.zig");
+const mem = @import("../mem.zig");
+
+const std = @import("std");
 
 const fb_demo_va: u32 = 0xD000_0000;
+const console_shadow_va: u32 = 0xD100_0000;
 const boot_video_info_magic: u32 = 0x3044_4956; // "VID0"
 
 var active_font: psf.PSFFont = font8x8.font;
@@ -36,6 +40,12 @@ var info: *align(1) const BootVideoInfo = undefined;
 var fb_base: [*]u8 = undefined;
 
 var bytes_per_pixel: u32 = 0;
+
+// For faster scrolling, we keep a shadow buffer into which we render console text.
+// It's then blitted to the framebuffer on demand. This avoids slow readback from VESA memory.
+var console_shadow: [*]u8 = undefined;
+var console_shadow_pitch_bytes: usize = 0;
+var console_shadow_rows: usize = 0;
 
 var console_origin_x: u32 = 0;
 var console_origin_y: u32 = 0;
@@ -210,6 +220,7 @@ fn drawGlyph(x: u32, y: u32, font: *const psf.PSFFont, ch: u8, color: u32) void 
 
 fn drawGlyphCellAt(
     pix_ptr: [*]u8,
+    pitch: usize,
     font: *const psf.PSFFont,
     ch: u8,
     attr: u8,
@@ -223,17 +234,16 @@ fn drawGlyphCellAt(
     while (row < font.glyph_height) : (row += 1) {
         const row_bitmap = glyph[row];
         blitScanline16(@ptrCast(row_ptr), row_bitmap, bg, fg);
-        row_ptr += info.pitch_bytes;
+        row_ptr += pitch;
     }
 }
 
-fn drawText(x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u32) u32 {
+fn drawText(x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u32) void {
     var cursor_x = x;
     for (text) |ch| {
         drawGlyph(cursor_x, y, font, ch, color);
         cursor_x += font.glyph_width;
     }
-    return cursor_x;
 }
 
 pub fn init(boot_video_info_phys: usize) !void {
@@ -260,24 +270,88 @@ fn consoleCellIndex(row: u32, col: u32) usize {
     return @as(usize, @intCast(row)) * @as(usize, console.TEXT_WIDTH) + @as(usize, @intCast(col));
 }
 
+fn consoleCellWidthBytes() usize {
+    return @as(usize, @intCast(active_font.glyph_width * bytes_per_pixel));
+}
+
+fn consoleCellHeightRows() usize {
+    return @as(usize, @intCast(active_font.glyph_height));
+}
+
+fn fbTextBasePtr() [*]u8 {
+    return fb_base + console_origin_y * info.pitch_bytes + console_origin_x * bytes_per_pixel;
+}
+
+fn shadowRowPtr(pixel_row: usize) [*]u8 {
+    return console_shadow + pixel_row * console_shadow_pitch_bytes;
+}
+
+fn fbRowPtr(pixel_row: usize) [*]u8 {
+    return fbTextBasePtr() + pixel_row * @as(usize, info.pitch_bytes);
+}
+
+fn blitShadowRowsToFramebuffer(start_pixel_row: usize, row_count: usize) void {
+    var src = shadowRowPtr(start_pixel_row);
+    var dst = fbRowPtr(start_pixel_row);
+    var row: usize = 0;
+    while (row < row_count) : (row += 1) {
+        mem.copyBytesForward(dst, src, console_shadow_pitch_bytes);
+        src += console_shadow_pitch_bytes;
+        dst += info.pitch_bytes;
+    }
+}
+
+fn blitShadowCellToFramebuffer(row: u32, col: u32) void {
+    const start_pixel_row = @as(usize, @intCast(row * active_font.glyph_height));
+    const pixel_col_offset = @as(usize, @intCast(col * active_font.glyph_width * bytes_per_pixel));
+    var src = shadowRowPtr(start_pixel_row) + pixel_col_offset;
+    var dst = fbRowPtr(start_pixel_row) + pixel_col_offset;
+    var pixel_row: usize = 0;
+    while (pixel_row < consoleCellHeightRows()) : (pixel_row += 1) {
+        mem.copyBytesForward(dst, src, consoleCellWidthBytes());
+        src += console_shadow_pitch_bytes;
+        dst += info.pitch_bytes;
+    }
+}
+
 fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
     if (!console_ready) return;
 
     const font = &active_font;
     const ch: u8 = @truncate(cell & 0x00FF);
     const attr: u8 = @truncate(cell >> 8);
-    const px = console_origin_x + col * font.glyph_width;
-    const py = console_origin_y + row * font.glyph_height;
-    const pix_ptr = fb_base + py * info.pitch_bytes + px * bytes_per_pixel;
+    const pix_ptr = shadowRowPtr(@as(usize, @intCast(row * font.glyph_height))) +
+        @as(usize, @intCast(col * font.glyph_width * bytes_per_pixel));
 
     const effective_attr = if (highlight) swapAttr(attr) else attr;
 
     drawGlyphCellAt(
         pix_ptr,
+        console_shadow_pitch_bytes,
         font,
         if (ch == 0) ' ' else ch,
         effective_attr,
     );
+}
+
+fn drawConsoleRowAt(cells: [*]const console.Cell, row_ptr: [*]u8, row_pitch_bytes: usize) void {
+    const font = &active_font;
+    const cell_width_bytes = consoleCellWidthBytes();
+    var cell_ptr = cells;
+    var cell_pix_ptr = row_ptr;
+    var col: u32 = 0;
+    while (col < console.TEXT_WIDTH) : (col += 1) {
+        const cell = cell_ptr[0];
+        drawGlyphCellAt(
+            cell_pix_ptr,
+            row_pitch_bytes,
+            font,
+            if ((cell & 0x00FF) == 0) ' ' else @truncate(cell & 0x00FF),
+            @truncate(cell >> 8),
+        );
+        cell_ptr += 1;
+        cell_pix_ptr += cell_width_bytes;
+    }
 }
 
 fn drawConsoleFrame() void {
@@ -305,7 +379,7 @@ fn drawConsoleFrame() void {
         console_title_h,
         title_bg,
     );
-    _ = drawText(
+    drawText(
         console_panel_x + panel_border + title_padding_x,
         console_panel_y + panel_border + title_padding_y,
         &active_font,
@@ -354,6 +428,13 @@ pub fn initConsolePanel() !void {
     console_cursor_row = 0;
     console_cursor_col = 0;
     console_cursor_visible = false;
+    console_shadow_pitch_bytes = @as(usize, @intCast(text_width * bytes_per_pixel));
+    console_shadow_rows = @as(usize, @intCast(text_height));
+    const shadow_size = console_shadow_pitch_bytes * console_shadow_rows;
+    const shadow_pages: u32 = @intCast(@divTrunc(shadow_size + paging.PAGE - 1, paging.PAGE));
+    const shadow_mem = paging.allocateMemoryAt(console_shadow_va, shadow_pages, false, true);
+    console_shadow = shadow_mem.ptr;
+    @memset(console_shadow[0..shadow_size], 0);
     console_ready = true;
 
     drawConsoleFrame();
@@ -363,27 +444,14 @@ pub fn initConsolePanel() !void {
 pub fn renderConsole(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, cursor_visible: bool) void {
     if (!console_ready) return;
 
-    const font = &active_font;
-    const cell_width_bytes: usize = @as(usize, @intCast(font.glyph_width * bytes_per_pixel));
-    const cell_height_bytes: usize = @as(usize, info.pitch_bytes) * @as(usize, @intCast(font.glyph_height));
-    var cell_ptr: [*]const console.Cell = cells;
-    var fb_row_ptr = fb_base + console_origin_y * info.pitch_bytes + console_origin_x * bytes_per_pixel;
+    const row_height_bytes = console_shadow_pitch_bytes * consoleCellHeightRows();
+    var shadow_text_row_ptr = console_shadow;
+    var cell_row_ptr: [*]const console.Cell = cells;
     var row: u32 = 0;
     while (row < console.TEXT_HEIGHT) : (row += 1) {
-        var fb_cell_ptr = fb_row_ptr;
-        var col: u32 = 0;
-        while (col < console.TEXT_WIDTH) : (col += 1) {
-            const cell = cell_ptr[0];
-            drawGlyphCellAt(
-                fb_cell_ptr,
-                font,
-                if ((cell & 0x00FF) == 0) ' ' else @truncate(cell & 0x00FF),
-                @truncate(cell >> 8),
-            );
-            cell_ptr += 1;
-            fb_cell_ptr += cell_width_bytes;
-        }
-        fb_row_ptr += cell_height_bytes;
+        drawConsoleRowAt(cell_row_ptr, shadow_text_row_ptr, console_shadow_pitch_bytes);
+        cell_row_ptr += console.TEXT_WIDTH;
+        shadow_text_row_ptr += row_height_bytes;
     }
 
     console_cursor_row = if (cursor_row < console.TEXT_HEIGHT) cursor_row else console.TEXT_HEIGHT - 1;
@@ -393,6 +461,21 @@ pub fn renderConsole(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, c
     if (console_cursor_visible) {
         drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, true);
     }
+    blitShadowRowsToFramebuffer(0, console_shadow_rows);
+}
+
+/// Scroll the framebuffer text grid up by one console row and redraw the newly exposed bottom row.
+pub fn scrollConsole(cells: [*]const console.Cell) void {
+    if (!console_ready) return;
+
+    const scrolled_bytes = (console_shadow_rows - consoleCellHeightRows()) * console_shadow_pitch_bytes;
+    const scroll_src_offset = consoleCellHeightRows() * console_shadow_pitch_bytes;
+    mem.copyBytesForward(console_shadow, console_shadow + scroll_src_offset, scrolled_bytes);
+
+    const bottom_row_cells = cells + consoleCellIndex(console.TEXT_HEIGHT - 1, 0);
+    const bottom_row_ptr = shadowRowPtr(console_shadow_rows - consoleCellHeightRows());
+    drawConsoleRowAt(bottom_row_cells, bottom_row_ptr, console_shadow_pitch_bytes);
+    blitShadowRowsToFramebuffer(0, console_shadow_rows);
 }
 
 /// Redraw a single console cell in the framebuffer backend.
@@ -402,6 +485,7 @@ pub fn renderConsoleCell(cells: [*]console.Cell, row: u32, col: u32) void {
 
     const highlight = console_cursor_visible and row == console_cursor_row and col == console_cursor_col;
     drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, highlight);
+    blitShadowCellToFramebuffer(row, col);
 }
 
 /// Update the highlighted framebuffer cursor by redrawing the affected console cells.
@@ -410,6 +494,7 @@ pub fn setConsoleCursor(cells: [*]const console.Cell, row: u32, col: u32, visibl
 
     if (console_cursor_visible) {
         drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, false);
+        blitShadowCellToFramebuffer(console_cursor_row, console_cursor_col);
     }
 
     console_cursor_row = if (row < console.TEXT_HEIGHT) row else console.TEXT_HEIGHT - 1;
@@ -418,62 +503,10 @@ pub fn setConsoleCursor(cells: [*]const console.Cell, row: u32, col: u32, visibl
 
     if (console_cursor_visible) {
         drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, true);
+        blitShadowCellToFramebuffer(console_cursor_row, console_cursor_col);
     }
 }
 
-/// Map the boot framebuffer and draw a text-mode style diagnostic demo when VBE metadata is valid.
-pub fn tryDrawBootDemo() void {
-    const font = &active_font;
-
-    const width = @as(u32, info.width);
-    const height = @as(u32, info.height);
-    const glyph_height = font.glyph_height;
-    const margin: u32 = 12;
-    const panel_padding: u32 = 10;
-    const panel_x = margin;
-    const panel_y = margin;
-    const panel_max_w = if (width > panel_x * 2) width - panel_x * 2 else width;
-    const panel_max_h = if (height > panel_y * 2) height - panel_y * 2 else height;
-    const panel_w = @min(panel_max_w, 66 * font.glyph_width + panel_padding * 2);
-    const title_h = glyph_height + 4;
-    const line_step = glyph_height + 2;
-    const panel_h = @min(panel_max_h, title_h + panel_padding * 2 + line_step * 13);
-    const title_text_y = panel_y + 3;
-    const text_x = panel_x + panel_padding;
-
-    const bg = packRgb(info, 8, 14, 23);
-    const panel = packRgb(info, 18, 28, 42);
-    const panel_border_color = packRgb(info, 56, 86, 125);
-    const title_bg = packRgb(info, 40, 92, 170);
-    const fg = packRgb(info, 218, 232, 249);
-    const dim = packRgb(info, 138, 160, 188);
-    const warm = packRgb(info, 237, 170, 74);
-    const green = packRgb(info, 110, 212, 126);
-
-    fillRect(fb_base, info, 0, 0, width, height, bg);
-    fillRect(fb_base, info, panel_x, panel_y, panel_w, panel_h, panel_border_color);
-    fillRect(fb_base, info, panel_x + 1, panel_y + 1, panel_w - 2, panel_h - 2, panel);
-    fillRect(fb_base, info, panel_x + 1, panel_y + 1, panel_w - 2, title_h, title_bg);
-
-    var mode_buf: [32]u8 = undefined;
-    const mode_line = std.fmt.bufPrint(&mode_buf, "mode {d}x{d}x{d}", .{ info.width, info.height, info.bpp }) catch @panic("framebuffer text buffer overflow");
-
-    _ = drawText(fb_base, info, text_x, title_text_y, font, "zoodle86 framebuffer text demo", fg);
-    var y: u32 = panel_y + 1 + title_h + panel_padding;
-    const xnew = drawText(fb_base, info, text_x, y, font, "font ", dim);
-    _ = drawText(fb_base, info, xnew, y, font, active_font_label, dim);
-    y += line_step;
-    _ = drawText(fb_base, info, text_x, y, font, mode_line, dim);
-    y += line_step * 2;
-    _ = drawText(fb_base, info, text_x, y, font, "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", fg);
-    y += line_step;
-    _ = drawText(fb_base, info, text_x, y, font, "the quick brown fox jumps over the lazy dog", fg);
-    y += line_step;
-    _ = drawText(fb_base, info, text_x, y, font, "0123456789  !@#$%^&*()  []{}<>?/+-=_", fg);
-    y += line_step * 2;
-    _ = drawText(fb_base, info, text_x, y, font, "shell> run hello framebuffer", warm);
-    y += line_step;
-    _ = drawText(fb_base, info, text_x, y, font, "status: text renderer online", green);
-    y += line_step;
-    _ = drawText(fb_base, info, text_x, y, font, "fallback glyphs: ~ | {} [] ()", dim);
-}
+// const dim = packRgb(info, 138, 160, 188);
+// const warm = packRgb(info, 237, 170, 74);
+// const green = packRgb(info, 110, 212, 126);

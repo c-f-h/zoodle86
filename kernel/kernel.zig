@@ -199,37 +199,6 @@ fn exception_handler(frame: *const interrupt_frame.InterruptFrame) noreturn {
     }
 }
 
-pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
-    var i: usize = 0;
-    while (i < len) : (i += 1) {
-        dest[i] = src[i];
-    }
-    return dest;
-}
-
-/// Like memcpy but handles overlapping source and destination regions.
-pub export fn memmove(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
-    if (@intFromPtr(dest) < @intFromPtr(src) or @intFromPtr(dest) >= @intFromPtr(src) + len) {
-        var i: usize = 0;
-        while (i < len) : (i += 1) dest[i] = src[i];
-    } else {
-        var i: usize = len;
-        while (i > 0) {
-            i -= 1;
-            dest[i] = src[i];
-        }
-    }
-    return dest;
-}
-
-pub export fn memset(dest: [*]u8, val: u8, len: usize) [*]u8 {
-    var i: usize = 0;
-    while (i < len) : (i += 1) {
-        dest[i] = val;
-    }
-    return dest;
-}
-
 const E820MemoryMapEntry = struct {
     base: u64, // 8 bytes
     length: u64, // 8 bytes
