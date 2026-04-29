@@ -33,7 +33,9 @@ const BootVideoInfo = packed struct {
 };
 
 var info: *align(1) const BootVideoInfo = undefined;
-var fb_base: [*]volatile u8 = undefined;
+var fb_base: [*]u8 = undefined;
+
+var bytes_per_pixel: u32 = 0;
 
 var console_origin_x: u32 = 0;
 var console_origin_y: u32 = 0;
@@ -139,13 +141,20 @@ fn swapAttr(attr: u8) u8 {
 fn putPixel(x: u32, y: u32, color: u32) void {
     if (x >= info.width or y >= info.height) return;
 
-    const bytes_per_pixel: u32 = @divTrunc(@as(u32, info.bpp) + 7, 8);
     const idx = @as(usize, y) * info.pitch_bytes + @as(usize, x) * bytes_per_pixel;
-    const pixel: [*]volatile u8 = fb_base + idx;
+    const pixel: [*]u8 = fb_base + idx;
 
     var i: u32 = 0;
     while (i < bytes_per_pixel) : (i += 1) {
         pixel[i] = @truncate(color >> @as(u5, @intCast(i * 8)));
+    }
+}
+
+inline fn fillScanline16(ptr: [*]u8, length: u32, color: u16) void {
+    var p: [*]u16 = @ptrCast(@alignCast(ptr));
+    var i: u32 = 0;
+    while (i < length) : (i += 1) {
+        p[i] = color;
     }
 }
 
@@ -155,10 +164,12 @@ fn fillRect(x: u32, y: u32, w: u32, h: u32, color: u32) void {
 
     var py = y;
     while (py < y_end) : (py += 1) {
-        var px = x;
-        while (px < x_end) : (px += 1) {
-            putPixel(px, py, color);
-        }
+        const pix_ptr = fb_base + py * info.pitch_bytes + x * bytes_per_pixel;
+        fillScanline16(@ptrCast(pix_ptr), x_end - x, @truncate(color));
+        //var px = x;
+        //while (px < x_end) : (px += 1) {
+        //    putPixel(px, py, color);
+        //}
     }
 }
 
@@ -209,6 +220,12 @@ fn drawText(x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u
 
 pub fn init(boot_video_info_phys: usize) !void {
     try getBootVideoInfo(boot_video_info_phys);
+
+    if (info.bpp != 16) {
+        @panic("BPP-specific functions only implemented for 16 bits!");
+    }
+
+    bytes_per_pixel = @divTrunc(@as(u32, info.bpp) + 7, 8);
 
     const fb_size: u32 = @as(u32, info.pitch_bytes) * @as(u32, info.height);
     const phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
