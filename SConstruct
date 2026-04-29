@@ -12,11 +12,15 @@ DEFAULT_NASM = pathlib.Path(r"C:\Program Files\nasm-3.01\nasm.exe")
 DEFAULT_ZIG = "zig"
 DEFAULT_BOCHS = pathlib.Path(r"C:\Program Files\Bochs-3.0\bochs.exe")
 DEFAULT_QEMU = pathlib.Path(r"C:\Program Files\qemu\qemu-system-i386.exe")
+DEFAULT_OBJDUMP = "objdump"
+DEFAULT_STRIP = "strip"
 
 NASM_EXE = pathlib.Path(os.environ.get("NASM_EXE", DEFAULT_NASM))
 ZIG_EXE = os.environ.get("ZIG_EXE") or shutil.which(DEFAULT_ZIG) or DEFAULT_ZIG
 BOCHS_EXE = pathlib.Path(os.environ.get("BOCHS_EXE", DEFAULT_BOCHS))
 QEMU_EXE = pathlib.Path(os.environ.get("QEMU_EXE", DEFAULT_QEMU))
+OBJDUMP_EXE = os.environ.get("OBJDUMP_EXE") or shutil.which(DEFAULT_OBJDUMP) or DEFAULT_OBJDUMP
+STRIP_EXE = os.environ.get("STRIP_EXE") or shutil.which(DEFAULT_STRIP) or DEFAULT_STRIP
 BOCHS_DIR = BOCHS_EXE.parent
 
 BOOT_ASM = ROOT / "boot.asm"
@@ -44,8 +48,8 @@ STAGE2_IMAGE_BASE = 0x8000
 STAGE2_RESERVED_SECTORS = 16    # NB: must match fs_defs.zig STAGE2_RESERVED_SECTORS
 
 
-def run(cmd):
-    completed = subprocess.run(cmd, cwd=ROOT)
+def run(cmd, **kwargs):
+    completed = subprocess.run(cmd, cwd=ROOT, **kwargs)
     if completed.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {' '.join(map(str, cmd))}")
 
@@ -87,6 +91,8 @@ BOCHSRC_PATH = build_artifact(BOCHSRC)
 BOCHSOUT_PATH = build_artifact(BOCHSOUT)
 SERIALOUT_PATH = SERIALOUT
 USERSPACE_EXES = [build_artifact(path, ".elf") for path in USERSPACE_SOURCES]
+KERNEL_FULL_EXE = BUILD_DIR / "kernel.full.elf"
+KERNEL_DISASM = BUILD_DIR / "kernel.disasm"
 KERNEL_EXE = BUILD_DIR / "kernel.elf"
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
@@ -214,6 +220,7 @@ def build_kernel(target, source, env):
             "-ofmt=elf",
             "-fentry=kernel_init",
             "-fno-compiler-rt",
+            "-fno-strip",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
@@ -222,6 +229,34 @@ def build_kernel(target, source, env):
     )
     if not output_path.exists():
         raise RuntimeError(f"Zig did not produce {output_path.name}.")
+
+
+def disassemble_kernel(target, source, env):
+    disasm_path = pathlib.Path(str(target[0]))
+    kernel_path = pathlib.Path(str(source[0]))
+    ensure_parent(disasm_path)
+    with disasm_path.open("w", encoding="utf-8", newline="\n") as disasm_file:
+        run(
+            [
+                str(OBJDUMP_EXE),
+                "-d",
+                "-C",
+                "-M", "intel",
+                "-S",
+                str(kernel_path),
+            ],
+            stdout=disasm_file,
+        )
+
+
+def strip_kernel(target, source, env):
+    stripped_path = pathlib.Path(str(target[0]))
+    full_kernel_path = pathlib.Path(str(source[0]))
+    ensure_parent(stripped_path)
+    shutil.copy2(full_kernel_path, stripped_path)
+    run([str(STRIP_EXE), "--strip-all", str(stripped_path)])
+    if not stripped_path.exists():
+        raise RuntimeError(f"strip did not produce {stripped_path.name}.")
 
 
 def build_stage2_payload(target, source, env):
@@ -401,7 +436,9 @@ userspace_exes = [
     AlwaysBuild(env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET")))
     for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
 ]
-kernel_mod_exe = AlwaysBuild(env.Command(str(KERNEL_EXE), [str(KERNEL_SRC), KERNEL_LINKER_SCRIPT, interrupts_obj], Action(build_kernel, "Compiling $TARGET")))
+kernel_full_exe = AlwaysBuild(env.Command(str(KERNEL_FULL_EXE), [str(KERNEL_SRC), KERNEL_LINKER_SCRIPT, interrupts_obj], Action(build_kernel, "Compiling $TARGET")))
+kernel_disasm = env.Command(str(KERNEL_DISASM), kernel_full_exe, Action(disassemble_kernel, "Disassembling $SOURCE"))
+kernel_mod_exe = env.Command(str(KERNEL_EXE), [kernel_full_exe, kernel_disasm], Action(strip_kernel, "Stripping $TARGET"))
 autoexec_value = env.Value(get_autoexec_script())
 fsimage = env.Command(str(FS_IMAGE), userspace_exes + [kernel_mod_exe, autoexec_value] + STATIC_INPUTS, Action(build_fs_image, "Building $TARGET"))
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
