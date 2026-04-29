@@ -158,6 +158,16 @@ inline fn fillScanline16(ptr: [*]u8, length: u32, color: u16) void {
     }
 }
 
+inline fn blitScanline16(ptr: [*]u8, bitmap: []const u8, bit_count: u32, color0: u16, color1: u16) void {
+    var p: [*]u16 = @ptrCast(@alignCast(ptr));
+    var bit: u32 = 0;
+    while (bit < bit_count) : (bit += 1) {
+        const byte = bitmap[@as(usize, @intCast(@divTrunc(bit, 8)))];
+        const mask: u8 = @as(u8, 0x80) >> @intCast(bit & 0x07);
+        p[bit] = if ((byte & mask) != 0) color1 else color0;
+    }
+}
+
 fn fillRect(x: u32, y: u32, w: u32, h: u32, color: u32) void {
     const x_end = @min(@as(u32, info.width), x + w);
     const y_end = @min(@as(u32, info.height), y + h);
@@ -202,11 +212,17 @@ fn drawGlyphCell(
     highlight: bool,
 ) void {
     const effective_attr = if (highlight) swapAttr(attr) else attr;
-    const bg = packPaletteColor(@truncate(effective_attr >> 4));
-    const fg = packPaletteColor(effective_attr & 0x0F);
+    const bg: u16 = @truncate(packPaletteColor(@truncate(effective_attr >> 4)));
+    const fg: u16 = @truncate(packPaletteColor(effective_attr & 0x0F));
+    const glyph = font.getGlyph(ch);
 
-    fillRect(x, y, font.glyph_width, font.glyph_height, bg);
-    drawGlyph(x, y, font, ch, fg);
+    var row: u32 = 0;
+    while (row < font.glyph_height) : (row += 1) {
+        const row_start = @as(usize, row * font.bytes_per_row);
+        const row_bitmap = glyph[row_start .. row_start + @as(usize, font.bytes_per_row)];
+        const pix_ptr = fb_base + (y + row) * info.pitch_bytes + x * bytes_per_pixel;
+        blitScanline16(@ptrCast(pix_ptr), row_bitmap, font.glyph_width, bg, fg);
+    }
 }
 
 fn drawText(x: u32, y: u32, font: *const psf.PSFFont, text: []const u8, color: u32) u32 {

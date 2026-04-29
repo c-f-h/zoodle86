@@ -218,8 +218,8 @@ score_mode:
     jz .bad
 
     mov al, [di + 0x19]
-    cmp al, 15         ; bits per pixel at least 15?
-    jb .bad
+    cmp al, 16         ; bits per pixel is 16?
+    jne .bad
 
     mov al, [di + 0x1B] ; memory model type
     cmp al, 4          ; packed pixel?
