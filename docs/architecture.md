@@ -10,7 +10,7 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses 
 
 ## Graphical subsystem
 
-Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console. In graphics mode that backend draws a framed pane with a title bar around the largest console grid that fits the active font and framebuffer.
+Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console. In graphics mode that backend draws a framed pane with a title bar around the largest console grid that fits the active font and framebuffer. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `cp850-8x14.psf` from the filesystem; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
 
 ## Virtual Memory Layout
 
@@ -30,6 +30,7 @@ The kernel uses paging with 1 MB of identity mapping at both 0x0 (low memory) an
 | 0xD000_0000 - dynamic | dynamic | Early framebuffer mapping window used by `kernel/gfx/framebuf.zig` |
 | 0xE000_0000 - 0xE040_0000 | 4 MB | Kernel heap (fixed-buffer allocator) |
 | 0xE040_0000 - 0xE050_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
+| 0xE100_0000 - dynamic | up to 4 MB | Profiler sample pages (dynamically allocated by `kprof` while running) |
 | 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |
 | 0xFEC0_0000 - 0xFEC0_1000 | 4 KB | Memory-mapped APIC I/O (base GSI 0) |
 | 0xFEE0_0000 - 0xFEE0_1000 | 4 KB | Memory-mapped Local APIC |
