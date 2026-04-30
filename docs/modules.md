@@ -7,7 +7,7 @@ Complete listing of every source file and its role.
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and exposes low-level pixel, fill, and text helpers for graphics-mode rendering.
-- `kernel/gfx/vconsole.zig`: framebuffer-backed 80x25 virtual-console window; loads the PSF font, maintains the shadow text buffer, draws the framed pane and title bar, and blits console updates into the mapped framebuffer.
+- `kernel/gfx/vconsole.zig`: framebuffer-backed virtual-console window sized from the active font and framebuffer; loads the PSF font, maintains the shadow text buffer, draws the framed pane and title bar, and blits console updates into the mapped framebuffer.
 - `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
 - `kernel/gfx/font8x8.zig`: embedded public-domain 8x8 bitmap fallback wrapped as a PSF1 image for framebuffer text rendering.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
@@ -27,7 +27,7 @@ Complete listing of every source file and its role.
 
 ## Console & Input/Output
 
-- `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, memory dumps, and backend switching between VGA text mode and framebuffer text rendering.
+- `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering.
 - `kernel/serial.zig`: COM1 serial driver for debug output and exception logging to the host via Bochs.
 - `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write and hardware cursor control for the text-mode console backend.
 - `kernel/keyboard.zig`: scancode-to-keycode conversion, extended key support, modifier tracking, ASCII conversion.

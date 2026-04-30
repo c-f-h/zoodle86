@@ -37,6 +37,7 @@ const panel_padding_x: u32 = 2;
 const panel_padding_y: u32 = 2;
 const title_padding_y: u32 = 3;
 const title_padding_x: u32 = 10;
+const window_margin: u32 = 20;
 const console_title = "zoodle86 framebuffer console";
 
 // Prettier, blue-ish palette
@@ -105,7 +106,7 @@ fn drawGlyphCellAt(
 }
 
 fn consoleCellIndex(row: u32, col: u32) usize {
-    return @as(usize, @intCast(row)) * @as(usize, console.TEXT_WIDTH) + @as(usize, @intCast(col));
+    return @as(usize, @intCast(row)) * @as(usize, @intCast(console.width)) + @as(usize, @intCast(col));
 }
 
 fn consoleCellWidthBytes() usize {
@@ -176,7 +177,7 @@ fn drawConsoleRowAt(cells: [*]const console.Cell, row_ptr: [*]u8, row_pitch_byte
     var cell_ptr = cells;
     var cell_pix_ptr = row_ptr;
     var col: u32 = 0;
-    while (col < console.TEXT_WIDTH) : (col += 1) {
+    while (col < console.width) : (col += 1) {
         const cell = cell_ptr[0];
         drawGlyphCellAt(
             cell_pix_ptr,
@@ -236,7 +237,29 @@ pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, pat
     active_font_label = path;
 }
 
-/// Prepare the 80x25 virtual-console window once a framebuffer is available.
+pub const TextSize = struct {
+    cols: u32,
+    rows: u32,
+};
+
+/// Return a text grid size that fits inside the framed framebuffer console window.
+pub fn preferredTextSize() !TextSize {
+    const font = &active_font;
+    const title_text_w = console_title.len * font.glyph_width;
+    const min_panel_w = title_text_w + title_padding_x * 2 + panel_border * 2;
+    const title_height = font.glyph_height + title_padding_y * 2;
+    const min_panel_h = title_height + panel_padding_y * 2 + panel_border * 2 + font.glyph_height;
+    if (framebuf.width() < min_panel_w or framebuf.height() < min_panel_h) return error.WindowTooLarge;
+
+    const text_area_w = framebuf.width() - 2 * (window_margin + panel_border + panel_padding_x);
+    const text_area_h = framebuf.height() - (window_margin * 2 + panel_border * 2 + title_height + panel_padding_y * 2);
+    const cols = text_area_w / font.glyph_width;
+    const rows = text_area_h / font.glyph_height;
+    if (cols == 0 or rows == 0) return error.WindowTooLarge;
+    return .{ .cols = @min(100, cols), .rows = @min(50, rows) };
+}
+
+/// Prepare the framebuffer-backed virtual-console window once a framebuffer is available.
 pub fn init() !void {
     if (console_ready) return;
 
@@ -245,8 +268,10 @@ pub fn init() !void {
     }
 
     const font = &active_font;
-    const text_width = console.TEXT_WIDTH * font.glyph_width;
-    const text_height = console.TEXT_HEIGHT * font.glyph_height;
+    const text_cols = console.width;
+    const text_rows = console.height;
+    const text_width = text_cols * font.glyph_width;
+    const text_height = text_rows * font.glyph_height;
     const title_text_w = console_title.len * font.glyph_width;
     title_h = font.glyph_height + title_padding_y * 2;
     const min_inner_w = @max(text_width + panel_padding_x * 2, title_text_w + title_padding_x * 2);
@@ -254,8 +279,8 @@ pub fn init() !void {
     panel_h = text_height + title_h + panel_padding_y * 2 + panel_border * 2;
     if (framebuf.width() < panel_w or framebuf.height() < panel_h) return error.WindowTooLarge;
 
-    panel_x = (framebuf.width() - panel_w) / 2;
-    panel_y = (framebuf.height() - panel_h) / 2;
+    panel_x = window_margin; //(framebuf.width() - panel_w) / 2;
+    panel_y = window_margin; //(framebuf.height() - panel_h) / 2;
     origin_x = panel_x + panel_border + panel_padding_x;
     origin_y = panel_y + panel_border + title_h + panel_padding_y;
     console_cursor_row = 0;
@@ -273,22 +298,24 @@ pub fn init() !void {
     drawFrame();
 }
 
-/// Redraw the full 80x25 console grid into the framebuffer-backed virtual console.
+/// Redraw the full active console grid into the framebuffer-backed virtual console.
 pub fn render(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, show_cursor: bool) void {
     if (!console_ready) return;
 
+    const text_rows = console.height;
+    const text_cols = console.width;
     const row_height_bytes = shadow_pitch * consoleCellHeightRows();
     var shadow_text_row_ptr = shadow_buffer;
     var cell_row_ptr: [*]const console.Cell = cells;
     var row: u32 = 0;
-    while (row < console.TEXT_HEIGHT) : (row += 1) {
+    while (row < text_rows) : (row += 1) {
         drawConsoleRowAt(cell_row_ptr, shadow_text_row_ptr, shadow_pitch);
-        cell_row_ptr += console.TEXT_WIDTH;
+        cell_row_ptr += text_cols;
         shadow_text_row_ptr += row_height_bytes;
     }
 
-    console_cursor_row = if (cursor_row < console.TEXT_HEIGHT) cursor_row else console.TEXT_HEIGHT - 1;
-    console_cursor_col = if (cursor_col < console.TEXT_WIDTH) cursor_col else console.TEXT_WIDTH - 1;
+    console_cursor_row = if (cursor_row < text_rows) cursor_row else text_rows - 1;
+    console_cursor_col = if (cursor_col < text_cols) cursor_col else text_cols - 1;
     cursor_visible = show_cursor;
 
     if (cursor_visible) {
@@ -301,11 +328,12 @@ pub fn render(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, show_cur
 pub fn scroll(cells: [*]const console.Cell) void {
     if (!console_ready) return;
 
+    const text_rows = console.height;
     const scrolled_bytes = (shadow_rows - consoleCellHeightRows()) * shadow_pitch;
     const scroll_src_offset = consoleCellHeightRows() * shadow_pitch;
     mem.copyBytesForward(shadow_buffer, shadow_buffer + scroll_src_offset, scrolled_bytes);
 
-    const bottom_row_cells = cells + consoleCellIndex(console.TEXT_HEIGHT - 1, 0);
+    const bottom_row_cells = cells + consoleCellIndex(text_rows - 1, 0);
     const bottom_row_ptr = shadowRowPtr(shadow_rows - consoleCellHeightRows());
     drawConsoleRowAt(bottom_row_cells, bottom_row_ptr, shadow_pitch);
     blitShadowRowsToFramebuffer(0, shadow_rows);
@@ -314,7 +342,7 @@ pub fn scroll(cells: [*]const console.Cell) void {
 /// Redraw a single console cell in the framebuffer-backed virtual console.
 pub fn renderCell(cells: [*]console.Cell, row: u32, col: u32) void {
     if (!console_ready) return;
-    if (row >= console.TEXT_HEIGHT or col >= console.TEXT_WIDTH) return;
+    if (row >= console.height or col >= console.width) return;
 
     const highlight = cursor_visible and row == console_cursor_row and col == console_cursor_col;
     drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, highlight);
@@ -330,8 +358,10 @@ pub fn setCursor(cells: [*]const console.Cell, row: u32, col: u32, visible: bool
         blitShadowCellToFramebuffer(console_cursor_row, console_cursor_col);
     }
 
-    console_cursor_row = if (row < console.TEXT_HEIGHT) row else console.TEXT_HEIGHT - 1;
-    console_cursor_col = if (col < console.TEXT_WIDTH) col else console.TEXT_WIDTH - 1;
+    const text_rows = console.height;
+    const text_cols = console.width;
+    console_cursor_row = if (row < text_rows) row else text_rows - 1;
+    console_cursor_col = if (col < text_cols) col else text_cols - 1;
     cursor_visible = visible;
 
     if (cursor_visible) {

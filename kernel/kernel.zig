@@ -302,7 +302,7 @@ fn kernel_enter() !noreturn {
     console.init(VGA_ATTR);
     if (video_info_phys_addr != 0) {
         graphical = true;
-        console.enableFramebufBackend();
+        console.enableBufferedBackend();
     }
 
     console.puts(" -------- zoodle86 loaded --------\n\n");
@@ -349,6 +349,8 @@ fn kernel_enter() !noreturn {
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions
         try vconsole.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
+        const text_size = try vconsole.preferredTextSize();
+        try console.enableFramebufBackend(alloc, text_size.cols, text_size.rows);
         try vconsole.init();
         console.refresh();
     }

@@ -26,11 +26,13 @@ const GRID_START_ROW = 2; // first grid row on screen
 const GRID_START_COL = 4; // grid column offset (after "xxx " row label)
 const SEP_ROW = GRID_START_ROW + GRID_ROWS; // separator row 18
 const STATUS_ROW = SEP_ROW + 1; // status bar row 19
+const WINDOW_WIDTH = 80;
+const WINDOW_HEIGHT = STATUS_ROW + 1;
 
 const View = enum { pd, pt };
 
-// Console screen buffer: 80 columns × 25 rows = 2000 u16 cells
-const ScreenBuffer = [console.TEXT_WIDTH * console.TEXT_HEIGHT]u16;
+// Saved cells for the fixed memmap sub-window.
+const ScreenBuffer = [WINDOW_WIDTH * WINDOW_HEIGHT]u16;
 
 /// Interactive full-screen page directory / page table ASCII viewer.
 pub const Memmap = struct {
@@ -65,7 +67,7 @@ pub const Memmap = struct {
 // ---------------------------------------------------------------------------
 
 fn drawAll(self: *Memmap) void {
-    console.clearCells(ATTR_STATUS);
+    clearWindow(ATTR_STATUS);
     drawHeader(self);
     drawRuler();
     drawGrid(self);
@@ -147,7 +149,7 @@ fn drawCell(self: *Memmap, row: u32, col: u32, idx: u16, pd: *const paging.PageD
 
 fn drawSep() void {
     var col: u32 = 0;
-    while (col < console.TEXT_WIDTH) : (col += 1) {
+    while (col < visibleWindowWidth()) : (col += 1) {
         console.putCharAt(SEP_ROW, col, '-', ATTR_DIM);
     }
 }
@@ -267,9 +269,24 @@ fn keyHandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
 // Low-level VGA position helpers (bypass console state entirely)
 // ---------------------------------------------------------------------------
 
+fn visibleWindowWidth() u32 {
+    return @min(WINDOW_WIDTH, console.width);
+}
+
+fn visibleWindowHeight() u32 {
+    return @min(WINDOW_HEIGHT, console.height);
+}
+
+fn clearWindow(attr: u8) void {
+    var row: u32 = 0;
+    while (row < visibleWindowHeight()) : (row += 1) {
+        clearRow(row, attr);
+    }
+}
+
 fn clearRow(row: u32, attr: u8) void {
     var col: u32 = 0;
-    while (col < console.TEXT_WIDTH) : (col += 1) {
+    while (col < visibleWindowWidth()) : (col += 1) {
         console.putCharAt(row, col, ' ', attr);
     }
 }
@@ -309,20 +326,20 @@ fn putHex3At(row: u32, col: u32, value: u10, attr: u8) void {
 
 fn saveScreen(buf: *ScreenBuffer) void {
     var row: u32 = 0;
-    while (row < console.TEXT_HEIGHT) : (row += 1) {
+    while (row < visibleWindowHeight()) : (row += 1) {
         var col: u32 = 0;
-        while (col < console.TEXT_WIDTH) : (col += 1) {
-            buf[row * console.TEXT_WIDTH + col] = console.readCell(row, col);
+        while (col < visibleWindowWidth()) : (col += 1) {
+            buf[row * WINDOW_WIDTH + col] = console.readCell(row, col);
         }
     }
 }
 
 fn restoreScreen(buf: *const ScreenBuffer) void {
     var row: u32 = 0;
-    while (row < console.TEXT_HEIGHT) : (row += 1) {
+    while (row < visibleWindowHeight()) : (row += 1) {
         var col: u32 = 0;
-        while (col < console.TEXT_WIDTH) : (col += 1) {
-            const cell = buf[row * console.TEXT_WIDTH + col];
+        while (col < visibleWindowWidth()) : (col += 1) {
+            const cell = buf[row * WINDOW_WIDTH + col];
             console.putCharAt(row, col, @truncate(cell & 0xFF), @truncate((cell >> 8) & 0xFF));
         }
     }
