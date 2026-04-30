@@ -1,3 +1,4 @@
+const mem = @import("../mem.zig");
 const paging = @import("../paging.zig");
 const psf = @import("psf.zig");
 
@@ -73,11 +74,7 @@ fn putPixel(x: u32, y: u32, color: u32) void {
 }
 
 inline fn fillScanline16(ptr: [*]u8, length: u32, color: u16) void {
-    var p: [*]u16 = @ptrCast(@alignCast(ptr));
-    var i: u32 = 0;
-    while (i < length) : (i += 1) {
-        p[i] = color;
-    }
+    mem.memset16(@ptrCast(@alignCast(ptr)), color, length);
 }
 
 /// Fill a rectangular region of the framebuffer with a packed pixel value.
