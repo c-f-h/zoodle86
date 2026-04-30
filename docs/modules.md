@@ -7,7 +7,8 @@ Complete listing of every source file and its role.
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and exposes low-level pixel, fill, and text helpers for graphics-mode rendering.
-- `kernel/gfx/vconsole.zig`: framebuffer-backed virtual-console window sized from the active font and framebuffer; loads the PSF font, maintains the shadow text buffer, draws the framed pane and title bar, and blits console updates into the mapped framebuffer.
+- `kernel/gfx/window.zig`: framed console window: computes window geometry from font and framebuffer dimensions, allocates and manages the shadow pixel buffer, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer.
+- `kernel/gfx/vconsole.zig`: framebuffer-backed virtual-console renderer: maps VGA-style character cells through a PSF font and colour palette into the shadow buffer managed by `window.zig`, exposes the full render/scroll/cursor public API consumed by `console.zig`.
 - `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
 - `kernel/gfx/font8x8.zig`: embedded public-domain 8x8 bitmap fallback wrapped as a PSF1 image for framebuffer text rendering.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
