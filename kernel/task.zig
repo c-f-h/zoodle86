@@ -3,6 +3,7 @@ const interrupt_frame = @import("interrupt_frame.zig");
 const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
+const console_mod = @import("console.zig");
 const std = @import("std");
 
 const KERNEL_STACK_SIZE = 4096;
@@ -87,6 +88,9 @@ pub const Task = struct {
     stack_mem: paging.VMemRange = .{}, // actual extents of current stack (may grow downwards)
 
     fd_table: [MAX_FDS]FdSlot = [_]FdSlot{.{}} ** MAX_FDS,
+
+    /// Console to use for stdout/stderr writes; null means use the primary console.
+    stdout_console: ?*console_mod.Console = null,
 
     /// Initializes a fresh task slot and its initial userspace context.
     pub fn init(task: *Task) void {

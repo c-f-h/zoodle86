@@ -109,7 +109,8 @@ pub fn writeFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return switch (slot.kind) {
         .stdout, .stderr => blk: {
-            console.puts(src);
+            const con = ptask.stdout_console orelse &console.primary;
+            con.puts(src);
             break :blk src.len;
         },
         .file => blk: {

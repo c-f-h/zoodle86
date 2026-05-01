@@ -176,6 +176,7 @@ fn sys_spawn(argv_desc_ofs: u32) u32 {
     defer current_task.loadPageDir(); // make sure to return to the correct page directory
     const child = kernel.loadUserspaceElf(argv_buf[0], argv_buf) catch |err| return mapError(err);
     child.parent_pid = current_task.pid;
+    child.stdout_console = current_task.stdout_console;
     return child.pid;
 }
 

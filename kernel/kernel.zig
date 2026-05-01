@@ -6,6 +6,7 @@ const console = @import("console.zig");
 const filedesc = @import("filedesc.zig");
 const framebuf = @import("gfx/framebuf.zig");
 const vconsole = @import("gfx/vconsole.zig");
+const window = @import("gfx/window.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const kprof = @import("kprof.zig");
@@ -100,6 +101,11 @@ var kernel_fba: std.heap.FixedBufferAllocator = undefined;
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
 var disk_block_device: ide.IdeBlockDevice = undefined;
+
+// VConsole instances and secondary console for the two-panel framebuffer layout.
+var primary_vconsole: vconsole.VConsole = .{};
+var secondary_vconsole: vconsole.VConsole = .{};
+var secondary_console: console.Console = .{};
 
 /// Returns the kernel allocator used for filesystem-backed syscall scratch buffers.
 pub fn getAllocator() std.mem.Allocator {
@@ -347,12 +353,38 @@ fn kernel_enter() !noreturn {
 
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
-        // Font size must be known before determining console panel dimensions
+        // Font size must be known before determining console panel dimensions.
         try vconsole.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
-        const text_size = try vconsole.preferredTextSize();
-        try console.enableFramebufBackend(alloc, text_size.cols, text_size.rows);
-        try vconsole.init();
+
+        const half_w = framebuf.width() / 2;
+        const full_h = framebuf.height();
+
+        // Primary console occupies the left half of the screen.
+        const primary_ts = try vconsole.preferredTextSize(half_w, full_h, "zoodle86 shell");
+        try console.enableFramebufBackend(alloc, primary_ts.cols, primary_ts.rows);
+        try primary_vconsole.init(alloc, 0, 0, half_w, full_h, primary_ts.cols, primary_ts.rows, "zoodle86 shell");
+        console.primary.vconsole_instance = &primary_vconsole;
+
+        // Secondary console occupies the right half of the screen.
+        const sec_ts = try vconsole.preferredTextSize(half_w, full_h, "hello");
+        try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "hello");
+        try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows);
+        secondary_console.vconsole_instance = &secondary_vconsole;
+
+        // Fill desktop background once, then draw each window frame on top.
+        window.drawBackground();
+        primary_vconsole.drawFrame();
+        secondary_vconsole.drawFrame();
+
         console.refresh();
+
+        // Load hello into the secondary console and run it before entering the shell.
+        if (loadUserspaceElf("hello", &.{ "hello", "10", "20" })) |hello_task| {
+            hello_task.stdout_console = &secondary_console;
+            run(hello_task);
+        } else |err| {
+            console.put(.{ "Failed to load hello: ", @errorName(err), "\n" });
+        }
     }
     _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();

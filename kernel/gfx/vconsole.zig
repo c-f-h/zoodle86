@@ -4,17 +4,12 @@ const psf = @import("psf.zig");
 const window = @import("window.zig");
 
 const fs = @import("../fs.zig");
-const console = @import("../console.zig");
 const mem = @import("../mem.zig");
 
 const std = @import("std");
 
 var active_font: psf.PSFFont = font8x8.font;
 var active_font_label: []const u8 = "embedded psf1 8x8 bitmap";
-
-var console_cursor_row: u32 = 0;
-var console_cursor_col: u32 = 0;
-var cursor_visible: bool = false;
 
 // Prettier, blue-ish palette
 const vga_palette = [16][3]u8{
@@ -81,56 +76,12 @@ fn drawGlyphCellAt(
     }
 }
 
-fn consoleCellIndex(row: u32, col: u32) usize {
-    return @as(usize, @intCast(row)) * @as(usize, @intCast(console.width)) + @as(usize, @intCast(col));
-}
-
 fn consoleCellWidthBytes() usize {
     return @as(usize, @intCast(active_font.glyph_width)) * framebuf.bytesPerPixel();
 }
 
 fn consoleCellHeightRows() usize {
     return @intCast(active_font.glyph_height);
-}
-
-fn drawConsoleCellRaw(cell: u16, row: u32, col: u32, highlight: bool) void {
-    if (!window.isReady()) return;
-
-    const font = &active_font;
-    const ch: u8 = @truncate(cell & 0x00FF);
-    const attr: u8 = @truncate(cell >> 8);
-    const pix_ptr = window.shadowRowPtr(@as(usize, @intCast(row * font.glyph_height))) +
-        @as(usize, @intCast(col * font.glyph_width)) * framebuf.bytesPerPixel();
-
-    const effective_attr = if (highlight) swapAttr(attr) else attr;
-
-    drawGlyphCellAt(
-        pix_ptr,
-        window.pitchBytes(),
-        font,
-        if (ch == 0) ' ' else ch,
-        effective_attr,
-    );
-}
-
-fn drawConsoleRowAt(cells: [*]const console.Cell, row_ptr: [*]u8, row_pitch_bytes: usize) void {
-    const font = &active_font;
-    const cell_width_bytes = consoleCellWidthBytes();
-    var cell_ptr = cells;
-    var cell_pix_ptr = row_ptr;
-    var col: u32 = 0;
-    while (col < console.width) : (col += 1) {
-        const cell = cell_ptr[0];
-        drawGlyphCellAt(
-            cell_pix_ptr,
-            row_pitch_bytes,
-            font,
-            if ((cell & 0x00FF) == 0) ' ' else @truncate(cell & 0x00FF),
-            @truncate(cell >> 8),
-        );
-        cell_ptr += 1;
-        cell_pix_ptr += cell_width_bytes;
-    }
 }
 
 /// Load a PSF font file from the root filesystem and make it the active framebuffer-console font.
@@ -147,93 +98,172 @@ pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, pat
 
 pub const TextSize = window.TextSize;
 
-/// Return a text grid size that fits inside the framed framebuffer console window.
-pub fn preferredTextSize() !TextSize {
-    return window.preferredTextSize(active_font.glyph_width, active_font.glyph_height);
+/// Return a text grid size that fits inside a framed framebuffer console window within the given area.
+pub fn preferredTextSize(avail_w: u32, avail_h: u32, title: []const u8) !TextSize {
+    return window.preferredTextSize(avail_w, avail_h, active_font.glyph_width, active_font.glyph_height, title.len);
 }
 
-/// Prepare the framebuffer-backed virtual-console window once a framebuffer is available.
-pub fn init() !void {
-    if (window.isReady()) return;
+/// Framebuffer-backed virtual console: owns a Window and tracks cursor/grid state.
+pub const VConsole = struct {
+    win: window.Window = .{},
+    cols: u32 = 0,
+    rows: u32 = 0,
+    cursor_row: u32 = 0,
+    cursor_col: u32 = 0,
+    cursor_visible: bool = false,
 
-    for (0..16) |i| {
-        packed_vga_palette[i] = packPaletteColor(@truncate(i));
+    /// Initialise the VConsole: allocate the shadow buffer and set dimensions.
+    /// Call drawBackground() then drawFrame() separately to paint the screen.
+    pub fn init(
+        self: *VConsole,
+        allocator: std.mem.Allocator,
+        avail_x: u32,
+        avail_y: u32,
+        avail_w: u32,
+        avail_h: u32,
+        cols: u32,
+        rows: u32,
+        title: []const u8,
+    ) !void {
+        for (0..16) |i| {
+            packed_vga_palette[i] = packPaletteColor(@truncate(i));
+        }
+        self.cols = cols;
+        self.rows = rows;
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.cursor_visible = false;
+        try self.win.init(
+            allocator,
+            avail_x,
+            avail_y,
+            avail_w,
+            avail_h,
+            cols,
+            rows,
+            active_font.glyph_width,
+            active_font.glyph_height,
+            title,
+        );
     }
 
-    try window.init(console.width, console.height, active_font.glyph_width, active_font.glyph_height);
-    window.drawFrame(&active_font);
-}
-
-/// Redraw the full active console grid into the framebuffer-backed virtual console.
-pub fn render(cells: [*]console.Cell, cursor_row: u32, cursor_col: u32, show_cursor: bool) void {
-    if (!window.isReady()) return;
-
-    const text_rows = console.height;
-    const text_cols = console.width;
-    const row_height_bytes = window.pitchBytes() * consoleCellHeightRows();
-    var shadow_text_row_ptr = window.shadowRowPtr(0);
-    var cell_row_ptr: [*]const console.Cell = cells;
-    var row: u32 = 0;
-    while (row < text_rows) : (row += 1) {
-        drawConsoleRowAt(cell_row_ptr, shadow_text_row_ptr, window.pitchBytes());
-        cell_row_ptr += text_cols;
-        shadow_text_row_ptr += row_height_bytes;
+    /// Redraw this window's chrome using the active font.
+    pub fn drawFrame(self: *VConsole) void {
+        self.win.drawFrame(&active_font);
     }
 
-    console_cursor_row = if (cursor_row < text_rows) cursor_row else text_rows - 1;
-    console_cursor_col = if (cursor_col < text_cols) cursor_col else text_cols - 1;
-    cursor_visible = show_cursor;
-
-    if (cursor_visible) {
-        drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, true);
-    }
-    window.blitShadowRowsToFramebuffer(0, window.pixelRows());
-}
-
-/// Scroll the virtual console up by one text row and redraw the newly exposed bottom row.
-pub fn scroll(cells: [*]const console.Cell) void {
-    if (!window.isReady()) return;
-
-    const text_rows = console.height;
-    const cell_h = consoleCellHeightRows();
-    const scrolled_bytes = (window.pixelRows() - cell_h) * window.pitchBytes();
-    const scroll_src_offset = cell_h * window.pitchBytes();
-    const shadow_start = window.shadowRowPtr(0);
-    mem.copyBytesForward(shadow_start, shadow_start + scroll_src_offset, scrolled_bytes);
-
-    const bottom_row_cells = cells + consoleCellIndex(text_rows - 1, 0);
-    const bottom_row_ptr = window.shadowRowPtr(window.pixelRows() - cell_h);
-    drawConsoleRowAt(bottom_row_cells, bottom_row_ptr, window.pitchBytes());
-    window.blitShadowRowsToFramebuffer(0, window.pixelRows());
-}
-
-/// Redraw a single console cell in the framebuffer-backed virtual console.
-pub fn renderCell(cells: [*]console.Cell, row: u32, col: u32) void {
-    if (!window.isReady()) return;
-    if (row >= console.height or col >= console.width) return;
-
-    const highlight = cursor_visible and row == console_cursor_row and col == console_cursor_col;
-    drawConsoleCellRaw(cells[consoleCellIndex(row, col)], row, col, highlight);
-    window.blitShadowCellToFramebuffer(row, col);
-}
-
-/// Update the highlighted cursor cell in the framebuffer-backed virtual console.
-pub fn setCursor(cells: [*]const console.Cell, row: u32, col: u32, visible: bool) void {
-    if (!window.isReady()) return;
-
-    if (cursor_visible) {
-        drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, false);
-        window.blitShadowCellToFramebuffer(console_cursor_row, console_cursor_col);
+    /// Free resources owned by this VConsole.
+    pub fn deinit(self: *VConsole, allocator: std.mem.Allocator) void {
+        self.win.deinit(allocator);
     }
 
-    const text_rows = console.height;
-    const text_cols = console.width;
-    console_cursor_row = if (row < text_rows) row else text_rows - 1;
-    console_cursor_col = if (col < text_cols) col else text_cols - 1;
-    cursor_visible = visible;
-
-    if (cursor_visible) {
-        drawConsoleCellRaw(cells[consoleCellIndex(console_cursor_row, console_cursor_col)], console_cursor_row, console_cursor_col, true);
-        window.blitShadowCellToFramebuffer(console_cursor_row, console_cursor_col);
+    fn cellIndex(self: *const VConsole, row: u32, col: u32) usize {
+        return @as(usize, row) * @as(usize, self.cols) + @as(usize, col);
     }
-}
+
+    fn drawConsoleCellRaw(self: *const VConsole, cell: u16, row: u32, col: u32, highlight: bool) void {
+        if (!self.win.isReady()) return;
+
+        const font = &active_font;
+        const ch: u8 = @truncate(cell & 0x00FF);
+        const attr: u8 = @truncate(cell >> 8);
+        const pix_ptr = self.win.shadowRowPtr(@as(usize, row) * @as(usize, font.glyph_height)) +
+            @as(usize, col) * @as(usize, font.glyph_width) * framebuf.bytesPerPixel();
+        const effective_attr = if (highlight) swapAttr(attr) else attr;
+        drawGlyphCellAt(pix_ptr, self.win.pitchBytes(), font, if (ch == 0) ' ' else ch, effective_attr);
+    }
+
+    fn drawConsoleRowAt(self: *const VConsole, cells: [*]const u16, row_ptr: [*]u8, row_pitch_bytes: usize) void {
+        const font = &active_font;
+        const cell_width_bytes = consoleCellWidthBytes();
+        var cell_ptr = cells;
+        var cell_pix_ptr = row_ptr;
+        var col: u32 = 0;
+        while (col < self.cols) : (col += 1) {
+            const cell = cell_ptr[0];
+            drawGlyphCellAt(
+                cell_pix_ptr,
+                row_pitch_bytes,
+                font,
+                if ((cell & 0x00FF) == 0) ' ' else @truncate(cell & 0x00FF),
+                @truncate(cell >> 8),
+            );
+            cell_ptr += 1;
+            cell_pix_ptr += cell_width_bytes;
+        }
+    }
+
+    /// Redraw the full console grid into the framebuffer-backed virtual console.
+    pub fn render(self: *VConsole, cells: [*]const u16, cursor_row: u32, cursor_col: u32, show_cursor: bool) void {
+        if (!self.win.isReady()) return;
+
+        const text_rows = self.rows;
+        const text_cols = self.cols;
+        const row_height_bytes = self.win.pitchBytes() * consoleCellHeightRows();
+        var shadow_text_row_ptr = self.win.shadowRowPtr(0);
+        var cell_row_ptr: [*]const u16 = cells;
+        var row: u32 = 0;
+        while (row < text_rows) : (row += 1) {
+            self.drawConsoleRowAt(cell_row_ptr, shadow_text_row_ptr, self.win.pitchBytes());
+            cell_row_ptr += text_cols;
+            shadow_text_row_ptr += row_height_bytes;
+        }
+
+        self.cursor_row = if (cursor_row < text_rows) cursor_row else text_rows - 1;
+        self.cursor_col = if (cursor_col < text_cols) cursor_col else text_cols - 1;
+        self.cursor_visible = show_cursor;
+
+        if (self.cursor_visible) {
+            self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, true);
+        }
+        self.win.blitShadowRowsToFramebuffer(0, self.win.pixelRows());
+    }
+
+    /// Scroll the virtual console up by one text row and redraw the newly exposed bottom row.
+    pub fn scroll(self: *VConsole, cells: [*]const u16) void {
+        if (!self.win.isReady()) return;
+
+        const text_rows = self.rows;
+        const cell_h = consoleCellHeightRows();
+        const scrolled_bytes = (self.win.pixelRows() - cell_h) * self.win.pitchBytes();
+        const scroll_src_offset = cell_h * self.win.pitchBytes();
+        const shadow_start = self.win.shadowRowPtr(0);
+        mem.copyBytesForward(shadow_start, shadow_start + scroll_src_offset, scrolled_bytes);
+
+        const bottom_row_cells = cells + self.cellIndex(text_rows - 1, 0);
+        const bottom_row_ptr = self.win.shadowRowPtr(self.win.pixelRows() - cell_h);
+        self.drawConsoleRowAt(bottom_row_cells, bottom_row_ptr, self.win.pitchBytes());
+        self.win.blitShadowRowsToFramebuffer(0, self.win.pixelRows());
+    }
+
+    /// Redraw a single console cell in the framebuffer-backed virtual console.
+    pub fn renderCell(self: *VConsole, cells: [*]const u16, row: u32, col: u32) void {
+        if (!self.win.isReady()) return;
+        if (row >= self.rows or col >= self.cols) return;
+
+        const highlight = self.cursor_visible and row == self.cursor_row and col == self.cursor_col;
+        self.drawConsoleCellRaw(cells[self.cellIndex(row, col)], row, col, highlight);
+        self.win.blitShadowCellToFramebuffer(row, col);
+    }
+
+    /// Update the highlighted cursor cell in the framebuffer-backed virtual console.
+    pub fn setCursor(self: *VConsole, cells: [*]const u16, row: u32, col: u32, visible: bool) void {
+        if (!self.win.isReady()) return;
+
+        if (self.cursor_visible) {
+            self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, false);
+            self.win.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
+        }
+
+        const text_rows = self.rows;
+        const text_cols = self.cols;
+        self.cursor_row = if (row < text_rows) row else text_rows - 1;
+        self.cursor_col = if (col < text_cols) col else text_cols - 1;
+        self.cursor_visible = visible;
+
+        if (self.cursor_visible) {
+            self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, true);
+            self.win.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
+        }
+    }
+};

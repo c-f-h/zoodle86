@@ -270,11 +270,11 @@ fn keyHandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
 // ---------------------------------------------------------------------------
 
 fn visibleWindowWidth() u32 {
-    return @min(WINDOW_WIDTH, console.width);
+    return @min(WINDOW_WIDTH, console.primary.width);
 }
 
 fn visibleWindowHeight() u32 {
-    return @min(WINDOW_HEIGHT, console.height);
+    return @min(WINDOW_HEIGHT, console.primary.height);
 }
 
 fn clearWindow(attr: u8) void {

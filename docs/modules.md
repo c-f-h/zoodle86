@@ -7,8 +7,8 @@ Complete listing of every source file and its role.
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and exposes low-level pixel, fill, and text helpers for graphics-mode rendering.
-- `kernel/gfx/window.zig`: framed console window: computes window geometry from font and framebuffer dimensions, allocates and manages the shadow pixel buffer, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer.
-- `kernel/gfx/vconsole.zig`: framebuffer-backed virtual-console renderer: maps VGA-style character cells through a PSF font and colour palette into the shadow buffer managed by `window.zig`, exposes the full render/scroll/cursor public API consumed by `console.zig`.
+- `kernel/gfx/window.zig`: instantiable framed console window (`Window` struct): computes window geometry from font and available pixel dimensions, allocates and manages the shadow pixel buffer from the kernel allocator, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer. Module-level `drawBackground()` fills the full-screen desktop background.
+- `kernel/gfx/vconsole.zig`: instantiable framebuffer-backed virtual-console renderer (`VConsole` struct): maps VGA-style character cells through a PSF font and colour palette into the shadow buffer of its `Window`, exposes the full render/scroll/cursor public API consumed by `console.zig`. Multiple independent `VConsole` instances can be live simultaneously for side-by-side console panels.
 - `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
 - `kernel/gfx/font8x8.zig`: embedded public-domain 8x8 bitmap fallback wrapped as a PSF1 image for framebuffer text rendering.
 - `kernel/paging.zig`: page directory and page table management, recursive page directory mapping, identity mapping setup, virtual address translation.
@@ -20,7 +20,7 @@ Complete listing of every source file and its role.
 - `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
-- `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, and file descriptor mappings.
+- `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
 - `kernel/interrupt_frame.zig`: standard stack frame layout used when entering the kernel.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over the filesystem and console streams.
@@ -28,7 +28,7 @@ Complete listing of every source file and its role.
 
 ## Console & Input/Output
 
-- `kernel/console.zig`: high-level console output with scrolling, cursor management, hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering.
+- `kernel/console.zig`: instantiable high-level console (`Console` struct) with scrolling, cursor management, hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering. Module-level wrapper functions (`console.puts()`, etc.) delegate to the `console.primary` instance so existing callers are undisturbed. Each `Console` holds an optional `vconsole_instance` pointer so multiple independent consoles can render to separate `VConsole`/`Window` panel pairs on the framebuffer.
 - `kernel/serial.zig`: COM1 serial driver for debug output and exception logging to the host via Bochs.
 - `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write and hardware cursor control for the text-mode console backend.
 - `kernel/keyboard.zig`: scancode-to-keycode conversion, extended key support, modifier tracking, ASCII conversion.
