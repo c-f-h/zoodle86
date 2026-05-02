@@ -44,16 +44,15 @@ fn swapAttr(attr: u8) u8 {
 }
 
 inline fn blitScanline16(ptr: [*]u8, row_bitmap: u8, color0: u16, color1: u16) void {
-    var p: [*]u16 = @ptrCast(@alignCast(ptr));
+    const U16Vec = @Vector(8, u16);
+    const U8Vec = @Vector(8, u8);
+    const BoolVec = @Vector(8, bool);
+    const bit_masks: U8Vec = .{ 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
+    const bits_set: BoolVec = (@as(U8Vec, @splat(row_bitmap)) & bit_masks) != @as(U8Vec, @splat(0));
+    const bg: U16Vec = @splat(color0);
+    const fg: U16Vec = @splat(color1);
 
-    p[0] = if ((row_bitmap & 0x80) != 0) color1 else color0;
-    p[1] = if ((row_bitmap & 0x40) != 0) color1 else color0;
-    p[2] = if ((row_bitmap & 0x20) != 0) color1 else color0;
-    p[3] = if ((row_bitmap & 0x10) != 0) color1 else color0;
-    p[4] = if ((row_bitmap & 0x08) != 0) color1 else color0;
-    p[5] = if ((row_bitmap & 0x04) != 0) color1 else color0;
-    p[6] = if ((row_bitmap & 0x02) != 0) color1 else color0;
-    p[7] = if ((row_bitmap & 0x01) != 0) color1 else color0;
+    @as(*align(1) U16Vec, @ptrCast(ptr)).* = @select(u16, bits_set, fg, bg);
 }
 
 fn drawGlyphCellAt(
