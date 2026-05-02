@@ -72,6 +72,7 @@ Complete listing of every source file and its role.
 
 ## Build Configuration
 
+- `build.zig`: Zig kernel-only build entrypoint for editor tooling and ad hoc builds; assembles `kernel/interrupts.asm`, links `build/kernel.full.elf`, and strips `build/kernel.elf`.
 - `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel respectively.
 - `SConstruct`: SCons build and run entrypoints. Builds `build/fsimage/` from kernel/userspace outputs plus files copied from `static/`.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.

@@ -8,7 +8,7 @@ Sector 0 is the boot sector. Sectors 1–16 are reserved for the stage-2 loader 
 
 The ZOD2 filesystem is inode-based and optimized for tiny disk images. It keeps a block bitmap plus a compact inode table (with no separate inode bitmap), uses 8 direct block pointers plus 2 single-indirect pointers per inode, and stores the root directory as a fixed-size inode-backed directory file containing 64 entries with 16-byte maximum names. Version 1 exposes only the root directory, but the on-disk inode and directory-entry structures are designed so hierarchical directories can be added later. Open descriptors now track inode identity rather than directory-slot identity, and `unlink` still rejects files that are currently open rather than emulating delete-on-last-close semantics.
 
-The build pipeline assembles the root directory from `build/fsimage/`, which is populated with the stripped kernel module (`build/kernel.elf`), userspace binaries, optional `autoexec`, and every regular file from `static/`. It also keeps `build/kernel.full.elf` and writes an annotated disassembly to `build/kernel.disasm` before stripping the runtime copy.
+The build pipeline assembles the root directory from `build/fsimage/`, which is populated with the stripped kernel module (`build/kernel.elf`), userspace binaries, optional `autoexec`, and every regular file from `static/`. `scons` also keeps `build/kernel.full.elf` and writes an annotated disassembly to `build/kernel.disasm` before stripping the runtime copy, while `zig build` provides a kernel-only helper that emits the full and stripped kernel ELFs without the disk-image pipeline.
 
 ## IDE & Storage
 
