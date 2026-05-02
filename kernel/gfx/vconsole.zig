@@ -51,8 +51,17 @@ inline fn blitScanline16(ptr: [*]u8, row_bitmap: u8, color0: u16, color1: u16) v
     const bits_set: BoolVec = (@as(U8Vec, @splat(row_bitmap)) & bit_masks) != @as(U8Vec, @splat(0));
     const bg: U16Vec = @splat(color0);
     const fg: U16Vec = @splat(color1);
+    const pixels = @select(u16, bits_set, fg, bg);
 
-    @as(*align(1) U16Vec, @ptrCast(ptr)).* = @select(u16, bits_set, fg, bg);
+    if ((@intFromPtr(ptr) & (@alignOf(U16Vec) - 1)) == 0) {
+        @as(*U16Vec, @ptrCast(@alignCast(ptr))).* = pixels;
+        return;
+    }
+
+    var p: [*]u16 = @ptrCast(@alignCast(ptr));
+    inline for (0..8) |i| {
+        p[i] = pixels[i];
+    }
 }
 
 fn drawGlyphCellAt(
