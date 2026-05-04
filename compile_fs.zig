@@ -99,7 +99,7 @@ pub fn main(init: std.process.Init) !void {
         defer init.gpa.free(file_data);
         _ = try input_file.readPositionalAll(init.io, file_data, 0);
 
-        try disk_fs.writeFile(init.gpa, name, file_data);
+        try disk_fs.writeFile(name, file_data);
     }
 
     try stdout.print("\nDone. Wrote {d} files to {s}\n", .{ file_count, output_path });

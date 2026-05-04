@@ -22,7 +22,6 @@ pub const DIR_ENTRY_KIND_DIRECTORY: u8 = 2;
 
 pub const ROOT_INODE_INDEX: u16 = 0;
 pub const DIRECT_BLOCK_COUNT: usize = 8;
-pub const INDIRECT_BLOCK_COUNT: usize = 2;
 pub const BLOCK_POINTER_NONE: u32 = std.math.maxInt(u32);
 pub const POINTERS_PER_INDIRECT_BLOCK: usize = 512 / @sizeOf(u32);
 
@@ -38,7 +37,8 @@ pub const Inode = extern struct {
     link_count: u16 = 0,
     size_bytes: u32 = 0,
     direct_blocks: [DIRECT_BLOCK_COUNT]u32 = @splat(BLOCK_POINTER_NONE),
-    indirect_blocks: [INDIRECT_BLOCK_COUNT]u32 = @splat(BLOCK_POINTER_NONE),
+    indirect_block: u32 = BLOCK_POINTER_NONE,
+    double_indirect_block: u32 = BLOCK_POINTER_NONE,
     reserved: [16]u8 = @splat(0),
 };
 
@@ -157,6 +157,29 @@ pub fn computeLayout(fs_sector_count: u32) ?Layout {
     }
 }
 
+fn makeDefaultSuperblock(layout: Layout) Superblock {
+    comptime {
+        std.debug.assert(@sizeOf(Inode) == 64);
+        std.debug.assert(@sizeOf(DirectoryEntry) == 32);
+        std.debug.assert(@sizeOf(Superblock) == 64);
+    }
+    return .{
+        .magic = MAGIC,
+        .version = VERSION,
+        .block_size = 512,
+        .fs_sector_count = layout.fs_sector_count,
+        .bitmap_start_lba = layout.bitmap_start_lba,
+        .bitmap_sector_count = layout.bitmap_sector_count,
+        .inode_table_start_lba = layout.inode_table_start_lba,
+        .inode_table_sector_count = layout.inode_table_sector_count,
+        .inode_count = layout.inode_count,
+        .data_start_lba = layout.data_start_lba,
+        .data_block_count = layout.data_block_count,
+        .file_count = 0,
+        .reserved = [_]u8{0} ** 28,
+    };
+}
+
 /// Validates a mounted superblock against the expected derived layout.
 pub fn isValidSuperblock(superblock: *const Superblock) bool {
     const layout = computeLayout(superblock.fs_sector_count) orelse return false;
@@ -206,7 +229,7 @@ pub const FsError = error{
 pub const ReadFileError = FsError || error{OutOfMemory};
 pub const WriteFileError = FsError || error{OutOfMemory};
 
-const MAX_FILE_BLOCK_COUNT: usize = DIRECT_BLOCK_COUNT + INDIRECT_BLOCK_COUNT * POINTERS_PER_INDIRECT_BLOCK;
+const MAX_FILE_BLOCK_COUNT: usize = DIRECT_BLOCK_COUNT + POINTERS_PER_INDIRECT_BLOCK + POINTERS_PER_INDIRECT_BLOCK * POINTERS_PER_INDIRECT_BLOCK;
 
 pub const FileSystem = struct {
     block_dev: *BlockDevice,
@@ -347,10 +370,9 @@ pub const FileSystem = struct {
         var block_offset: usize = @intCast(offset % 512);
         var out_offset: usize = 0;
         var sector = [_]u8{0} ** 512;
-        var indirect_pointers: [POINTERS_PER_INDIRECT_BLOCK]u32 = undefined;
 
         while (remaining > 0) : (logical_block += 1) {
-            const data_block = try self.getInodeDataBlock(&inode, logical_block, &indirect_pointers);
+            const data_block = try self.getInodeDataBlock(&inode, logical_block);
             try self.block_dev.readBlock(self.dataBlockLba(data_block), &sector);
 
             const chunk_len: usize = @min(remaining, sector.len - block_offset);
@@ -367,7 +389,7 @@ pub const FileSystem = struct {
     pub fn writeInodeAt(self: *FileSystem, allocator: std.mem.Allocator, inode_index: u16, offset: u32, data: []const u8) WriteFileError!usize {
         if (data.len == 0) return 0;
 
-        const inode = try self.readFileInode(inode_index);
+        var inode = try self.readFileInode(inode_index);
         const data_len_u32: u32 = @intCast(data.len);
         const required_size = std.math.add(u32, offset, data_len_u32) catch return error.NoSpace;
         const new_size = @max(inode.size_bytes, required_size);
@@ -382,20 +404,14 @@ pub const FileSystem = struct {
         }
         @memcpy(merged[offset..required_size], data);
 
-        try self.replaceInodeContents(allocator, inode_index, &inode, merged);
+        try self.replaceInodeContents(inode_index, &inode, merged);
         return data.len;
     }
 
-    /// Truncates a file identified by root-directory slot to zero bytes.
-    pub fn truncateFile(self: *FileSystem, allocator: std.mem.Allocator, index: usize) WriteFileError!void {
-        const inode_index = try self.getFileInodeIndex(index);
-        try self.truncateInode(allocator, inode_index);
-    }
-
     /// Truncates a file identified directly by inode number to zero bytes.
-    pub fn truncateInode(self: *FileSystem, allocator: std.mem.Allocator, inode_index: u16) WriteFileError!void {
-        const inode = try self.readFileInode(inode_index);
-        try self.replaceInodeContents(allocator, inode_index, &inode, &.{});
+    pub fn truncateInode(self: *FileSystem, inode_index: u16) FsError!void {
+        var inode = try self.readFileInode(inode_index);
+        try self.replaceInodeContents(inode_index, &inode, &.{});
     }
 
     /// Reads an entire regular file into allocator-owned memory.
@@ -413,21 +429,21 @@ pub const FileSystem = struct {
     }
 
     /// Creates or overwrites a root-directory file with the provided full contents.
-    pub fn writeFile(self: *FileSystem, allocator: std.mem.Allocator, name: []const u8, data: []const u8) WriteFileError!void {
+    pub fn writeFile(self: *FileSystem, name: []const u8, data: []const u8) FsError!void {
         if (!validateName(name)) return error.InvalidName;
         if (fileBlocksForSize(@intCast(data.len)) > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
 
         const inode_index = (try self.findFileInodeIndex(name)) orelse try self.createFile(name);
-        const inode = try self.readFileInode(inode_index);
-        try self.replaceInodeContents(allocator, inode_index, &inode, data);
+        var inode = try self.readFileInode(inode_index);
+        try self.replaceInodeContents(inode_index, &inode, data);
     }
 
     /// Deletes a regular file from the root directory and frees its inode and blocks.
-    pub fn deleteFile(self: *FileSystem, allocator: std.mem.Allocator, name: []const u8) WriteFileError!void {
+    pub fn deleteFile(self: *FileSystem, name: []const u8) FsError!void {
         const index = (try self.findFileIndex(ROOT_INODE_INDEX, name)) orelse return error.FileNotFound;
         const entry = try self.readLiveRootFileEntry(index);
 
-        try self.destroyInode(allocator, entry.inode_index);
+        try self.destroyInode(entry.inode_index);
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(ROOT_INODE_INDEX, index, &cleared);
 
@@ -472,7 +488,7 @@ pub const FileSystem = struct {
         const root_inode = try self.readDirectoryInode(ROOT_INODE_INDEX);
         if (root_inode.size_bytes != @as(u32, @intCast(ROOT_DIRECTORY_BYTES))) return error.Corrupt;
         if (fileBlocksForSize(root_inode.size_bytes) != ROOT_DIRECTORY_SECTORS) return error.Corrupt;
-        if (root_inode.indirect_blocks[0] != BLOCK_POINTER_NONE or root_inode.indirect_blocks[1] != BLOCK_POINTER_NONE) {
+        if (root_inode.indirect_block != BLOCK_POINTER_NONE or root_inode.double_indirect_block != BLOCK_POINTER_NONE) {
             return error.Corrupt;
         }
 
@@ -577,141 +593,94 @@ pub const FileSystem = struct {
         return inode;
     }
 
-    fn replaceInodeContents(self: *FileSystem, allocator: std.mem.Allocator, inode_index: u16, existing_inode: *const Inode, data: []const u8) WriteFileError!void {
-        const new_block_count_u32 = fileBlocksForSize(@intCast(data.len));
-        const old_block_count_u32 = fileBlocksForSize(existing_inode.size_bytes);
-        if (new_block_count_u32 > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
+    // Recursively allocates or frees blocks for an inode, starting from a given block pointer and descending through indirect blocks as needed.
+    fn recAllocBlockTree(self: *FileSystem, block_index: *u32, num_wanted: *u32, level: u32) !void {
+        const is_present = block_index.* != BLOCK_POINTER_NONE;
 
-        const new_block_count: usize = @intCast(new_block_count_u32);
-        const old_block_count: usize = @intCast(old_block_count_u32);
-        const old_indirect_count = indirectBlocksForFileBlocks(old_block_count_u32);
-        const new_indirect_count = indirectBlocksForFileBlocks(new_block_count_u32);
-
-        const indirect_pointers = try allocator.create([POINTERS_PER_INDIRECT_BLOCK]u32);
-        defer allocator.destroy(indirect_pointers);
-
-        const old_file_blocks = try allocator.alloc(u32, old_block_count);
-        defer allocator.free(old_file_blocks);
-        if (old_block_count > 0) {
-            try self.collectInodeDataBlocks(existing_inode, old_file_blocks, indirect_pointers);
-        }
-
-        const new_file_blocks = try allocator.alloc(u32, new_block_count);
-        defer allocator.free(new_file_blocks);
-        @memset(new_file_blocks, BLOCK_POINTER_NONE);
-
-        const newly_allocated_data_blocks = try allocator.alloc(u32, new_block_count);
-        defer allocator.free(newly_allocated_data_blocks);
-        @memset(newly_allocated_data_blocks, BLOCK_POINTER_NONE);
-        var newly_allocated_data_count: usize = 0;
-        errdefer {
-            for (newly_allocated_data_blocks[0..newly_allocated_data_count]) |block_index| {
-                self.freeDataBlock(block_index) catch {};
-            }
-        }
-
-        var sector = [_]u8{0} ** 512;
-        var all_blocks_reused = existing_inode.size_bytes == @as(u32, @intCast(data.len));
-        var block_idx: usize = 0;
-        while (block_idx < new_block_count) : (block_idx += 1) {
-            const byte_start = block_idx * 512;
-            const byte_end = @min(data.len, byte_start + 512);
-            sector = [_]u8{0} ** 512;
-            if (byte_start < data.len) {
-                @memcpy(sector[0 .. byte_end - byte_start], data[byte_start..byte_end]);
-            }
-
-            if (block_idx < old_block_count and try self.blockMatches(old_file_blocks[block_idx], &sector)) {
-                new_file_blocks[block_idx] = old_file_blocks[block_idx];
-            } else {
-                const block_index = try self.allocateDataBlock();
-                newly_allocated_data_blocks[newly_allocated_data_count] = block_index;
-                newly_allocated_data_count += 1;
-                try self.block_dev.writeBlock(self.dataBlockLba(block_index), &sector);
-                new_file_blocks[block_idx] = block_index;
-                all_blocks_reused = false;
-            }
-        }
-
-        if (all_blocks_reused and old_block_count == new_block_count) {
+        if (!is_present and num_wanted.* == 0) {
+            // Don't want a block, and the index is already NONE; nothing to do.
             return;
         }
 
-        const new_indirect_blocks = try allocator.alloc(u32, new_indirect_count);
-        defer allocator.free(new_indirect_blocks);
-        @memset(new_indirect_blocks, BLOCK_POINTER_NONE);
-
-        const newly_allocated_indirect_blocks = try allocator.alloc(u32, new_indirect_count);
-        defer allocator.free(newly_allocated_indirect_blocks);
-        @memset(newly_allocated_indirect_blocks, BLOCK_POINTER_NONE);
-        var newly_allocated_indirect_count: usize = 0;
-        errdefer {
-            for (newly_allocated_indirect_blocks[0..newly_allocated_indirect_count]) |block_index| {
-                self.freeDataBlock(block_index) catch {};
+        if (level == 0) {
+            if (num_wanted.* > 0) {
+                if (!is_present)
+                    block_index.* = try self.allocateDataBlock();
+                num_wanted.* -= 1;
+            } else if (num_wanted.* == 0) {
+                // Must be present since we checked for the NONE case above.
+                try self.freeDataBlock(block_index.*);
+                block_index.* = BLOCK_POINTER_NONE;
             }
-        }
+        } else {
+            const block_wanted = num_wanted.* > 0;
 
-        var indirect_index: usize = 0;
-        while (indirect_index < new_indirect_count) : (indirect_index += 1) {
-            const block_index = try self.allocateDataBlock();
-            newly_allocated_indirect_blocks[newly_allocated_indirect_count] = block_index;
-            newly_allocated_indirect_count += 1;
-            new_indirect_blocks[indirect_index] = block_index;
-
-            const slice_start = DIRECT_BLOCK_COUNT + indirect_index * POINTERS_PER_INDIRECT_BLOCK;
-            const slice_end = @min(new_block_count, slice_start + POINTERS_PER_INDIRECT_BLOCK);
-            try self.writeIndirectPointerBlock(block_index, new_file_blocks[slice_start..slice_end]);
-        }
-
-        var next_inode = existing_inode.*;
-        next_inode.size_bytes = @intCast(data.len);
-        next_inode.direct_blocks = [_]u32{BLOCK_POINTER_NONE} ** DIRECT_BLOCK_COUNT;
-        next_inode.indirect_blocks = [_]u32{BLOCK_POINTER_NONE} ** INDIRECT_BLOCK_COUNT;
-        next_inode.link_count = 1;
-
-        for (new_file_blocks[0..@min(new_block_count, DIRECT_BLOCK_COUNT)], 0..) |block_index, index| {
-            next_inode.direct_blocks[index] = block_index;
-        }
-        for (new_indirect_blocks[0..new_indirect_count], 0..) |block_index, index| {
-            next_inode.indirect_blocks[index] = block_index;
-        }
-
-        try self.writeInode(inode_index, &next_inode);
-
-        var old_index: usize = 0;
-        while (old_index < old_block_count) : (old_index += 1) {
-            if (old_index < new_block_count and old_file_blocks[old_index] == new_file_blocks[old_index]) {
-                continue;
+            // Either load block pointers from disk or initialize empty pointer array
+            var block_pointers: [POINTERS_PER_INDIRECT_BLOCK]u32 = undefined;
+            if (is_present) {
+                try self.readIndirectPointerBlock(block_index.*, &block_pointers);
+            } else {
+                @memset(&block_pointers, BLOCK_POINTER_NONE);
             }
-            try self.freeDataBlock(old_file_blocks[old_index]);
-        }
 
-        for (existing_inode.indirect_blocks[0..old_indirect_count]) |block_index| {
-            try self.freeDataBlock(block_index);
+            // Recursively allocate block pointers in the indirect block
+            for (&block_pointers) |*pointer| {
+                try self.recAllocBlockTree(pointer, num_wanted, level - 1);
+            }
+
+            // Allocate/destroy indirect block itself
+            if (!is_present and block_wanted) {
+                block_index.* = try self.allocateDataBlock();
+            } else if (is_present and !block_wanted) {
+                try self.freeDataBlock(block_index.*);
+                block_index.* = BLOCK_POINTER_NONE;
+            }
+
+            // If the block has any non-null pointers, write it back to disk
+            if (block_wanted) {
+                try self.block_dev.writeBlock(self.dataBlockLba(block_index.*), @ptrCast(&block_pointers));
+            }
         }
     }
 
-    fn destroyInode(self: *FileSystem, allocator: std.mem.Allocator, inode_index: u16) WriteFileError!void {
-        const inode = try self.readFileInode(inode_index);
-
-        const old_block_count: usize = @intCast(fileBlocksForSize(inode.size_bytes));
-        const indirect_pointers = try allocator.create([POINTERS_PER_INDIRECT_BLOCK]u32);
-        defer allocator.destroy(indirect_pointers);
-
-        const old_blocks = try allocator.alloc(u32, old_block_count);
-        defer allocator.free(old_blocks);
-        if (old_block_count > 0) {
-            try self.collectInodeDataBlocks(&inode, old_blocks, indirect_pointers);
+    // Recursively allocates or frees blocks for an inode, so that num_wanted_blocks (or as many as can fit in this tree) are allocated.
+    fn allocBlockTree(self: *FileSystem, inode: *Inode, num_wanted_blocks: u32) !void {
+        var num_wanted = num_wanted_blocks;
+        for (0..DIRECT_BLOCK_COUNT) |i| {
+            try self.recAllocBlockTree(&inode.direct_blocks[i], &num_wanted, 0);
         }
+        try self.recAllocBlockTree(&inode.indirect_block, &num_wanted, 1);
+        try self.recAllocBlockTree(&inode.double_indirect_block, &num_wanted, 2);
+        if (num_wanted > 0) return error.NoSpace;
+    }
 
-        for (old_blocks) |block_index| {
-            try self.freeDataBlock(block_index);
-        }
+    fn replaceInodeContents(self: *FileSystem, inode_index: u16, inode: *Inode, data: []const u8) FsError!void {
+        const num_data_blocks = fileBlocksForSize(@intCast(data.len));
+        if (num_data_blocks > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
 
-        const old_indirect_count = indirectBlocksForFileBlocks(fileBlocksForSize(inode.size_bytes));
-        for (inode.indirect_blocks[0..old_indirect_count]) |block_index| {
-            try self.freeDataBlock(block_index);
+        // Allocate the block tree structure
+        try self.allocBlockTree(inode, num_data_blocks);
+
+        // Update the inode on disk (do this early to minimize risk of leaving orphaned blocks)
+        inode.size_bytes = @intCast(data.len);
+        try self.writeInode(inode_index, inode);
+
+        // Fill the allocated blocks with the new data
+        var sector = [_]u8{0} ** 512;
+        for (0..num_data_blocks) |block_idx| {
+            const byte_start = block_idx * 512;
+            const byte_end = @min(data.len, byte_start + 512);
+            @memcpy(sector[0 .. byte_end - byte_start], data[byte_start..byte_end]);
+            @memset(sector[byte_end - byte_start ..], 0);
+            const data_block = try self.getInodeDataBlock(inode, @intCast(block_idx));
+            try self.block_dev.writeBlock(self.dataBlockLba(data_block), &sector);
         }
+    }
+
+    fn destroyInode(self: *FileSystem, inode_index: u16) FsError!void {
+        var inode = try self.readFileInode(inode_index);
+
+        try self.allocBlockTree(&inode, 0);
 
         var cleared: Inode = .{};
         try self.writeInode(inode_index, &cleared);
@@ -752,9 +721,8 @@ pub const FileSystem = struct {
                 for (inode.direct_blocks) |block_index| {
                     if (block_index != BLOCK_POINTER_NONE) return error.Corrupt;
                 }
-                for (inode.indirect_blocks) |block_index| {
-                    if (block_index != BLOCK_POINTER_NONE) return error.Corrupt;
-                }
+                if (inode.indirect_block != BLOCK_POINTER_NONE) return error.Corrupt;
+                if (inode.double_indirect_block != BLOCK_POINTER_NONE) return error.Corrupt;
                 return;
             },
             INODE_KIND_FILE, INODE_KIND_DIRECTORY => {},
@@ -767,7 +735,6 @@ pub const FileSystem = struct {
         if (block_count > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.Corrupt;
 
         const used_direct = @min(@as(usize, @intCast(block_count)), DIRECT_BLOCK_COUNT);
-        const used_indirect = indirectBlocksForFileBlocks(block_count);
 
         for (inode.direct_blocks, 0..) |block_index, index| {
             if (index < used_direct) {
@@ -777,78 +744,77 @@ pub const FileSystem = struct {
             }
         }
 
-        var indirect_pointers: [POINTERS_PER_INDIRECT_BLOCK]u32 = undefined;
-        for (inode.indirect_blocks, 0..) |block_index, index| {
-            if (index < used_indirect) {
-                try self.validateDataBlockIndex(block_index);
-                try self.readIndirectPointerBlock(block_index, &indirect_pointers);
-                const used_entries: usize = if (index + 1 < used_indirect)
-                    POINTERS_PER_INDIRECT_BLOCK
-                else
-                    @as(usize, @intCast(block_count)) - DIRECT_BLOCK_COUNT - index * POINTERS_PER_INDIRECT_BLOCK;
-
-                for (indirect_pointers, 0..) |pointer, pointer_index| {
-                    if (pointer_index < used_entries) {
-                        try self.validateDataBlockIndex(pointer);
-                    } else if (pointer != BLOCK_POINTER_NONE) {
-                        return error.Corrupt;
-                    }
-                }
-            } else if (block_index != BLOCK_POINTER_NONE) {
-                return error.Corrupt;
-            }
+        if (inode.indirect_block != BLOCK_POINTER_NONE) {
+            try self.validateDataBlockIndex(inode.indirect_block);
+        }
+        if (inode.double_indirect_block != BLOCK_POINTER_NONE) {
+            try self.validateDataBlockIndex(inode.double_indirect_block);
         }
     }
 
     /// Collects the data block indices for all logical blocks used by an inode into dest.
-    fn collectInodeDataBlocks(self: *const FileSystem, inode: *const Inode, dest: []u32, indirect_pointers: *[POINTERS_PER_INDIRECT_BLOCK]u32) FsError!void {
+    fn collectInodeDataBlocks(self: *const FileSystem, inode: *const Inode, dest: []u32) FsError!void {
         const block_count = fileBlocksForSize(inode.size_bytes);
         if (dest.len < block_count) return error.Corrupt;
 
         var block_index: usize = 0;
         while (block_index < block_count) : (block_index += 1) {
-            dest[block_index] = try self.getInodeDataBlock(inode, @intCast(block_index), indirect_pointers);
+            dest[block_index] = try self.getInodeDataBlock(inode, @intCast(block_index));
         }
     }
 
+    /// Walk an indirect block tree, starting from index block_tree, to find the logical data block with number block_logical.
+    fn walkBlockTree(self: *const FileSystem, block_logical: u32, block_tree: u32, level: u32) !u32 {
+        if (block_logical == BLOCK_POINTER_NONE) return error.Corrupt;
+
+        var cur_blockidx = block_logical;
+        var cur_level = level;
+        var cur_tree = block_tree;
+        try self.validateDataBlockIndex(cur_tree);
+
+        var block_pointers: [POINTERS_PER_INDIRECT_BLOCK]u32 = undefined;
+
+        while (cur_level > 0) : (cur_level -= 1) {
+            try self.readIndirectPointerBlock(cur_tree, &block_pointers);
+
+            const blocks_per_pointer = std.math.pow(u32, POINTERS_PER_INDIRECT_BLOCK, cur_level - 1);
+            const blocks_per_level = blocks_per_pointer * POINTERS_PER_INDIRECT_BLOCK;
+            if (cur_blockidx >= blocks_per_level) @panic("block index out of range for block tree");
+
+            const pointer_index = @divTrunc(cur_blockidx, blocks_per_pointer);
+
+            cur_tree = block_pointers[pointer_index];
+            cur_blockidx = @mod(cur_blockidx, blocks_per_pointer);
+            try self.validateDataBlockIndex(cur_tree);
+        }
+        return cur_tree;
+    }
+
     /// Find the data block index for a given logical block within an inode.
-    fn getInodeDataBlock(self: *const FileSystem, inode: *const Inode, logical_block: u32, indirect_pointers: *[POINTERS_PER_INDIRECT_BLOCK]u32) FsError!u32 {
+    fn getInodeDataBlock(self: *const FileSystem, inode: *const Inode, logical_block: u32) FsError!u32 {
         if (logical_block < @as(u32, DIRECT_BLOCK_COUNT)) {
             const block_index = inode.direct_blocks[logical_block];
             try self.validateDataBlockIndex(block_index);
             return block_index;
         }
 
-        const indirect_logical = logical_block - DIRECT_BLOCK_COUNT;
-        const indirect_slot: usize = @intCast(indirect_logical / POINTERS_PER_INDIRECT_BLOCK);
-        if (indirect_slot >= INDIRECT_BLOCK_COUNT) return error.Corrupt;
+        var idx = logical_block - @as(u32, DIRECT_BLOCK_COUNT);
+        if (idx < POINTERS_PER_INDIRECT_BLOCK) {
+            return try self.walkBlockTree(idx, inode.indirect_block, 1);
+        }
 
-        const indirect_block_index = inode.indirect_blocks[indirect_slot];
-        try self.validateDataBlockIndex(indirect_block_index);
+        idx -= POINTERS_PER_INDIRECT_BLOCK;
+        if (idx < POINTERS_PER_INDIRECT_BLOCK * POINTERS_PER_INDIRECT_BLOCK) {
+            return try self.walkBlockTree(idx, inode.double_indirect_block, 2);
+        }
 
-        const pointer_index: usize = @intCast(indirect_logical % POINTERS_PER_INDIRECT_BLOCK);
-        try self.readIndirectPointerBlock(indirect_block_index, indirect_pointers);
-        const block_index = indirect_pointers[pointer_index];
-        try self.validateDataBlockIndex(block_index);
-        return block_index;
+        // Invalid logical block index for the inode (too large for maximum tree size)
+        return error.Corrupt;
     }
 
     fn readIndirectPointerBlock(self: *const FileSystem, block_index: u32, dest: *[POINTERS_PER_INDIRECT_BLOCK]u32) FsError!void {
         try self.validateDataBlockIndex(block_index);
         try self.block_dev.readBlock(self.dataBlockLba(block_index), @ptrCast(dest));
-    }
-
-    fn writeIndirectPointerBlock(self: *FileSystem, block_index: u32, pointers: []const u32) FsError!void {
-        if (pointers.len > POINTERS_PER_INDIRECT_BLOCK) return error.Corrupt;
-        try self.validateDataBlockIndex(block_index);
-
-        var pointer_block = [_]u32{BLOCK_POINTER_NONE} ** POINTERS_PER_INDIRECT_BLOCK;
-        for (pointers, 0..) |pointer, index| {
-            try self.validateDataBlockIndex(pointer);
-            pointer_block[index] = pointer;
-        }
-
-        try self.block_dev.writeBlock(self.dataBlockLba(block_index), @ptrCast(&pointer_block));
     }
 
     /// Read the directory inode and then a directory entry from it by index.
@@ -951,14 +917,6 @@ pub const FileSystem = struct {
         try self.block_dev.writeBlock(sector_lba, &sector);
     }
 
-    fn blockMatches(self: *const FileSystem, block_index: u32, expected: *const [512]u8) FsError!bool {
-        try self.validateDataBlockIndex(block_index);
-
-        var sector = [_]u8{0} ** 512;
-        try self.block_dev.readBlock(self.dataBlockLba(block_index), &sector);
-        return std.mem.eql(u8, &sector, expected);
-    }
-
     fn dataBlockLba(self: *const FileSystem, block_index: u32) u32 {
         return self.superblock.data_start_lba + block_index;
     }
@@ -969,29 +927,6 @@ pub const FileSystem = struct {
         }
     }
 };
-
-fn makeDefaultSuperblock(layout: Layout) Superblock {
-    comptime {
-        std.debug.assert(@sizeOf(Inode) == 64);
-        std.debug.assert(@sizeOf(DirectoryEntry) == 32);
-        std.debug.assert(@sizeOf(Superblock) == 64);
-    }
-    return .{
-        .magic = MAGIC,
-        .version = VERSION,
-        .block_size = 512,
-        .fs_sector_count = layout.fs_sector_count,
-        .bitmap_start_lba = layout.bitmap_start_lba,
-        .bitmap_sector_count = layout.bitmap_sector_count,
-        .inode_table_start_lba = layout.inode_table_start_lba,
-        .inode_table_sector_count = layout.inode_table_sector_count,
-        .inode_count = layout.inode_count,
-        .data_start_lba = layout.data_start_lba,
-        .data_block_count = layout.data_block_count,
-        .file_count = 0,
-        .reserved = [_]u8{0} ** 28,
-    };
-}
 
 fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsError!void {
     switch (entry.kind) {
@@ -1006,11 +941,4 @@ fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsErro
     if (entry.inode_index >= inode_count) return error.Corrupt;
     if (entry.name_len == 0 or entry.name_len > FILENAME_MAX_LEN) return error.Corrupt;
     if (!validateName(entry.name[0..entry.name_len])) return error.Corrupt;
-}
-
-fn indirectBlocksForFileBlocks(block_count: u32) usize {
-    if (block_count <= DIRECT_BLOCK_COUNT) return 0;
-
-    const indirect_data_blocks = block_count - DIRECT_BLOCK_COUNT;
-    return @intCast((indirect_data_blocks + POINTERS_PER_INDIRECT_BLOCK - 1) / POINTERS_PER_INDIRECT_BLOCK);
 }

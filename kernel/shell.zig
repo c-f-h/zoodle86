@@ -184,7 +184,7 @@ fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
 
 fn cmdRm(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        try deleteFile(shell.alloc, shell.disk_fs, name);
+        try deleteFile(shell.disk_fs, name);
     } else {
         printUsage("rm");
     }
@@ -670,14 +670,9 @@ fn writeFileFromConsole(
         try contents.append(alloc, '\n');
     }
 
-    disk_fs.writeFile(alloc, name, contents.items) catch |err| {
-        switch (err) {
-            error.OutOfMemory => return err,
-            else => |fs_err| {
-                printFsError(fs_err);
-                return;
-            },
-        }
+    disk_fs.writeFile(name, contents.items) catch |err| {
+        printFsError(err);
+        return;
     };
 
     console.puts("Wrote ");
@@ -685,15 +680,10 @@ fn writeFileFromConsole(
     console.puts(".\n");
 }
 
-fn deleteFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
-    disk_fs.deleteFile(alloc, name) catch |err| {
-        switch (err) {
-            error.OutOfMemory => return err,
-            else => |fs_err| {
-                printFsError(fs_err);
-                return;
-            },
-        }
+fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) !void {
+    disk_fs.deleteFile(name) catch |err| {
+        printFsError(err);
+        return;
     };
 
     console.puts("Deleted ");

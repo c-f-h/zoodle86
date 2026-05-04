@@ -51,7 +51,7 @@ pub fn init() void {
 }
 
 /// Opens or creates a filesystem-backed descriptor for a task.
-pub fn openFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
+pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const access_mode = try validateOpenFlags(flags);
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
@@ -62,7 +62,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *t
     };
 
     if ((flags & O_TRUNC) != 0) {
-        try disk_fs.truncateInode(allocator, inode_index);
+        try disk_fs.truncateInode(inode_index);
     }
 
     open_files[open_index] = .{
@@ -78,10 +78,10 @@ pub fn openFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *t
 }
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
-pub fn unlinkFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, path: []const u8) FiledescError!void {
+pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
     const inode_index = (try disk_fs.findFileInodeIndex(path)) orelse return error.FileNotFound;
     if (isInodeOpen(inode_index)) return error.FileInUse;
-    try disk_fs.deleteFile(allocator, path);
+    try disk_fs.deleteFile(path);
 }
 
 /// Reads from a task-owned descriptor into a user buffer.
