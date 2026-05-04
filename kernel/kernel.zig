@@ -261,7 +261,7 @@ fn panicOnError(err: anyerror) noreturn {
         ide.IdeError.Timeout => "IDE timeout",
         ide.IdeError.DeviceFault => "IDE device fault",
         ide.IdeError.ControllerError => "IDE controller error",
-        else => "Unknown error",
+        else => @errorName(err),
     });
 }
 
