@@ -41,3 +41,4 @@ Regular files from `static/` are copied into the root of the filesystem image du
 - `scons` keeps `build/kernel.full.elf`, writes `build/kernel.disasm`, and strips `build/kernel.elf` before baking it into the filesystem image. `zig build` mirrors only the kernel ELF pair.
 - To run shell commands on startup, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`. Do **not** use an environment variable for this. End scripts with `shutdown` to terminate cleanly.
 - Serial output is captured to `build/serial.txt`. Use `serial on` on the shell to mirror console output there.
+- To profile code, use the shell commands `profile start\n...\nprofile stop` and inspect the serial output.
