@@ -58,7 +58,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
 
     const inode_index = try disk_fs.findFileInodeIndex(path) orelse blk: {
         if ((flags & O_CREAT) == 0) return error.FileNotFound;
-        break :blk try disk_fs.createFile(path);
+        break :blk try disk_fs.createFile(fs.ROOT_INODE_INDEX, path);
     };
 
     if ((flags & O_TRUNC) != 0) {

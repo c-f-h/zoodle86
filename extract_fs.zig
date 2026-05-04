@@ -31,8 +31,8 @@ pub fn main(init: std.process.Init) !void {
     var fbd = file_block_device.FileBlockDevice.init(image_file, init.io, @intCast(file_size / block_device.BLOCK_SIZE));
     var disk_fs = try fs.FileSystem.mount(&fbd.block_dev);
 
-    try stdout.print("Filesystem info:\n", .{});
-    try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});
+    //try stdout.print("Filesystem info:\n", .{});
+    //try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});
 
     try std.Io.Dir.cwd().createDirPath(init.io, output_path);
     const output_dir = try std.Io.Dir.cwd().openDir(init.io, output_path, .{});
@@ -43,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
     var extracted: u32 = 0;
     var index: usize = 0;
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        const info = (try disk_fs.getFileInfo(index)) orelse continue;
+        const info = (try disk_fs.getFileInfo(fs.ROOT_INODE_INDEX, index)) orelse continue;
         const name = info.name[0..info.name_len];
 
         try stdout.print("  Extracting: {s} ({d} bytes)\n", .{ name, info.size_bytes });

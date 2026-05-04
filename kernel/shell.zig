@@ -620,7 +620,7 @@ fn listFiles(disk_fs: *fs.FileSystem) !void {
     var found_any = false;
     var index: usize = 0;
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        if (try disk_fs.getFileInfo(index)) |info| {
+        if (try disk_fs.getFileInfo(fs.ROOT_INODE_INDEX, index)) |info| {
             found_any = true;
             console.puts(info.name[0..info.name_len]);
             console.puts(" (");
