@@ -65,7 +65,7 @@ fn ensureStage2BssFitsBootstrapPageTables() void {
 /// Read the "kernel" ELF from the filesystem and jump to its entry point.
 /// Each PT_LOAD segment is read directly to its link-time virtual address (already mapped).
 fn loadKernelElfAndJump() noreturn {
-    const kernel_inode = (disk_fs.findFileInodeIndex("kernel") catch
+    const kernel_inode = (disk_fs.findFileInodeIndex(fs.ROOT_INODE_INDEX, "kernel") catch
         earlyBootFail("FS error: cannot find kernel")) orelse
         earlyBootFail("FS error: cannot find kernel");
 

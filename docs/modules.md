@@ -75,7 +75,7 @@ Complete listing of every source file and its role.
 
 - `build.zig`: Zig kernel-only build entrypoint for editor tooling and ad hoc builds; assembles `kernel/interrupts.asm`, links `build/kernel.full.elf`, and strips `build/kernel.elf`.
 - `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel respectively.
-- `SConstruct`: SCons build and run entrypoints. Builds `build/fsimage/` from kernel/userspace outputs plus files copied from `static/`.
+- `SConstruct`: SCons build and run entrypoints. Builds `build/fsimage/` from kernel/userspace outputs plus the directory tree copied from `static/`.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
 - Bochs serial output is captured to `build/serial.txt` via the generated `build/bochsrc.txt`.
 
@@ -88,5 +88,5 @@ Complete listing of every source file and its role.
 - `build/fib.elf`: linked from `userspace/fib.zig` and copied into the filesystem image as `fib`.
 - `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
 - `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.
-- `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including files copied from `static/`.
+- `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.

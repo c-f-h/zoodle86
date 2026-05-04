@@ -96,7 +96,7 @@ fn findCommand(name: []const u8) ?*const Command {
 fn runAutoexec(shell: *Shell) !void {
     if (autoexec_finished) return;
 
-    const script = shell.disk_fs.readFile(shell.alloc, autoexec_name) catch |err| switch (err) {
+    const script = shell.disk_fs.readFileAt(shell.alloc, fs.ROOT_INODE_INDEX, autoexec_name) catch |err| switch (err) {
         error.FileNotFound => {
             autoexec_finished = true;
             return;
@@ -619,13 +619,16 @@ fn readLineInto(buf: []u8) ![]u8 {
 fn listFiles(disk_fs: *fs.FileSystem) !void {
     var found_any = false;
     var index: usize = 0;
+    var buf: [128]u8 = undefined;
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
         if (try disk_fs.getFileInfo(fs.ROOT_INODE_INDEX, index)) |info| {
             found_any = true;
-            console.puts(info.name[0..info.name_len]);
-            console.puts(" (");
-            console.putDecU32(info.size_bytes);
-            console.puts(" bytes)\n");
+            const str = try std.fmt.bufPrint(&buf, " {s:<16} {s:5} {d:>7}\n", .{
+                info.name[0..info.name_len],
+                if (info.is_directory) "(DIR)" else ".....",
+                info.size_bytes,
+            });
+            console.puts(str);
         }
     }
 
@@ -635,7 +638,7 @@ fn listFiles(disk_fs: *fs.FileSystem) !void {
 }
 
 fn catFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
-    const data = disk_fs.readFile(alloc, name) catch |err| {
+    const data = disk_fs.readFileAt(alloc, fs.ROOT_INODE_INDEX, name) catch |err| {
         switch (err) {
             error.OutOfMemory => return err,
             else => |fs_err| {
@@ -670,7 +673,7 @@ fn writeFileFromConsole(
         try contents.append(alloc, '\n');
     }
 
-    disk_fs.writeFile(name, contents.items) catch |err| {
+    disk_fs.writeFileAt(fs.ROOT_INODE_INDEX, name, contents.items) catch |err| {
         printFsError(err);
         return;
     };
@@ -681,7 +684,7 @@ fn writeFileFromConsole(
 }
 
 fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) !void {
-    disk_fs.deleteFile(name) catch |err| {
+    disk_fs.deleteFile(fs.ROOT_INODE_INDEX, name) catch |err| {
         printFsError(err);
         return;
     };

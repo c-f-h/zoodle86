@@ -56,7 +56,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
 
-    const inode_index = try disk_fs.findFileInodeIndex(path) orelse blk: {
+    const inode_index = try disk_fs.findFileInodeIndex(fs.ROOT_INODE_INDEX, path) orelse blk: {
         if ((flags & O_CREAT) == 0) return error.FileNotFound;
         break :blk try disk_fs.createFile(fs.ROOT_INODE_INDEX, path);
     };
@@ -79,9 +79,9 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
 pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
-    const inode_index = (try disk_fs.findFileInodeIndex(path)) orelse return error.FileNotFound;
+    const inode_index = (try disk_fs.findFileInodeIndex(fs.ROOT_INODE_INDEX, path)) orelse return error.FileNotFound;
     if (isInodeOpen(inode_index)) return error.FileInUse;
-    try disk_fs.deleteFile(path);
+    try disk_fs.deleteFile(fs.ROOT_INODE_INDEX, path);
 }
 
 /// Reads from a task-owned descriptor into a user buffer.

@@ -5,10 +5,78 @@ const std = @import("std");
 
 const CompileError = error{
     InvalidArgs,
-    DirectoryInInput,
-    TooManyFiles,
-    InvalidFileName,
+    InvalidPathName,
 };
+
+const ImportCounts = struct {
+    files: usize = 0,
+    directories: usize = 0,
+};
+
+fn appendPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8, sep: u8) ![]u8 {
+    if (prefix.len == 0) return allocator.dupe(u8, name);
+    return std.fmt.allocPrint(allocator, "{s}{c}{s}", .{ prefix, sep, name });
+}
+
+fn importDirectory(
+    init: std.process.Init,
+    stdout: anytype,
+    disk_fs: *fs.FileSystem,
+    host_dir_path: []const u8,
+    fs_dir_inode: u16,
+    relative_path: []const u8,
+    counts: *ImportCounts,
+) !void {
+    const input_dir = try std.Io.Dir.cwd().openDir(init.io, host_dir_path, .{ .iterate = true });
+    defer input_dir.close(init.io);
+
+    var iter = input_dir.iterateAssumeFirstIteration();
+    while (try iter.next(init.io)) |entry| {
+        switch (entry.kind) {
+            .directory => {
+                if (!fs.validateName(entry.name)) {
+                    try stdout.print("Error: invalid path component: {s}\n", .{entry.name});
+                    return CompileError.InvalidPathName;
+                }
+
+                const child_host_path = try appendPath(init.gpa, host_dir_path, entry.name, '\\');
+                defer init.gpa.free(child_host_path);
+                const child_relative_path = try appendPath(init.gpa, relative_path, entry.name, '/');
+                defer init.gpa.free(child_relative_path);
+
+                try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
+                const child_inode = try disk_fs.createDirectory(fs_dir_inode, entry.name);
+                counts.directories += 1;
+                try importDirectory(init, stdout, disk_fs, child_host_path, child_inode, child_relative_path, counts);
+            },
+            .file => {
+                if (!fs.validateName(entry.name)) {
+                    try stdout.print("Error: invalid path component: {s}\n", .{entry.name});
+                    return CompileError.InvalidPathName;
+                }
+
+                const child_host_path = try appendPath(init.gpa, host_dir_path, entry.name, '\\');
+                defer init.gpa.free(child_host_path);
+                const child_relative_path = try appendPath(init.gpa, relative_path, entry.name, '/');
+                defer init.gpa.free(child_relative_path);
+
+                try stdout.print("  Writing file: {s}\n", .{child_relative_path});
+
+                const input_file = try std.Io.Dir.cwd().openFile(init.io, child_host_path, .{});
+                defer input_file.close(init.io);
+
+                const file_size = try input_file.length(init.io);
+                const file_data = try init.gpa.alloc(u8, file_size);
+                defer init.gpa.free(file_data);
+                _ = try input_file.readPositionalAll(init.io, file_data, 0);
+
+                try disk_fs.writeFileAt(fs_dir_inode, entry.name, file_data);
+                counts.files += 1;
+            },
+            else => {},
+        }
+    }
+}
 
 pub fn main(init: std.process.Init) !void {
     var it = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
@@ -40,40 +108,6 @@ pub fn main(init: std.process.Init) !void {
     const stdout = &stdout_writer.interface;
 
     try stdout.print("Opening input directory: {s}\n", .{input_dir_path});
-    const input_dir = try std.Io.Dir.cwd().openDir(init.io, input_dir_path, .{ .iterate = true });
-    defer input_dir.close(init.io);
-
-    try stdout.print("Collecting files from input directory...\n", .{});
-
-    var files: [fs.DIRECTORY_ENTRY_COUNT][]u8 = undefined;
-    var file_count: usize = 0;
-
-    var iter = input_dir.iterateAssumeFirstIteration();
-    while (try iter.next(init.io)) |entry| {
-        const kind = entry.kind;
-        if (kind == .directory) {
-            try stdout.print("Error: directories not supported: {s}\n", .{entry.name});
-            return CompileError.DirectoryInInput;
-        }
-        if (kind != .file) continue;
-
-        if (file_count >= files.len) {
-            try stdout.print("Error: too many files (max {d})\n", .{fs.DIRECTORY_ENTRY_COUNT});
-            return CompileError.TooManyFiles;
-        }
-
-        if (!fs.validateName(entry.name)) {
-            try stdout.print("Error: invalid filename: {s}\n", .{entry.name});
-            return CompileError.InvalidFileName;
-        }
-
-        files[file_count] = try init.gpa.dupe(u8, entry.name);
-        file_count += 1;
-    }
-
-    defer for (files[0..file_count]) |name| init.gpa.free(name);
-
-    try stdout.print("Found {d} files to write\n", .{file_count});
     try stdout.print("Creating output image: {s} ({d} sectors)\n", .{ output_path, image_size_sectors });
 
     var image_file = try std.Io.Dir.cwd().createFile(init.io, output_path, .{
@@ -87,20 +121,12 @@ pub fn main(init: std.process.Init) !void {
     // The image is blank (all zeros), so mountOrFormat formats a fresh filesystem.
     var disk_fs = try fs.FileSystem.mountOrFormat(&fbd.block_dev);
 
-    try stdout.print("Writing files...\n", .{});
-    for (files[0..file_count]) |name| {
-        try stdout.print("  Writing: {s}\n", .{name});
+    try stdout.print("Writing filesystem contents...\n", .{});
+    var counts: ImportCounts = .{};
+    try importDirectory(init, stdout, &disk_fs, input_dir_path, fs.ROOT_INODE_INDEX, "", &counts);
 
-        const input_file = try input_dir.openFile(init.io, name, .{});
-        defer input_file.close(init.io);
-
-        const file_size = try input_file.length(init.io);
-        const file_data = try init.gpa.alloc(u8, file_size);
-        defer init.gpa.free(file_data);
-        _ = try input_file.readPositionalAll(init.io, file_data, 0);
-
-        try disk_fs.writeFile(name, file_data);
-    }
-
-    try stdout.print("\nDone. Wrote {d} files to {s}\n", .{ file_count, output_path });
+    try stdout.print(
+        "\nDone. Wrote {d} files and {d} directories to {s}\n",
+        .{ counts.files, counts.directories, output_path },
+    );
 }

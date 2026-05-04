@@ -3,6 +3,57 @@ const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
 const std = @import("std");
 
+const ExtractCounts = struct {
+    files: usize = 0,
+    directories: usize = 0,
+};
+
+fn appendPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8, sep: u8) ![]u8 {
+    if (prefix.len == 0) return allocator.dupe(u8, name);
+    return std.fmt.allocPrint(allocator, "{s}{c}{s}", .{ prefix, sep, name });
+}
+
+fn extractDirectory(
+    init: std.process.Init,
+    stdout: anytype,
+    disk_fs: *fs.FileSystem,
+    dir_inode_index: u16,
+    output_dir_path: []const u8,
+    relative_path: []const u8,
+    counts: *ExtractCounts,
+) !void {
+    var index: usize = 0;
+    while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
+        const entry = (try disk_fs.getDirectoryEntry(dir_inode_index, index)) orelse continue;
+        const name = entry.name[0..@as(usize, entry.name_len)];
+        const child_output_path = try appendPath(init.gpa, output_dir_path, name, '\\');
+        defer init.gpa.free(child_output_path);
+        const child_relative_path = try appendPath(init.gpa, relative_path, name, '/');
+        defer init.gpa.free(child_relative_path);
+
+        switch (entry.kind) {
+            .File => {
+                const data = try disk_fs.readFileAt(init.gpa, dir_inode_index, name);
+                defer init.gpa.free(data);
+
+                try stdout.print("  Extracting file: {s} ({d} bytes)\n", .{ child_relative_path, data.len });
+
+                var out_file = try std.Io.Dir.cwd().createFile(init.io, child_output_path, .{});
+                defer out_file.close(init.io);
+                try out_file.writeStreamingAll(init.io, data);
+                counts.files += 1;
+            },
+            .Directory => {
+                try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
+                try std.Io.Dir.cwd().createDirPath(init.io, child_output_path);
+                counts.directories += 1;
+                try extractDirectory(init, stdout, disk_fs, entry.inode_index, child_output_path, child_relative_path, counts);
+            },
+            else => return error.Corrupt,
+        }
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     var it = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
     defer it.deinit();
@@ -35,28 +86,13 @@ pub fn main(init: std.process.Init) !void {
     //try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});
 
     try std.Io.Dir.cwd().createDirPath(init.io, output_path);
-    const output_dir = try std.Io.Dir.cwd().openDir(init.io, output_path, .{});
-    defer output_dir.close(init.io);
-
     try stdout.print("Extracting files to: {s}\n", .{output_path});
 
-    var extracted: u32 = 0;
-    var index: usize = 0;
-    while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        const info = (try disk_fs.getFileInfo(fs.ROOT_INODE_INDEX, index)) orelse continue;
-        const name = info.name[0..info.name_len];
+    var counts: ExtractCounts = .{};
+    try extractDirectory(init, stdout, &disk_fs, fs.ROOT_INODE_INDEX, output_path, "", &counts);
 
-        try stdout.print("  Extracting: {s} ({d} bytes)\n", .{ name, info.size_bytes });
-
-        const data = try disk_fs.readFile(init.gpa, name);
-        defer init.gpa.free(data);
-
-        var out_file = try output_dir.createFile(init.io, name, .{});
-        defer out_file.close(init.io);
-        try out_file.writeStreamingAll(init.io, data);
-
-        extracted += 1;
-    }
-
-    try stdout.print("\nDone. Extracted {d} files.\n", .{extracted});
+    try stdout.print(
+        "\nDone. Extracted {d} files and {d} directories.\n",
+        .{ counts.files, counts.directories },
+    );
 }

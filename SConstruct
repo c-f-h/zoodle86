@@ -97,7 +97,7 @@ KERNEL_EXE = BUILD_DIR / "kernel.elf"
 ZIG_CACHE_DIR = BUILD_DIR / ".zig-cache"
 ZIG_GLOBAL_CACHE_DIR = BUILD_DIR / ".zig-global-cache"
 IMAGE_SIZE_SECTORS = IMAGE_SIZE // 512
-STATIC_INPUTS = [str(path) for path in sorted(STATIC_DIR.iterdir()) if path.is_file()]
+STATIC_INPUTS = [str(path) for path in [STATIC_DIR] + sorted(STATIC_DIR.rglob("*"))]
 
 
 def write_bochsrc(target, source, env):
@@ -336,11 +336,11 @@ def build_fs_image(target, source, env):
     kernel_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))
     shutil.copy2(kernel_path, FS_IMAGE_DIR / "kernel")
 
-    # Copy static assets into the root of the filesystem image.
+    # Copy static assets into the filesystem image, preserving directory hierarchy.
     for static_path in sorted(STATIC_DIR.iterdir()):
         if static_path.is_dir():
-            raise RuntimeError(f"Directories inside static/ are not supported: {static_path.name}")
-        if static_path.is_file():
+            shutil.copytree(static_path, FS_IMAGE_DIR / static_path.name, dirs_exist_ok=True)
+        elif static_path.is_file():
             shutil.copy2(static_path, FS_IMAGE_DIR / static_path.name)
 
     autoexec_path = FS_IMAGE_DIR / AUTOEXEC_FILENAME

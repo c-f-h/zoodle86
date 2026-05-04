@@ -351,7 +351,9 @@ fn kernel_enter() !noreturn {
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions.
-        try vconsole.loadFont(alloc, &disk_fs, "cp850-8x14.psf");
+        vconsole.loadFont(alloc, &disk_fs, "/fonts/cp850-8x14.psf") catch |err| {
+            console.put(.{ "Failed to load font (", @errorName(err), ").\n" });
+        };
 
         const half_w = framebuf.width() / 2;
         const full_h = framebuf.height();
@@ -507,7 +509,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     }
 
     console.put(.{ "Loading ", fname, "...\n" });
-    const elf_data = try disk_fs.readFile(alloc, fname);
+    const elf_data = try disk_fs.readFileAt(alloc, fs.ROOT_INODE_INDEX, fname);
     defer alloc.free(elf_data);
 
     const ehdr: *align(1) elf32.Elf32_Ehdr = @ptrCast(elf_data.ptr);
