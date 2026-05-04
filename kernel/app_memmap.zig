@@ -1,6 +1,7 @@
 /// Interactive full-screen ASCII viewer for the kernel page directory and page tables.
 /// Shows all 1024 PDEs (or PTEs) in a 64-column × 16-row grid.
 /// '#' = present, '.' = absent, cursor highlighted in blue.
+const std = @import("std");
 const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");
 const paging = @import("paging.zig");
@@ -24,6 +25,7 @@ const ENTRIES_PER_ROW = 64; // entries shown per grid row (64 × 16 = 1024)
 const GRID_ROWS = 16;
 const GRID_START_ROW = 2; // first grid row on screen
 const GRID_START_COL = 4; // grid column offset (after "xxx " row label)
+const SUMMARY_COL = GRID_START_COL + ENTRIES_PER_ROW + 1;
 const SEP_ROW = GRID_START_ROW + GRID_ROWS; // separator row 18
 const STATUS_ROW = SEP_ROW + 1; // status bar row 19
 const WINDOW_WIDTH = 80;
@@ -71,6 +73,7 @@ fn drawAll(self: *Memmap) void {
     drawHeader(self);
     drawRuler();
     drawGrid(self);
+    drawSummary(self);
     drawSep();
     drawStatus(self);
 }
@@ -152,6 +155,19 @@ fn drawSep() void {
     while (col < visibleWindowWidth()) : (col += 1) {
         console.putCharAt(SEP_ROW, col, '-', ATTR_DIM);
     }
+}
+
+fn drawSummary(self: *Memmap) void {
+    const mapped_pages = switch (self.view) {
+        .pd => countMappedPagesInDirectory(paging.getMappedPageDirectory()),
+        .pt => countMappedPagesInTable(paging.getMappedPageTable(self.pdi)),
+    };
+
+    putStrAt(GRID_START_ROW + 1, SUMMARY_COL, "mapped", ATTR_DIM);
+    putDecU32At(GRID_START_ROW + 2, SUMMARY_COL, mapped_pages, ATTR_STATUS_HL);
+    putStrAt(GRID_START_ROW + 3, SUMMARY_COL, "pages", ATTR_STATUS);
+    putDecMiBAt(GRID_START_ROW + 5, SUMMARY_COL, mapped_pages, ATTR_STATUS_HL);
+    putStrAt(GRID_START_ROW + 6, SUMMARY_COL, "MB", ATTR_STATUS);
 }
 
 fn drawStatus(self: *Memmap) void {
@@ -318,6 +334,44 @@ fn putHex3At(row: u32, col: u32, value: u10, attr: u8) void {
     console.putCharAt(row, col + 0, hex[@as(u32, value >> 8)], attr);
     console.putCharAt(row, col + 1, hex[@as(u32, (value >> 4) & 0xF)], attr);
     console.putCharAt(row, col + 2, hex[@as(u32, value & 0xF)], attr);
+}
+
+fn putDecU32At(row: u32, col: u32, value: u32, attr: u8) void {
+    var buf: [10]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{}", .{value}) catch unreachable;
+    putStrAt(row, col, text, attr);
+}
+
+fn putDecMiBAt(row: u32, col: u32, page_count: u32, attr: u8) void {
+    const milli_mib = (page_count * 1000 + 128) / 256;
+    const whole = milli_mib / 1000;
+    const frac = milli_mib % 1000;
+    var buf: [10]u8 = undefined;
+    const whole_text = std.fmt.bufPrint(&buf, "{}", .{whole}) catch unreachable;
+    putStrAt(row, col, whole_text, attr);
+    const frac_col = col + @as(u32, @intCast(whole_text.len));
+    console.putCharAt(row, frac_col + 0, '.', attr);
+    console.putCharAt(row, frac_col + 1, @intCast('0' + (frac / 100) % 10), attr);
+    console.putCharAt(row, frac_col + 2, @intCast('0' + (frac / 10) % 10), attr);
+    console.putCharAt(row, frac_col + 3, @intCast('0' + frac % 10), attr);
+}
+
+fn countMappedPagesInDirectory(pd: *const paging.PageDirectory) u32 {
+    var mapped_pages: u32 = 0;
+    for (0..pd.len) |i| {
+        const pdi: u10 = @intCast(i);
+        if (!pd[pdi].present) continue;
+        mapped_pages += countMappedPagesInTable(paging.getMappedPageTable(pdi));
+    }
+    return mapped_pages;
+}
+
+fn countMappedPagesInTable(pt: *const paging.PageTable) u32 {
+    var mapped_pages: u32 = 0;
+    for (pt) |pte| {
+        if (pte.present) mapped_pages += 1;
+    }
+    return mapped_pages;
 }
 
 // ---------------------------------------------------------------------------
