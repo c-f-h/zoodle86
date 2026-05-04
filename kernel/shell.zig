@@ -47,6 +47,7 @@ const commands = [_]Command{
     .{ .name = "taskswitch", .description = "Show the scheduler task-to-task switch count.", .handler = cmdTaskSwitch },
     .{ .name = "ticks", .description = "Write current timer ticks to serial, appending arguments.", .handler = cmdTicks },
     .{ .name = "profile", .description = "Kernel EIP profiler control: profile start|stop.", .handler = cmdProfile },
+    .{ .name = "fontbench", .description = "Stress font rendering without scrollback: fontbench <count>.", .handler = cmdFontbench },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
     .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
@@ -423,6 +424,29 @@ fn cmdProfile(shell: *Shell, args: *ArgsIterator) !void {
     printUsage("profile");
 }
 
+fn cmdFontbench(shell: *Shell, args: *ArgsIterator) !void {
+    _ = shell;
+
+    const raw_count = args.next() orelse {
+        printUsage("fontbench");
+        return;
+    };
+    const iterations = parseNumericArg(raw_count) catch {
+        printUsage("fontbench");
+        return;
+    };
+    if (args.next() != null) {
+        printUsage("fontbench");
+        return;
+    }
+    if (iterations == 0) {
+        console.puts("fontbench count must be at least 1.\n");
+        return;
+    }
+
+    console.stressWrite(iterations);
+}
+
 fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
 
@@ -563,6 +587,8 @@ fn printUsage(name: []const u8) void {
             console.puts(" (no arguments)");
         } else if (std.mem.eql(u8, command.name, "profile")) {
             console.puts(" <start|stop>");
+        } else if (std.mem.eql(u8, command.name, "fontbench")) {
+            console.puts(" <count>");
         } else if (std.mem.eql(u8, command.name, "serial")) {
             console.puts(" <on|off>");
         }

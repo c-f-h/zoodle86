@@ -43,17 +43,41 @@ fn swapAttr(attr: u8) u8 {
     return (attr << 4) | (attr >> 4);
 }
 
-inline fn blitScanline16(ptr: [*]u8, row_bitmap: u8, color0: u16, color1: u16) void {
-    var p: [*]u16 = @ptrCast(@alignCast(ptr));
+// A vector representing a single 8 pixel scanline of an 8x8 glyph
+const ScanlineVec = @Vector(8, u16);
 
-    p[0] = if ((row_bitmap & 0x80) != 0) color1 else color0;
-    p[1] = if ((row_bitmap & 0x40) != 0) color1 else color0;
-    p[2] = if ((row_bitmap & 0x20) != 0) color1 else color0;
-    p[3] = if ((row_bitmap & 0x10) != 0) color1 else color0;
-    p[4] = if ((row_bitmap & 0x08) != 0) color1 else color0;
-    p[5] = if ((row_bitmap & 0x04) != 0) color1 else color0;
-    p[6] = if ((row_bitmap & 0x02) != 0) color1 else color0;
-    p[7] = if ((row_bitmap & 0x01) != 0) color1 else color0;
+const scanline_mask_lut = initScanlineMaskLut();
+
+// Lookup table mapping an 8-bit glyph scanline to a vector mask for blitting.
+fn initScanlineMaskLut() [256]ScanlineVec {
+    var lut: [256]ScanlineVec = undefined;
+
+    for (0..lut.len) |row| {
+        const row_bitmap: u8 = @intCast(row);
+        lut[row] = .{
+            if ((row_bitmap & 0x80) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x40) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x20) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x10) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x08) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x04) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x02) != 0) 0xFFFF else 0,
+            if ((row_bitmap & 0x01) != 0) 0xFFFF else 0,
+        };
+    }
+
+    return lut;
+}
+
+inline fn blitScanline16(ptr: [*]u8, row_bitmap: u8, color0: u16, color1: u16) void {
+    const mask = scanline_mask_lut[row_bitmap];
+    const bg: ScanlineVec = @splat(color0);
+    const fg: ScanlineVec = @splat(color1);
+
+    const pixels = (bg & ~mask) | (fg & mask);
+
+    // By construction, the shadow buffer is aligned to 16 bytes
+    @as(*ScanlineVec, @ptrCast(@alignCast(ptr))).* = pixels;
 }
 
 fn drawGlyphCellAt(
@@ -99,8 +123,20 @@ pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, pat
 pub const TextSize = window.TextSize;
 
 /// Return a text grid size that fits inside a framed framebuffer console window within the given area.
-pub fn preferredTextSize(avail_w: u32, avail_h: u32, title: []const u8) !TextSize {
-    return window.preferredTextSize(avail_w, avail_h, active_font.glyph_width, active_font.glyph_height, title.len);
+pub fn preferredTextSize(avail_w: u32, avail_h: u32) !TextSize {
+    return preferredTextSizeForFont(avail_w, avail_h, active_font.glyph_width, active_font.glyph_height);
+}
+
+/// Return a text-grid size that fits inside a framed window for the given available pixel area.
+fn preferredTextSizeForFont(avail_w: u32, avail_h: u32, glyph_width: u32, glyph_height: u32) !TextSize {
+    const title_height = glyph_height + window.title_padding_y * 2;
+
+    const text_area_w = avail_w - 2 * (window.window_margin + window.panel_border + window.panel_padding_x);
+    const text_area_h = avail_h - (window.window_margin * 2 + window.panel_border * 2 + title_height + window.panel_padding_y * 2);
+    const cols = text_area_w / glyph_width;
+    const rows = text_area_h / glyph_height;
+    if (cols == 0 or rows == 0) return error.WindowTooLarge;
+    return .{ .cols = @min(100, cols), .rows = @min(50, rows) };
 }
 
 /// Framebuffer-backed virtual console: owns a Window and tracks cursor/grid state.
@@ -243,7 +279,7 @@ pub const VConsole = struct {
 
         const highlight = self.cursor_visible and row == self.cursor_row and col == self.cursor_col;
         self.drawConsoleCellRaw(cells[self.cellIndex(row, col)], row, col, highlight);
-        self.win.blitShadowCellToFramebuffer(row, col);
+        self.blitShadowCellToFramebuffer(row, col);
     }
 
     /// Update the highlighted cursor cell in the framebuffer-backed virtual console.
@@ -252,7 +288,7 @@ pub const VConsole = struct {
 
         if (self.cursor_visible) {
             self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, false);
-            self.win.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
+            self.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
         }
 
         const text_rows = self.rows;
@@ -263,7 +299,23 @@ pub const VConsole = struct {
 
         if (self.cursor_visible) {
             self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, true);
-            self.win.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
+            self.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
+        }
+    }
+
+    /// Copy a single character cell from the shadow buffer into the framebuffer.
+    pub fn blitShadowCellToFramebuffer(self: *const VConsole, row: u32, col: u32) void {
+        const win = &self.win;
+        const start_pixel_row = row * win.glyph_h;
+        const cell_w_bytes = win.glyph_w * framebuf.bytesPerPixel();
+        const pixel_col_offset: usize = col * win.glyph_w * framebuf.bytesPerPixel();
+        var src = win.shadowRowPtr(start_pixel_row) + pixel_col_offset;
+        var dst = win.fbRowPtr(start_pixel_row) + pixel_col_offset;
+        var pixel_row: usize = 0;
+        while (pixel_row < win.glyph_h) : (pixel_row += 1) {
+            mem.copyBytesForward(dst, src, cell_w_bytes);
+            src += win.shadow_pitch;
+            dst += framebuf.pitchBytes();
         }
     }
 };

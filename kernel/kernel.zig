@@ -360,13 +360,13 @@ fn kernel_enter() !noreturn {
         const full_h = framebuf.height();
 
         // Primary console occupies the left half of the screen.
-        const primary_ts = try vconsole.preferredTextSize(half_w, full_h, "zoodle86 shell");
+        const primary_ts = try vconsole.preferredTextSize(half_w, full_h);
         try console.enableFramebufBackend(alloc, primary_ts.cols, primary_ts.rows);
         try primary_vconsole.init(alloc, 0, 0, half_w, full_h, primary_ts.cols, primary_ts.rows, "zoodle86 shell");
         console.primary.vconsole_instance = &primary_vconsole;
 
         // Secondary console occupies the right half of the screen.
-        const sec_ts = try vconsole.preferredTextSize(half_w, full_h, "hello");
+        const sec_ts = try vconsole.preferredTextSize(half_w, full_h);
         try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "hello");
         try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows);
         secondary_console.vconsole_instance = &secondary_vconsole;

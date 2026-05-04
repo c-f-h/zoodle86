@@ -3,35 +3,18 @@ const psf = @import("psf.zig");
 const mem = @import("../mem.zig");
 const std = @import("std");
 
-const panel_border: u32 = 1;
-const panel_padding_x: u32 = 2;
-const panel_padding_y: u32 = 2;
-const title_padding_y: u32 = 3;
-const title_padding_x: u32 = 10;
-const window_margin: u32 = 20;
+pub const panel_border: u32 = 1;
+pub const panel_padding_x: u32 = 2;
+pub const panel_padding_y: u32 = 2;
+pub const title_padding_y: u32 = 3;
+pub const title_padding_x: u32 = 10;
+pub const window_margin: u32 = 20;
 
 /// A character-grid size in columns and rows.
 pub const TextSize = struct {
     cols: u32,
     rows: u32,
 };
-
-/// Return a text-grid size that fits inside a framed window for the given available pixel area.
-pub fn preferredTextSize(avail_w: u32, avail_h: u32, glyph_width: u32, glyph_height: u32, title_len: usize) !TextSize {
-    const title_text_w: u32 = @intCast(title_len * glyph_width);
-    const min_panel_w = title_text_w + title_padding_x * 2 + panel_border * 2;
-    const title_height = glyph_height + title_padding_y * 2;
-    const min_panel_h = title_height + panel_padding_y * 2 + panel_border * 2 + glyph_height;
-    if (avail_w < min_panel_w + window_margin * 2 or avail_h < min_panel_h + window_margin * 2)
-        return error.WindowTooLarge;
-
-    const text_area_w = avail_w - 2 * (window_margin + panel_border + panel_padding_x);
-    const text_area_h = avail_h - (window_margin * 2 + panel_border * 2 + title_height + panel_padding_y * 2);
-    const cols = text_area_w / glyph_width;
-    const rows = text_area_h / glyph_height;
-    if (cols == 0 or rows == 0) return error.WindowTooLarge;
-    return .{ .cols = @min(100, cols), .rows = @min(50, rows) };
-}
 
 /// Fill the entire framebuffer with the desktop background colour. Call once before drawing any windows.
 pub fn drawBackground() void {
@@ -49,7 +32,8 @@ pub const Window = struct {
     origin_y: u32 = 0,
     title_h: u32 = 0,
     /// Shadow pixel data; length = pixel_width * pixel_height (one u16 per pixel for 16bpp).
-    shadow_data: []u16 = &.{},
+    /// Each 8 pixel glyph scanline is 16-byte aligned for SIMD vectorization.
+    shadow_data: []align(16) u16 = &.{},
     shadow_pitch: usize = 0, // bytes per pixel row
     shadow_rows: usize = 0, // total pixel rows in shadow buffer
     glyph_w: u32 = 0,
@@ -101,7 +85,7 @@ pub const Window = struct {
         self.glyph_h = glyph_height;
         self.shadow_pitch = pixel_w * framebuf.bytesPerPixel();
         self.shadow_rows = pixel_h;
-        self.shadow_data = try allocator.alloc(u16, pixel_w * pixel_h);
+        self.shadow_data = try allocator.alignedAlloc(u16, std.mem.Alignment.@"16", pixel_w * pixel_h);
         @memset(self.shadow_data, 0);
         self.ready = true;
     }
@@ -163,7 +147,7 @@ pub const Window = struct {
         return @as([*]u8, @ptrCast(self.shadow_data.ptr)) + pixel_row * self.shadow_pitch;
     }
 
-    fn fbRowPtr(self: *const Window, pixel_row: usize) [*]u8 {
+    pub fn fbRowPtr(self: *const Window, pixel_row: usize) [*]u8 {
         return framebuf.pixelPtr(self.origin_x, self.origin_y) + pixel_row * framebuf.pitchBytes();
     }
 
@@ -174,21 +158,6 @@ pub const Window = struct {
         var row: usize = 0;
         while (row < row_count) : (row += 1) {
             mem.copyBytesForward(dst, src, self.shadow_pitch);
-            src += self.shadow_pitch;
-            dst += framebuf.pitchBytes();
-        }
-    }
-
-    /// Copy a single character cell from the shadow buffer into the framebuffer.
-    pub fn blitShadowCellToFramebuffer(self: *const Window, row: u32, col: u32) void {
-        const start_pixel_row: usize = @as(usize, row) * @as(usize, self.glyph_h);
-        const cell_w_bytes: usize = @as(usize, self.glyph_w) * framebuf.bytesPerPixel();
-        const pixel_col_offset: usize = @as(usize, col) * @as(usize, self.glyph_w) * framebuf.bytesPerPixel();
-        var src = self.shadowRowPtr(start_pixel_row) + pixel_col_offset;
-        var dst = self.fbRowPtr(start_pixel_row) + pixel_col_offset;
-        var pixel_row: usize = 0;
-        while (pixel_row < @as(usize, self.glyph_h)) : (pixel_row += 1) {
-            mem.copyBytesForward(dst, src, cell_w_bytes);
             src += self.shadow_pitch;
             dst += framebuf.pitchBytes();
         }

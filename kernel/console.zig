@@ -182,6 +182,44 @@ pub const Console = struct {
         }
     }
 
+    /// Stress text rendering by overwriting 1000 character cells per pass without advancing into scrollback.
+    pub fn stressWrite(self: *Console, iterations: u32) void {
+        asm volatile ("sti");
+
+        const chars_per_pass: usize = 1000;
+        const pattern = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        const start_row = self.row;
+        const start_col = self.col;
+        const start_idx = self.cellIndex(start_row, start_col);
+        const width: usize = @intCast(self.width);
+        const was_cursor_visible = self.cursor_visible;
+
+        if (self.cell_count == 0 or width == 0 or iterations == 0) return;
+
+        if (was_cursor_visible) {
+            self.setCursorVisible(false);
+        }
+        defer {
+            self.row = start_row;
+            self.col = start_col;
+            self.setCursorVisible(was_cursor_visible);
+        }
+
+        var i: u32 = 0;
+        while (i < iterations) : (i += 1) {
+            var char_idx: usize = 0;
+            while (char_idx < chars_per_pass) : (char_idx += 1) {
+                const idx = (start_idx + char_idx) % self.cell_count;
+                const row: u32 = @intCast(idx / width);
+                const col: u32 = @intCast(idx % width);
+                const pattern_idx = (@as(usize, i) + char_idx) % pattern.len;
+                self.putCharAt(row, col, pattern[pattern_idx], self.attr);
+            }
+            self.setCursor(start_row, start_col);
+        }
+    }
+
     /// Switch the primary console rendering to the framebuffer text backend.
     /// Copies prior VGA cell content into the new buffer.
     pub fn enableFramebufBackend(self: *Console, allocator: std.mem.Allocator, text_width: u32, text_height: u32) !void {
@@ -481,6 +519,11 @@ pub fn readCell(row: u32, col: u32) u16 {
 
 pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
     primary.putCharAt(row, col, ch, attr);
+}
+
+/// Stress text rendering by overwriting 1000 character cells per pass without advancing into scrollback.
+pub fn stressWrite(iterations: u32) void {
+    primary.stressWrite(iterations);
 }
 
 pub fn enableFramebufBackend(allocator: std.mem.Allocator, text_width: u32, text_height: u32) !void {
