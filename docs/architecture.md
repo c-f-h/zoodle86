@@ -12,7 +12,7 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses 
 
 Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console.
 
-In graphics mode the screen is split into two side-by-side panels. Each panel is backed by an independent `VConsole`/`Window` pair; the `Window` allocates its shadow pixel buffer from the kernel heap (`0xE000_0000` fixed-buffer allocator). The left panel hosts the primary kernel shell (`console.primary`); the right panel hosts a secondary `Console` instance whose `stdout` is bound to the `hello` process that is launched at boot before the interactive shell starts. Each panel draws a framed pane with a title bar around the largest console grid that fits the active font and half the framebuffer width. The kernel first calls `window.drawBackground()` to paint the full-screen desktop background, then calls `VConsole.drawFrame()` for each panel independently. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `cp850-8x14.psf` from the filesystem; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
+In graphics mode the screen is split into two side-by-side panels. Each panel is backed by an independent `VConsole`/`Window` pair; the `Window` allocates its shadow pixel buffer from the page-backed kernel heap arena rooted at `0xE000_0000`. The left panel hosts the primary kernel shell (`console.primary`); the right panel hosts a secondary `Console` instance whose `stdout` is bound to the `hello` process that is launched at boot before the interactive shell starts. Each panel draws a framed pane with a title bar around the largest console grid that fits the active font and half the framebuffer width. The kernel first calls `window.drawBackground()` to paint the full-screen desktop background, then calls `VConsole.drawFrame()` for each panel independently. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `cp850-8x14.psf` from the filesystem; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
 
 ## Virtual Memory Layout
 
@@ -30,9 +30,9 @@ The kernel uses paging with 1 MB of identity mapping at both 0x0 (low memory) an
 | 0xC001_0000 - 0xC002_0000 | 64 KB | Kernel module (`kernel.elf`), physically at 0x10000 |
 | 0xC004_0000 - 0xC004_2000 | 8 KB | Bootstrap page directory + first page table (physical 0x40000-0x42000) |
 | 0xD000_0000 - dynamic | dynamic | Early framebuffer mapping window used by `kernel/gfx/framebuf.zig` |
-| 0xE000_0000 - 0xE040_0000 | 4 MB | Kernel heap (fixed-buffer allocator) |
-| 0xE040_0000 - 0xE050_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
-| 0xE100_0000 - dynamic | up to 4 MB | Profiler sample pages (dynamically allocated by `kprof` while running) |
+| 0xE000_0000 - 0xE100_0000 | 16 MB | Kernel heap arena (page-backed power-of-two allocator) |
+| 0xE100_0000 - 0xE140_0000 | 4 MB | Profiler sample pages (dynamically allocated by `kprof` while running) |
+| 0xE800_0000 - 0xE810_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
 | 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |
 | 0xFEC0_0000 - 0xFEC0_1000 | 4 KB | Memory-mapped APIC I/O (base GSI 0) |
 | 0xFEE0_0000 - 0xFEE0_1000 | 4 KB | Memory-mapped Local APIC |
@@ -45,7 +45,7 @@ The kernel initially maps only the first 1 MB of physical RAM (both at 0x0 and 0
 
 ## Memory Management
 
-The kernel allocates a 4 MB kernel data region (1024 pages at 0xE000_0000) as a fixed-buffer allocator for all kernel-mode dynamic allocations, then allocates the fixed-size task pool at 0xE040_0000. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has a 4 KB kernel stack page as the first page of its `Task` object, with the current task pointer stored at the stack base; `taskman` leaves one unmapped guard page immediately before that stack page so kernel-stack overflow faults instead of corrupting adjacent task state. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window.
+The kernel reserves an 8 MB heap arena at `0xE000_0000` and backs it with a freeing allocator in `kernel/allocator.zig`. Small allocations use power-of-two size classes with free-list reuse inside page-sized slabs that remain mapped once created. Large allocations are page-backed runs inside the same arena and are fully unmapped on free, returning their physical pages to `pageallocator` while keeping the shared heap page tables in place for all task page directories. The fixed-size task pool starts at `0xE800_0000`. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has a 4 KB kernel stack page as the first page of its `Task` object, with the current task pointer stored at the stack base; `taskman` leaves one unmapped guard page immediately before that stack page so kernel-stack overflow faults instead of corrupting adjacent task state. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window.
 
 ## Userspace Heap Allocation
 

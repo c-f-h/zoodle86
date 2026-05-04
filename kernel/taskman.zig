@@ -1,8 +1,9 @@
+const kernel_allocator = @import("allocator.zig");
 const task = @import("task.zig");
 const paging = @import("paging.zig");
 
 const MAX_TASKS = 8;
-const TASK_POOL_BASE = 0xE040_0000;
+const TASK_POOL_BASE = 0xE800_0000;
 
 const TaskmanEntry = struct {
     guard_page: [paging.PAGE]u8 align(paging.PAGE) = undefined,

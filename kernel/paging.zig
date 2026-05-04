@@ -198,6 +198,25 @@ fn ensurePageTableAt(pti: u10, user: bool) void {
     }
 }
 
+/// Ensure that page tables exist for every page touched by the given virtual range.
+pub fn ensurePageTablesAt(addr: u32, num_pages: u32, user: bool) void {
+    if (addr & PAGE_MASK != 0) {
+        @panic("Page-table reservation range must be page-aligned");
+    }
+
+    var cursor = addr;
+    var remaining_pages = num_pages;
+
+    while (remaining_pages > 0) {
+        const pti = pageTableIndex(cursor);
+        ensurePageTableAt(pti, user);
+
+        const chunk_pages: u32 = @min(remaining_pages, 1024 - @as(u32, pageIndex(cursor)));
+        cursor += chunk_pages * PAGE;
+        remaining_pages -= chunk_pages;
+    }
+}
+
 // Allocate a number of pages within an already allocated page table.
 fn allocatePagesAt(pti: u10, start_pg: u10, num_pages: u32, user: bool, writable: bool) void {
     const pt = &mapped_pts[pti];
@@ -298,6 +317,25 @@ pub fn unmapPagesAt(addr: u32, num_pages: u32) void {
             pageallocator.freePage(pde.getPhysicalTableAddress());
             pde.* = @bitCast(@as(u32, 0));
         }
+    }
+}
+
+/// Unmap a contiguous range of pages and free their physical backing while retaining page tables.
+pub fn unmapPagesAtKeepTables(addr: u32, num_pages: u32) void {
+    if (addr & PAGE_MASK != 0) {
+        @panic("Unmap range must be page-aligned");
+    }
+
+    for (0..num_pages) |i| {
+        const va = addr + @as(u32, @intCast(i)) * PAGE;
+        const pte = getPte(va);
+        if (!pte.present) {
+            @panic("Cannot unmap an unmapped page");
+        }
+
+        pageallocator.freePage(pte.getPhysicalPageAddress());
+        pte.* = @bitCast(@as(u32, 0));
+        invlpg(va);
     }
 }
 

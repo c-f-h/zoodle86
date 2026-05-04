@@ -18,6 +18,7 @@ const taskman = @import("taskman.zig");
 const elf32 = @import("elf32.zig");
 const shell = @import("shell.zig");
 const idt = @import("idt.zig");
+const kernel_allocator = @import("allocator.zig");
 const paging = @import("paging.zig");
 const pageallocator = @import("pageallocator.zig");
 const serial = @import("serial.zig");
@@ -97,7 +98,6 @@ pub fn clearKeyboardHandler() void {
     cur_kb_handler = null;
 }
 
-var kernel_fba: std.heap.FixedBufferAllocator = undefined;
 var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
 var disk_block_device: ide.IdeBlockDevice = undefined;
@@ -320,11 +320,8 @@ fn kernel_enter() !noreturn {
     pageallocator.init(memory_bitmap_va[0..256]); // 1 page is enough to map 128 MiB of RAM
     pageallocator.setPhysicalMemoryRange(mem_base, mem_base + mem_size);
 
-    // kernel data
-    const kernel_data = paging.allocateMemoryAt(0xE000_0000, 1024, false, true);
-    @memset(kernel_data, 0xDD);
-    kernel_fba = std.heap.FixedBufferAllocator.init(kernel_data);
-    alloc = kernel_fba.allocator();
+    kernel_allocator.init();
+    alloc = kernel_allocator.getAllocator();
     kprof.init(alloc);
     taskman.init();
 
