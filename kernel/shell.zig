@@ -5,6 +5,7 @@ const app_memmap = @import("app_memmap.zig");
 const console = @import("console.zig");
 const cpuid = @import("cpuid.zig");
 const fs = @import("fs.zig");
+const filedesc = @import("filedesc.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const kprof = @import("kprof.zig");
@@ -639,13 +640,8 @@ fn listFiles(disk_fs: *fs.FileSystem) !void {
 
 fn catFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
     const data = disk_fs.readFileAt(alloc, fs.ROOT_INODE_INDEX, name) catch |err| {
-        switch (err) {
-            error.OutOfMemory => return err,
-            else => |fs_err| {
-                printFsError(fs_err);
-                return;
-            },
-        }
+        printErrorDesc(err);
+        return;
     };
     defer alloc.free(data);
 
@@ -674,7 +670,7 @@ fn writeFileFromConsole(
     }
 
     disk_fs.writeFileAt(fs.ROOT_INODE_INDEX, name, contents.items) catch |err| {
-        printFsError(err);
+        printErrorDesc(err);
         return;
     };
 
@@ -684,8 +680,8 @@ fn writeFileFromConsole(
 }
 
 fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) !void {
-    disk_fs.deleteFile(fs.ROOT_INODE_INDEX, name) catch |err| {
-        printFsError(err);
+    filedesc.unlinkFile(disk_fs, name) catch |err| {
+        printErrorDesc(err);
         return;
     };
 
@@ -696,7 +692,7 @@ fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) !void {
 
 fn renameFile(disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u8) void {
     disk_fs.renameFile(old_name, new_name) catch |err| {
-        printFsError(err);
+        printErrorDesc(err);
         return;
     };
 
@@ -707,17 +703,7 @@ fn renameFile(disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u
     console.puts(".\n");
 }
 
-fn printFsError(err: fs.FsError) void {
-    switch (err) {
-        error.Corrupt => console.puts("Filesystem is corrupt.\n"),
-        error.DirectoryFull => console.puts("Directory is full.\n"),
-        error.FileExists => console.puts("File already exists.\n"),
-        error.FileNotFound => console.puts("File not found.\n"),
-        error.InvalidName => console.puts("Invalid filename.\n"),
-        error.InvalidSuperblock => console.puts("Filesystem superblock is invalid.\n"),
-        error.NoSpace => console.puts("Filesystem is out of space.\n"),
-        error.ReadError => console.puts("Disk read error.\n"),
-        error.WriteError => console.puts("Disk write error.\n"),
-        error.InvalidBlock => console.puts("Invalid disk block address.\n"),
-    }
+fn printErrorDesc(err: anyerror) void {
+    console.puts(kernel.getErrorDesc(err));
+    console.newline();
 }

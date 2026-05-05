@@ -34,7 +34,7 @@ const SeekWhence = enum(u32) {
 
 const OpenFile = struct {
     in_use: bool = false,
-    inode_index: u16 = 0,
+    inode_index: fs.InodeT = 0,
     offset: u32 = 0,
     readable: bool = false,
     writable: bool = false,
@@ -79,9 +79,10 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
 pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
-    const inode_index = (try disk_fs.findFileInodeIndex(fs.ROOT_INODE_INDEX, path)) orelse return error.FileNotFound;
-    if (isInodeOpen(inode_index)) return error.FileInUse;
-    try disk_fs.deleteFile(fs.ROOT_INODE_INDEX, path);
+    const parent_inode, const index, const entry = try disk_fs.walkFilePathToDirEntry(fs.ROOT_INODE_INDEX, path);
+
+    if (isInodeOpen(entry.inode_index)) return error.FileInUse;
+    try disk_fs.deleteFile(parent_inode, index);
 }
 
 /// Reads from a task-owned descriptor into a user buffer.
@@ -213,7 +214,7 @@ fn getOpenFile(index: u8) ?*OpenFile {
     return &open_files[index];
 }
 
-fn isInodeOpen(inode_index: u16) bool {
+fn isInodeOpen(inode_index: fs.InodeT) bool {
     for (&open_files) |open_file| {
         if (open_file.in_use and open_file.inode_index == inode_index) {
             return true;

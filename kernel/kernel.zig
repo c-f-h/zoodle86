@@ -252,17 +252,40 @@ fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
     return .{ @intCast(largest_usable_base), @intCast(largest_usable_length) };
 }
 
-fn panicOnError(err: anyerror) noreturn {
-    @panic(switch (err) {
-        error.OutOfMemory => "Out of memory",
-        error.FileNotFound => "File not found",
+pub fn getErrorDesc(err: anyerror) []const u8 {
+    return switch (err) {
+        error.AccessDenied => "Access denied.",
+        error.BadFd => "Bad file descriptor.",
+        error.FileInUse => "File is still in use by an open descriptor.",
+        error.InvalidFlags => "Invalid flags.",
+        error.InvalidSeek => "Invalid seek.",
+        error.ProcessFileTableFull => "Process file table is full.",
+        error.SystemFileTableFull => "System file table is full.",
+        error.OutOfMemory => "Out of memory.",
+
+        error.Corrupt => "Filesystem is corrupt.",
+        error.DirectoryFull => "Directory is full.",
+        error.FileExists => "File already exists.",
+        error.FileNotFound => "File not found.",
+        error.InvalidName => "Invalid filename.",
+        error.InvalidSuperblock => "Filesystem superblock is invalid.",
+        error.NoSpace => "Filesystem is out of space.",
+        error.ReadError => "Disk read error.",
+        error.WriteError => "Disk write error.",
+        error.InvalidBlock => "Invalid disk block address.",
         error.BufferTooSmall => "Buffer too small",
         error.InvalidELF => "Invalid ELF",
+
         ide.IdeError.Timeout => "IDE timeout",
         ide.IdeError.DeviceFault => "IDE device fault",
         ide.IdeError.ControllerError => "IDE controller error",
+
         else => @errorName(err),
-    });
+    };
+}
+
+fn panicOnError(err: anyerror) noreturn {
+    @panic(getErrorDesc(err));
 }
 
 const Task = task.Task;

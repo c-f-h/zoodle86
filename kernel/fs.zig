@@ -12,6 +12,8 @@ pub const FS_START_LBA: u32 = 1 + STAGE2_RESERVED_SECTORS;
 pub const MAGIC = "ZOD2".*;
 pub const VERSION: u16 = 2;
 
+pub const InodeT = u16;
+
 const InodeKind = enum(u8) {
     Free = 0,
     File = 1,
@@ -19,7 +21,7 @@ const InodeKind = enum(u8) {
     _,
 };
 
-pub const ROOT_INODE_INDEX: u16 = 0;
+pub const ROOT_INODE_INDEX: InodeT = 0;
 pub const DIRECT_BLOCK_COUNT: usize = 8;
 pub const BLOCK_POINTER_NONE: u32 = std.math.maxInt(u32);
 pub const POINTERS_PER_INDIRECT_BLOCK: usize = 512 / @sizeOf(u32);
@@ -42,7 +44,7 @@ pub const Inode = extern struct {
 };
 
 pub const DirectoryEntry = extern struct {
-    inode_index: u16 = 0,
+    inode_index: InodeT = 0,
     kind: InodeKind = InodeKind.Free,
     name_len: u8 = 0,
     name: [FILENAME_MAX_LEN]u8 = @splat(0),
@@ -310,7 +312,7 @@ pub const FileSystem = struct {
     }
 
     /// Returns metadata for a non-empty directory slot.
-    pub fn getFileInfo(self: *const FileSystem, dir_inode_index: u16, index: usize) FsError!?FileInfo {
+    pub fn getFileInfo(self: *const FileSystem, dir_inode_index: InodeT, index: usize) FsError!?FileInfo {
         if (index >= DIRECTORY_ENTRY_COUNT) return null;
 
         const entry = try self.readDirEntryFromInode(dir_inode_index, index);
@@ -329,7 +331,7 @@ pub const FileSystem = struct {
     }
 
     /// Returns the raw directory entry for a slot when it contains a file or directory.
-    pub fn getDirectoryEntry(self: *const FileSystem, dir_inode_index: u16, index: usize) FsError!?DirectoryEntry {
+    pub fn getDirectoryEntry(self: *const FileSystem, dir_inode_index: InodeT, index: usize) FsError!?DirectoryEntry {
         if (index >= DIRECTORY_ENTRY_COUNT) return null;
 
         const entry = try self.readDirEntryFromInode(dir_inode_index, index);
@@ -338,12 +340,12 @@ pub const FileSystem = struct {
     }
 
     /// Resolves a directory slot to its backing inode number.
-    pub fn getFileInodeIndex(self: *const FileSystem, dir_inode_index: u16, index: usize) FsError!u16 {
+    pub fn getFileInodeIndex(self: *const FileSystem, dir_inode_index: InodeT, index: usize) FsError!InodeT {
         const entry = try self.readDirectoryEntry(dir_inode_index, index);
         return entry.inode_index;
     }
 
-    fn createFileInternal(self: *FileSystem, dir_inode_index: u16, name: []const u8, kind: InodeKind, size: u32) FsError!u16 {
+    fn createFileInternal(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, kind: InodeKind, size: u32) FsError!InodeT {
         if (!validateName(name)) return error.InvalidName;
         if ((try self.findDirEntry(dir_inode_index, name)) != null) return error.FileExists;
 
@@ -381,23 +383,23 @@ pub const FileSystem = struct {
     }
 
     /// Creates a new empty regular file in the given directory and returns its inode index.
-    pub fn createFile(self: *FileSystem, dir_inode_index: u16, name: []const u8) FsError!u16 {
+    pub fn createFile(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
         return self.createFileInternal(dir_inode_index, name, InodeKind.File, 0);
     }
 
     /// Creates a new empty directory in the given directory and returns its inode index.
-    pub fn createDirectory(self: *FileSystem, dir_inode_index: u16, name: []const u8) FsError!u16 {
+    pub fn createDirectory(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
         return self.createFileInternal(dir_inode_index, name, InodeKind.Directory, ROOT_DIRECTORY_BYTES);
     }
 
     /// Returns the current byte length for a file identified by inode number.
-    pub fn getInodeSize(self: *const FileSystem, inode_index: u16) FsError!u32 {
+    pub fn getInodeSize(self: *const FileSystem, inode_index: InodeT) FsError!u32 {
         const inode = try self.readFileInode(inode_index);
         return inode.size_bytes;
     }
 
     /// Reads bytes from a file identified directly by inode number.
-    pub fn readInodeAt(self: *const FileSystem, inode_index: u16, offset: u32, dest: []u8) FsError!usize {
+    pub fn readInodeAt(self: *const FileSystem, inode_index: InodeT, offset: u32, dest: []u8) FsError!usize {
         if (dest.len == 0) return 0;
 
         const inode = try self.readFileInode(inode_index);
@@ -424,7 +426,7 @@ pub const FileSystem = struct {
     }
 
     /// Writes bytes to a file identified directly by inode number, growing as needed.
-    pub fn writeInodeAt(self: *FileSystem, allocator: std.mem.Allocator, inode_index: u16, offset: u32, data: []const u8) WriteFileError!usize {
+    pub fn writeInodeAt(self: *FileSystem, allocator: std.mem.Allocator, inode_index: InodeT, offset: u32, data: []const u8) WriteFileError!usize {
         if (data.len == 0) return 0;
 
         var inode = try self.readFileInode(inode_index);
@@ -447,13 +449,13 @@ pub const FileSystem = struct {
     }
 
     /// Truncates a file identified directly by inode number to zero bytes.
-    pub fn truncateInode(self: *FileSystem, inode_index: u16) FsError!void {
+    pub fn truncateInode(self: *FileSystem, inode_index: InodeT) FsError!void {
         var inode = try self.readFileInode(inode_index);
         try self.replaceInodeContents(inode_index, &inode, &.{});
     }
 
     /// Reads an entire regular file from the given directory into allocator-owned memory.
-    pub fn readFileAt(self: *const FileSystem, allocator: std.mem.Allocator, dir_inode_index: u16, name: []const u8) ReadFileError![]u8 {
+    pub fn readFileAt(self: *const FileSystem, allocator: std.mem.Allocator, dir_inode_index: InodeT, name: []const u8) ReadFileError![]u8 {
         const inode_index = try self.findFileInodeIndex(dir_inode_index, name) orelse return error.FileNotFound;
         const inode = try self.readFileInode(inode_index);
         if (inode.size_bytes == 0) {
@@ -466,7 +468,9 @@ pub const FileSystem = struct {
         return data;
     }
 
-    fn walkFilePath(self: *const FileSystem, dir_inode_index: u16, path: []const u8) FsError!u16 {
+    /// Walk a full file path, starting from the given directory inode index.
+    /// Returns { parent_dir_inode_index, dir_entry_index, dir_entry } or error.FileNotFound.
+    pub fn walkFilePathToDirEntry(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!struct { InodeT, u32, DirectoryEntry } {
         var current_dir = dir_inode_index;
         var path_iter = std.mem.splitScalar(u8, path, '/');
 
@@ -475,18 +479,30 @@ pub const FileSystem = struct {
         while (path_iter.next()) |component| {
             if (component.len == 0) continue;
 
-            const entry = try self.findDirEntry(current_dir, component) orelse return error.FileNotFound;
-            if (entry.kind != .Directory and path_iter.peek() != null) return error.FileNotFound;
+            const index, const entry = try self.findDirEntryAndIndex(current_dir, component) orelse return error.FileNotFound;
+            if (path_iter.peek() == null) {
+                // At end of path - return the entry
+                return .{ current_dir, index, entry };
+            } else {
+                // Not at end of path - must be a directory to continue traversal
+                if (entry.kind != .Directory) return error.FileNotFound;
+            }
 
             current_dir = entry.inode_index;
         }
+        unreachable;
+    }
 
-        return current_dir;
+    /// Walk a full file path, starting from the given directory inode index.
+    /// Returns the final file's inode index or error.FileNotFound.
+    fn walkFilePathToInode(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!InodeT {
+        _, _, const entry = try self.walkFilePathToDirEntry(dir_inode_index, path);
+        return entry.inode_index;
     }
 
     /// Reads an entire regular file, given by its full path, into allocator-owned memory.
     pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
-        const inode_index = try self.walkFilePath(ROOT_INODE_INDEX, path);
+        const inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, path);
         const inode = try self.readFileInode(inode_index);
 
         const data = try allocator.alloc(u8, @intCast(inode.size_bytes));
@@ -496,7 +512,7 @@ pub const FileSystem = struct {
     }
 
     /// Creates or overwrites a file in the given directory with the provided full contents.
-    pub fn writeFileAt(self: *FileSystem, dir_inode_index: u16, name: []const u8, data: []const u8) FsError!void {
+    pub fn writeFileAt(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, data: []const u8) FsError!void {
         if (!validateName(name)) return error.InvalidName;
         if (fileBlocksForSize(@intCast(data.len)) > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
 
@@ -506,8 +522,7 @@ pub const FileSystem = struct {
     }
 
     /// Deletes a regular file from the given directory and frees its inode and blocks.
-    pub fn deleteFile(self: *FileSystem, dir_inode_index: u16, name: []const u8) FsError!void {
-        const index = (try self.findFileIndex(dir_inode_index, name)) orelse return error.FileNotFound;
+    pub fn deleteFile(self: *FileSystem, dir_inode_index: InodeT, index: u32) FsError!void {
         const entry = try self.readDirectoryEntry(dir_inode_index, index);
 
         if (entry.kind != .File) return error.FileNotFound;
@@ -580,8 +595,8 @@ pub const FileSystem = struct {
         }
     }
 
-    /// Looks up a named entry in the given directory.
-    fn findDirEntry(self: *const FileSystem, dir_inode_index: u16, name: []const u8) FsError!?DirectoryEntry {
+    /// Looks up a named entry in the given directory; returns its slot index and the entry itself.
+    fn findDirEntryAndIndex(self: *const FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!?struct { u32, DirectoryEntry } {
         if (!validateName(name)) return error.InvalidName;
 
         const dir_inode = try self.readDirectoryInode(dir_inode_index);
@@ -592,15 +607,24 @@ pub const FileSystem = struct {
             if (entry.kind == InodeKind.Free) continue;
             if (entry.name_len != @as(u8, @intCast(name.len))) continue;
             if (std.mem.eql(u8, entry.name[0..entry.name_len], name)) {
-                return entry;
+                return .{ @intCast(index), entry };
             }
         }
 
         return null;
     }
 
+    /// Looks up a named entry in the given directory.
+    fn findDirEntry(self: *const FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!?DirectoryEntry {
+        if (try self.findDirEntryAndIndex(dir_inode_index, name)) |result| {
+            return result.@"1";
+        } else {
+            return null;
+        }
+    }
+
     /// Given the name of a regular file in a directory, find its directory slot index.
-    fn findFileIndex(self: *const FileSystem, dir_inode_index: u16, name: []const u8) FsError!?usize {
+    fn findFileIndex(self: *const FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!?u32 {
         if (!validateName(name)) return error.InvalidName;
 
         const dir_inode = try self.readDirectoryInode(dir_inode_index);
@@ -610,7 +634,7 @@ pub const FileSystem = struct {
             if (entry.kind != InodeKind.File) continue;
             if (entry.name_len != @as(u8, @intCast(name.len))) continue;
             if (std.mem.eql(u8, entry.name[0..entry.name_len], name)) {
-                return index;
+                return @intCast(index);
             }
         }
 
@@ -618,14 +642,14 @@ pub const FileSystem = struct {
     }
 
     /// Given the name of a regular file in a directory, find its inode index.
-    pub fn findFileInodeIndex(self: *const FileSystem, dir_inode_index: u16, name: []const u8) FsError!?u16 {
+    pub fn findFileInodeIndex(self: *const FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!?InodeT {
         const entry = (try self.findDirEntry(dir_inode_index, name)) orelse return null;
         if (entry.kind != InodeKind.File) return null;
         return entry.inode_index;
     }
 
     /// Find a free directory entry within the given directory.
-    fn findReusableEntryIndex(self: *const FileSystem, dir_inode_index: u16) FsError!usize {
+    fn findReusableEntryIndex(self: *const FileSystem, dir_inode_index: InodeT) FsError!usize {
         var index: usize = 0;
         const dir_inode = try self.readDirectoryInode(dir_inode_index);
         while (index < DIRECTORY_ENTRY_COUNT) : (index += 1) {
@@ -636,8 +660,8 @@ pub const FileSystem = struct {
     }
 
     /// Find a free inode index within the inode table.
-    fn findFreeInodeIndex(self: *const FileSystem) FsError!u16 {
-        var inode_index: u16 = ROOT_INODE_INDEX + 1;
+    fn findFreeInodeIndex(self: *const FileSystem) FsError!InodeT {
+        var inode_index: InodeT = ROOT_INODE_INDEX + 1;
         while (inode_index < self.superblock.inode_count) : (inode_index += 1) {
             const inode = try self.readInode(inode_index);
             if (inode.kind == .Free) return inode_index;
@@ -646,7 +670,7 @@ pub const FileSystem = struct {
     }
 
     /// Read the inode with the given index and verify that it is a valid file inode.
-    fn readFileInode(self: *const FileSystem, inode_index: u16) FsError!Inode {
+    fn readFileInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
         if (inode.kind != .File) return error.FileNotFound;
@@ -654,7 +678,7 @@ pub const FileSystem = struct {
     }
 
     /// Read the inode with the given index and verify that it is a valid directory inode.
-    fn readDirectoryInode(self: *const FileSystem, inode_index: u16) FsError!Inode {
+    fn readDirectoryInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
         if (inode.kind != .Directory) return error.Corrupt;
@@ -722,7 +746,7 @@ pub const FileSystem = struct {
         if (num_wanted > 0) return error.NoSpace;
     }
 
-    fn replaceInodeContents(self: *FileSystem, inode_index: u16, inode: *Inode, data: []const u8) FsError!void {
+    fn replaceInodeContents(self: *FileSystem, inode_index: InodeT, inode: *Inode, data: []const u8) FsError!void {
         const num_data_blocks = fileBlocksForSize(@intCast(data.len));
         if (num_data_blocks > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
 
@@ -745,7 +769,7 @@ pub const FileSystem = struct {
         }
     }
 
-    fn destroyInode(self: *FileSystem, inode_index: u16) FsError!void {
+    fn destroyInode(self: *FileSystem, inode_index: InodeT) FsError!void {
         var inode = try self.readFileInode(inode_index);
 
         try self.allocBlockTree(&inode, 0);
@@ -754,7 +778,7 @@ pub const FileSystem = struct {
         try self.writeInode(inode_index, &cleared);
     }
 
-    fn readInode(self: *const FileSystem, inode_index: u16) FsError!Inode {
+    fn readInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         if (inode_index >= self.superblock.inode_count) return error.Corrupt;
 
         const sector_lba = self.superblock.inode_table_start_lba +
@@ -769,7 +793,7 @@ pub const FileSystem = struct {
         return inode;
     }
 
-    fn writeInode(self: *const FileSystem, inode_index: u16, inode: *const Inode) FsError!void {
+    fn writeInode(self: *const FileSystem, inode_index: InodeT, inode: *const Inode) FsError!void {
         if (inode_index >= self.superblock.inode_count) return error.Corrupt;
 
         const sector_lba = self.superblock.inode_table_start_lba +
@@ -885,7 +909,7 @@ pub const FileSystem = struct {
         try self.block_dev.readBlock(self.dataBlockLba(block_index), @ptrCast(dest));
     }
 
-    fn readDirectoryEntry(self: *const FileSystem, dir_inode_index: u16, index: usize) FsError!DirectoryEntry {
+    fn readDirectoryEntry(self: *const FileSystem, dir_inode_index: InodeT, index: usize) FsError!DirectoryEntry {
         if (index >= DIRECTORY_ENTRY_COUNT) return error.FileNotFound;
 
         const entry = try self.readDirEntryFromInode(dir_inode_index, index);
@@ -895,7 +919,7 @@ pub const FileSystem = struct {
 
     /// Read the directory inode and then a directory entry from it by index.
     /// Inefficient when used in a loop.
-    fn readDirEntryFromInode(self: *const FileSystem, dir_inode_index: u16, index: usize) FsError!DirectoryEntry {
+    fn readDirEntryFromInode(self: *const FileSystem, dir_inode_index: InodeT, index: usize) FsError!DirectoryEntry {
         const root_inode = try self.readDirectoryInode(dir_inode_index);
         return self.readDirEntry(&root_inode, index);
     }
@@ -920,7 +944,7 @@ pub const FileSystem = struct {
     }
 
     /// Write a directory entry to a directory inode by index.
-    fn writeDirEntry(self: *FileSystem, dir_inode_index: u16, index: usize, entry: *const DirectoryEntry) FsError!void {
+    fn writeDirEntry(self: *FileSystem, dir_inode_index: InodeT, index: usize, entry: *const DirectoryEntry) FsError!void {
         if (index >= DIRECTORY_ENTRY_COUNT) return error.Corrupt;
         try validateDirectoryEntry(entry, self.superblock.inode_count);
 
