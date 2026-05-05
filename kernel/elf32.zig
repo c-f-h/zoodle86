@@ -7,6 +7,22 @@ pub const P_X = 1 << 0; // executable
 pub const P_W = 1 << 1; // writable
 pub const P_R = 1 << 2; // readable
 
+pub fn getHeader(data: []const u8) !*align(1) const Elf32_Ehdr {
+    if (data.len < @sizeOf(Elf32_Ehdr)) return error.InvalidElf;
+    const ptr: *align(1) const Elf32_Ehdr = @ptrCast(data.ptr);
+    if (ptr.e_ident[0] != 0x7F or
+        ptr.e_ident[1] != 'E' or
+        ptr.e_ident[2] != 'L' or
+        ptr.e_ident[3] != 'F')
+    {
+        return error.InvalidElf;
+    }
+    if (ptr.e_type != 2) return error.InvalidElf; // ET_EXEC
+    if (ptr.e_machine != 3) return error.InvalidElf; // EM_386
+    if (ptr.e_version != 1) return error.InvalidElf; // EV_CURRENT
+    return ptr;
+}
+
 pub const Elf32_Ehdr = extern struct {
     e_ident: [16]u8,
     e_type: u16,
@@ -23,12 +39,14 @@ pub const Elf32_Ehdr = extern struct {
     e_shnum: u16,
     e_shstrndx: u16,
 
-    pub fn phdrPtr(ehdr: *align(1) const Elf32_Ehdr, elf: [*]u8, i: u32) *align(1) const Elf32_Phdr {
-        return @ptrCast(elf + ehdr.e_phoff + i * ehdr.e_phentsize);
+    pub fn phdrPtr(ehdr: *align(1) const Elf32_Ehdr, data: []u8, i: u32) !*align(1) const Elf32_Phdr {
+        if (i >= ehdr.e_phnum) return error.InvalidElf;
+        if (data.len < ehdr.e_phoff + (i + 1) * ehdr.e_phentsize) return error.InvalidElf;
+        return @ptrCast(data.ptr + ehdr.e_phoff + i * ehdr.e_phentsize);
     }
 
     /// Compute the start and end addresses of two contiguous virtual memory blocks (code, data) into which the program image fits.
-    pub fn computeImageExtents(ehdr: *align(1) const Elf32_Ehdr, elf: [*]u8) struct { u32, u32, u32, u32 } {
+    pub fn computeImageExtents(ehdr: *align(1) const Elf32_Ehdr, data: []u8) !struct { u32, u32, u32, u32 } {
         var code_start: u32 = 0xffff_ffff;
         var code_end: u32 = 0;
         var data_start: u32 = 0xffff_ffff;
@@ -36,7 +54,7 @@ pub const Elf32_Ehdr = extern struct {
 
         var i: u32 = 0;
         while (i < ehdr.e_phnum) : (i += 1) {
-            const phdr = ehdr.phdrPtr(elf, i);
+            const phdr = try ehdr.phdrPtr(data, i);
             if (phdr.p_type == PT_LOAD) {
                 const end = phdr.p_vaddr + phdr.p_memsz;
 

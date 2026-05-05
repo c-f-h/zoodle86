@@ -21,13 +21,15 @@ const InodeKind = enum(u8) {
     _,
 };
 
+pub const BLOCK_SIZE = 512;
+
 pub const ROOT_INODE_INDEX: InodeT = 0;
 pub const DIRECT_BLOCK_COUNT: usize = 8;
 pub const BLOCK_POINTER_NONE: u32 = std.math.maxInt(u32);
-pub const POINTERS_PER_INDIRECT_BLOCK: usize = 512 / @sizeOf(u32);
+pub const POINTERS_PER_INDIRECT_BLOCK: usize = BLOCK_SIZE / @sizeOf(u32);
 
-pub const INODES_PER_SECTOR: usize = 512 / @sizeOf(Inode);
-pub const DIR_ENTRIES_PER_SECTOR: usize = 512 / @sizeOf(DirectoryEntry);
+pub const INODES_PER_SECTOR: usize = BLOCK_SIZE / @sizeOf(Inode);
+pub const DIR_ENTRIES_PER_SECTOR: usize = BLOCK_SIZE / @sizeOf(DirectoryEntry);
 pub const MIN_INODE_COUNT: usize = DIRECTORY_ENTRY_COUNT + 1;
 pub const ROOT_DIRECTORY_BYTES: usize = DIRECTORY_ENTRY_COUNT * @sizeOf(DirectoryEntry);
 pub const ROOT_DIRECTORY_SECTORS: u32 = sectorsForBytes(ROOT_DIRECTORY_BYTES); // = 4
@@ -90,7 +92,7 @@ pub const FileInfo = struct {
 /// Returns the number of 512-byte sectors needed to store `len` bytes.
 pub fn sectorsForBytes(len: usize) u32 {
     if (len == 0) return 0;
-    return @intCast((len + 511) / 512);
+    return @intCast((len + BLOCK_SIZE - 1) / BLOCK_SIZE);
 }
 
 /// Returns the number of file data blocks needed to store `size_bytes`.
@@ -168,7 +170,7 @@ fn makeDefaultSuperblock(layout: Layout) Superblock {
     return .{
         .magic = MAGIC,
         .version = VERSION,
-        .block_size = 512,
+        .block_size = BLOCK_SIZE,
         .fs_sector_count = layout.fs_sector_count,
         .bitmap_start_lba = layout.bitmap_start_lba,
         .bitmap_sector_count = layout.bitmap_sector_count,
@@ -188,7 +190,7 @@ pub fn isValidSuperblock(superblock: *const Superblock) bool {
 
     return std.mem.eql(u8, superblock.magic[0..], MAGIC[0..]) and
         superblock.version == VERSION and
-        superblock.block_size == 512 and
+        superblock.block_size == BLOCK_SIZE and
         superblock.bitmap_start_lba == layout.bitmap_start_lba and
         superblock.bitmap_sector_count == layout.bitmap_sector_count and
         superblock.inode_table_start_lba == layout.inode_table_start_lba and
@@ -223,6 +225,8 @@ pub const FsError = error{
     DirectoryFull,
     FileExists,
     FileNotFound,
+    NotARegularFile,
+    NotADirectory,
     InvalidName,
     InvalidSuperblock,
     NoSpace,
@@ -268,11 +272,11 @@ pub const FileSystem = struct {
     }
 
     fn zeroBlock(self: *FileSystem, block_index: u32) FsError!void {
-        var zero_sector = [_]u8{0} ** 512;
+        var zero_sector = [_]u8{0} ** BLOCK_SIZE;
         try self.writeDataBlock(block_index, &zero_sector);
     }
 
-    fn writeDataBlock(self: *FileSystem, block_index: u32, data: *const [512]u8) FsError!void {
+    fn writeDataBlock(self: *FileSystem, block_index: u32, data: *const [BLOCK_SIZE]u8) FsError!void {
         const lba = self.dataBlockLba(block_index);
         try self.block_dev.writeBlock(lba, data);
     }
@@ -283,7 +287,7 @@ pub const FileSystem = struct {
         const layout = computeLayout(fs_sector_count) orelse return error.NoSpace;
         self.superblock = makeDefaultSuperblock(layout);
 
-        var zero_sector = [_]u8{0} ** 512;
+        var zero_sector = [_]u8{0} ** BLOCK_SIZE;
         var lba = FS_START_LBA;
         const zero_limit = self.superblock.data_start_lba + ROOT_DIRECTORY_SECTORS;
         while (lba < zero_limit) : (lba += 1) {
@@ -398,21 +402,52 @@ pub const FileSystem = struct {
         return inode.size_bytes;
     }
 
-    /// Reads bytes from a file identified directly by inode number.
-    pub fn readInodeAt(self: *const FileSystem, inode_index: InodeT, offset: u32, dest: []u8) FsError!usize {
-        if (dest.len == 0) return 0;
+    /// Truncates a file identified directly by inode number to zero bytes.
+    pub fn truncateInode(self: *FileSystem, inode_index: InodeT) FsError!void {
+        var inode = try self.readFileInode(inode_index);
+        try self.replaceInodeContents(inode_index, &inode, &.{});
+    }
 
+    //////////// FILE READING ////////////
+
+    /// Reads an entire regular file, given by its full path, into allocator-owned memory.
+    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
+        const inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, path);
         const inode = try self.readFileInode(inode_index);
+        return self.readInodeContents(allocator, &inode);
+    }
+
+    /// Reads an entire regular file from the given directory into allocator-owned memory.
+    pub fn readFileAt(self: *const FileSystem, allocator: std.mem.Allocator, dir_inode_index: InodeT, name: []const u8) ReadFileError![]u8 {
+        const inode_index = try self.findFileInodeIndex(dir_inode_index, name) orelse return error.FileNotFound;
+        const inode = try self.readFileInode(inode_index);
+        return self.readInodeContents(allocator, &inode);
+    }
+
+    fn readInodeContents(self: *const FileSystem, allocator: std.mem.Allocator, inode: *const Inode) ReadFileError![]u8 {
+        if (inode.size_bytes == 0) {
+            return allocator.alloc(u8, 0);
+        }
+
+        const data = try allocator.alloc(u8, @intCast(inode.size_bytes));
+        errdefer allocator.free(data);
+        _ = try self.readInodeAt(inode, 0, data);
+        return data;
+    }
+
+    /// Reads bytes from a file identified directly by inode number.
+    pub fn readInodeAt(self: *const FileSystem, inode: *const Inode, offset: u32, dest: []u8) FsError!usize {
+        if (dest.len == 0) return 0;
         if (offset >= inode.size_bytes) return 0;
 
         var remaining: usize = @min(dest.len, @as(usize, @intCast(inode.size_bytes - offset)));
-        var logical_block: u32 = offset / 512;
-        var block_offset: usize = @intCast(offset % 512);
+        var logical_block: u32 = offset / BLOCK_SIZE;
+        var block_offset: usize = @intCast(offset % BLOCK_SIZE);
         var out_offset: usize = 0;
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
 
         while (remaining > 0) : (logical_block += 1) {
-            const data_block = try self.getInodeDataBlock(&inode, logical_block);
+            const data_block = try self.getInodeDataBlock(inode, logical_block);
             try self.block_dev.readBlock(self.dataBlockLba(data_block), &sector);
 
             const chunk_len: usize = @min(remaining, sector.len - block_offset);
@@ -425,6 +460,26 @@ pub const FileSystem = struct {
         return out_offset;
     }
 
+    //////////// FILE WRITING ////////////
+
+    /// Creates or overwrites a file in the given directory with the provided full contents.
+    pub fn writeFile(self: *FileSystem, path: []const u8, data: []const u8) WriteFileError!void {
+        const split = splitPath(path);
+        const dir_inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, split.dir);
+        try self.writeFileAt(dir_inode_index, split.name, data);
+    }
+
+    /// Creates or overwrites a file in the given directory with the provided full contents.
+    pub fn writeFileAt(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, data: []const u8) FsError!void {
+        if (!validateName(name)) return error.InvalidName;
+        if (fileBlocksForSize(@intCast(data.len)) > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
+
+        const inode_index = try self.findFileInodeIndex(dir_inode_index, name) orelse
+            try self.createFile(dir_inode_index, name);
+        var inode = try self.readFileInode(inode_index);
+        try self.replaceInodeContents(inode_index, &inode, data);
+    }
+
     /// Writes bytes to a file identified directly by inode number, growing as needed.
     pub fn writeInodeAt(self: *FileSystem, allocator: std.mem.Allocator, inode_index: InodeT, offset: u32, data: []const u8) WriteFileError!usize {
         if (data.len == 0) return 0;
@@ -435,12 +490,13 @@ pub const FileSystem = struct {
         const new_size = @max(inode.size_bytes, required_size);
         if (fileBlocksForSize(new_size) > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
 
+        // TODO: this should not read/write the entire file
         const merged = try allocator.alloc(u8, new_size);
         defer allocator.free(merged);
 
         @memset(merged, 0);
         if (inode.size_bytes > 0) {
-            _ = try self.readInodeAt(inode_index, 0, merged[0..inode.size_bytes]);
+            _ = try self.readInodeAt(&inode, 0, merged[0..inode.size_bytes]);
         }
         @memcpy(merged[offset..required_size], data);
 
@@ -448,25 +504,7 @@ pub const FileSystem = struct {
         return data.len;
     }
 
-    /// Truncates a file identified directly by inode number to zero bytes.
-    pub fn truncateInode(self: *FileSystem, inode_index: InodeT) FsError!void {
-        var inode = try self.readFileInode(inode_index);
-        try self.replaceInodeContents(inode_index, &inode, &.{});
-    }
-
-    /// Reads an entire regular file from the given directory into allocator-owned memory.
-    pub fn readFileAt(self: *const FileSystem, allocator: std.mem.Allocator, dir_inode_index: InodeT, name: []const u8) ReadFileError![]u8 {
-        const inode_index = try self.findFileInodeIndex(dir_inode_index, name) orelse return error.FileNotFound;
-        const inode = try self.readFileInode(inode_index);
-        if (inode.size_bytes == 0) {
-            return allocator.alloc(u8, 0);
-        }
-
-        const data = try allocator.alloc(u8, @intCast(inode.size_bytes));
-        errdefer allocator.free(data);
-        _ = try self.readInodeAt(inode_index, 0, data);
-        return data;
-    }
+    //////////// PATH WALKING ////////////
 
     /// Walk a full file path, starting from the given directory inode index.
     /// Returns { parent_dir_inode_index, dir_entry_index, dir_entry } or error.FileNotFound.
@@ -490,42 +528,34 @@ pub const FileSystem = struct {
 
             current_dir = entry.inode_index;
         }
+        // TODO: this is reachable if the path is empty or "/"
         unreachable;
     }
 
     /// Walk a full file path, starting from the given directory inode index.
     /// Returns the final file's inode index or error.FileNotFound.
-    fn walkFilePathToInode(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!InodeT {
+    pub fn walkFilePathToInode(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!InodeT {
+        if (path.len == 0) return dir_inode_index;
+        if (path.len == 1 and path[0] == '/') return ROOT_INODE_INDEX;
         _, _, const entry = try self.walkFilePathToDirEntry(dir_inode_index, path);
         return entry.inode_index;
     }
 
-    /// Reads an entire regular file, given by its full path, into allocator-owned memory.
-    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
-        const inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, path);
-        const inode = try self.readFileInode(inode_index);
-
-        const data = try allocator.alloc(u8, @intCast(inode.size_bytes));
-        errdefer allocator.free(data);
-        _ = try self.readInodeAt(inode_index, 0, data);
-        return data;
-    }
-
-    /// Creates or overwrites a file in the given directory with the provided full contents.
-    pub fn writeFileAt(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, data: []const u8) FsError!void {
-        if (!validateName(name)) return error.InvalidName;
-        if (fileBlocksForSize(@intCast(data.len)) > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
-
-        const inode_index = (try self.findFileInodeIndex(dir_inode_index, name)) orelse try self.createFile(dir_inode_index, name);
-        var inode = try self.readFileInode(inode_index);
-        try self.replaceInodeContents(inode_index, &inode, data);
+    fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } {
+        const trimmed = std.mem.trimEnd(u8, path, "/");
+        const last_slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');
+        if (last_slash) |idx| {
+            return .{ .dir = trimmed[0..idx], .name = trimmed[idx + 1 ..] };
+        } else {
+            return .{ .dir = &.{}, .name = trimmed };
+        }
     }
 
     /// Deletes a regular file from the given directory and frees its inode and blocks.
     pub fn deleteFile(self: *FileSystem, dir_inode_index: InodeT, index: u32) FsError!void {
         const entry = try self.readDirectoryEntry(dir_inode_index, index);
 
-        if (entry.kind != .File) return error.FileNotFound;
+        if (entry.kind != .File) return error.NotARegularFile;
 
         try self.destroyInode(entry.inode_index);
         var cleared: DirectoryEntry = .{};
@@ -544,7 +574,7 @@ pub const FileSystem = struct {
 
         var entry = try self.readDirectoryEntry(ROOT_INODE_INDEX, index);
 
-        if (entry.kind != .File) return error.FileNotFound;
+        if (entry.kind != .File) return error.NotARegularFile;
 
         entry.name_len = @intCast(new_name.len);
         entry.name = [_]u8{0} ** FILENAME_MAX_LEN;
@@ -553,7 +583,7 @@ pub const FileSystem = struct {
     }
 
     fn readSuperblock(self: *FileSystem) FsError!void {
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(FS_START_LBA, &sector);
 
         var superblock: Superblock = undefined;
@@ -566,7 +596,7 @@ pub const FileSystem = struct {
     }
 
     fn writeSuperblock(self: *const FileSystem) FsError!void {
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         @memcpy(sector[0..@sizeOf(Superblock)], std.mem.asBytes(&self.superblock));
         try self.block_dev.writeBlock(FS_START_LBA, &sector);
     }
@@ -670,10 +700,10 @@ pub const FileSystem = struct {
     }
 
     /// Read the inode with the given index and verify that it is a valid file inode.
-    fn readFileInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
+    pub fn readFileInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
-        if (inode.kind != .File) return error.FileNotFound;
+        if (inode.kind != .File) return error.NotARegularFile;
         return inode;
     }
 
@@ -681,7 +711,7 @@ pub const FileSystem = struct {
     fn readDirectoryInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
-        if (inode.kind != .Directory) return error.Corrupt;
+        if (inode.kind != .Directory) return error.NotADirectory;
         return inode;
     }
 
@@ -758,10 +788,10 @@ pub const FileSystem = struct {
         try self.writeInode(inode_index, inode);
 
         // Fill the allocated blocks with the new data
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         for (0..num_data_blocks) |block_idx| {
-            const byte_start = block_idx * 512;
-            const byte_end = @min(data.len, byte_start + 512);
+            const byte_start = block_idx * BLOCK_SIZE;
+            const byte_end = @min(data.len, byte_start + BLOCK_SIZE);
             @memcpy(sector[0 .. byte_end - byte_start], data[byte_start..byte_end]);
             @memset(sector[byte_end - byte_start ..], 0);
             const data_block = try self.getInodeDataBlock(inode, @intCast(block_idx));
@@ -785,7 +815,7 @@ pub const FileSystem = struct {
             @divFloor(@as(u32, inode_index), @as(u32, @intCast(INODES_PER_SECTOR)));
         const inode_offset = (@as(usize, inode_index) % INODES_PER_SECTOR) * @sizeOf(Inode);
 
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(sector_lba, &sector);
 
         var inode: Inode = undefined;
@@ -800,7 +830,7 @@ pub const FileSystem = struct {
             @divFloor(@as(u32, inode_index), @as(u32, @intCast(INODES_PER_SECTOR)));
         const inode_offset = (@as(usize, inode_index) % INODES_PER_SECTOR) * @sizeOf(Inode);
 
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(sector_lba, &sector);
         @memcpy(sector[inode_offset .. inode_offset + @sizeOf(Inode)], std.mem.asBytes(inode));
         try self.block_dev.writeBlock(sector_lba, &sector);
@@ -934,7 +964,7 @@ pub const FileSystem = struct {
         const block_index = dir_inode.direct_blocks[block_slot];
         try self.validateDataBlockIndex(block_index);
 
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(self.dataBlockLba(block_index), &sector);
 
         var entry: DirectoryEntry = undefined;
@@ -954,7 +984,7 @@ pub const FileSystem = struct {
         const block_index = dir_inode.direct_blocks[block_slot];
         try self.validateDataBlockIndex(block_index);
 
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(self.dataBlockLba(block_index), &sector);
         @memcpy(sector[entry_offset .. entry_offset + @sizeOf(DirectoryEntry)], std.mem.asBytes(entry));
         try self.writeDataBlock(block_index, &sector);
@@ -966,7 +996,7 @@ pub const FileSystem = struct {
         while (bitmap_sector_index < self.superblock.bitmap_sector_count) : (bitmap_sector_index += 1) {
             const sector_lba = self.superblock.bitmap_start_lba + bitmap_sector_index;
 
-            var sector = [_]u8{0} ** 512;
+            var sector = [_]u8{0} ** BLOCK_SIZE;
             try self.block_dev.readBlock(sector_lba, &sector);
 
             for (sector, 0..) |byte, byte_index| {
@@ -1004,7 +1034,7 @@ pub const FileSystem = struct {
         const bit_index: u8 = @intCast(bit_in_sector % 8);
         const sector_lba = self.superblock.bitmap_start_lba + sector_index;
 
-        var sector = [_]u8{0} ** 512;
+        var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(sector_lba, &sector);
 
         const mask: u8 = @as(u8, 1) << @intCast(bit_index);

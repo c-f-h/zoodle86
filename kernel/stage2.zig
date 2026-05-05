@@ -71,8 +71,10 @@ fn loadKernelElfAndJump() noreturn {
 
     // Read the 52-byte ELF header
     var ehdr_buf: [@sizeOf(elf32.Elf32_Ehdr)]u8 = undefined;
-    const n = disk_fs.readInodeAt(kernel_inode, 0, &ehdr_buf) catch
-        earlyBootFail("FS read error: ELF header");
+    const inode = disk_fs.readFileInode(kernel_inode) catch
+        earlyBootFail("FS error: cannot find kernel");
+    const n = disk_fs.readInodeAt(&inode, 0, &ehdr_buf) catch
+        earlyBootFail("kernel: not an x86 ELF");
     if (n < @sizeOf(elf32.Elf32_Ehdr)) earlyBootFail("kernel: not an x86 ELF");
 
     if (!std.mem.eql(u8, ehdr_buf[0..4], "\x7FELF")) earlyBootFail("kernel: not an x86 ELF");
@@ -92,7 +94,7 @@ fn loadKernelElfAndJump() noreturn {
     while (i < ehdr.e_phnum) : (i += 1) {
         var phdr_buf: [@sizeOf(elf32.Elf32_Phdr)]u8 = undefined;
         const phdr_off = ehdr.e_phoff + i * ehdr.e_phentsize;
-        _ = disk_fs.readInodeAt(kernel_inode, phdr_off, &phdr_buf) catch
+        _ = disk_fs.readInodeAt(&inode, phdr_off, &phdr_buf) catch
             earlyBootFail("FS read error");
         const phdr: *align(1) elf32.Elf32_Phdr = @ptrCast(&phdr_buf);
         if (phdr.p_type != elf32.PT_LOAD) continue;
@@ -114,7 +116,7 @@ fn loadKernelElfAndJump() noreturn {
             earlyBootFail("kernel segment overlaps bootstrap page tables");
 
         const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
-        _ = disk_fs.readInodeAt(kernel_inode, phdr.p_offset, dest[0..phdr.p_filesz]) catch
+        _ = disk_fs.readInodeAt(&inode, phdr.p_offset, dest[0..phdr.p_filesz]) catch
             earlyBootFail("FS read error");
         @memset(dest[phdr.p_filesz..phdr.p_memsz], 0);
     }

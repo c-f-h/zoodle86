@@ -95,7 +95,8 @@ pub fn readFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, dest: []u8)
             const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
             if (!open_file.readable) return error.AccessDenied;
 
-            const bytes_read = try disk_fs.readInodeAt(open_file.inode_index, open_file.offset, dest);
+            const inode = try disk_fs.readFileInode(open_file.inode_index);
+            const bytes_read = try disk_fs.readInodeAt(&inode, open_file.offset, dest);
             open_file.offset = std.math.add(u32, open_file.offset, bytes_read) catch return error.NoSpace;
             break :blk bytes_read;
         },

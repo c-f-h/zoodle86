@@ -22,7 +22,9 @@ pub fn main(argv: []const []const u8) !void {
     if (child_pid != 0) {
         const exit_status = sys.waitpid(child_pid);
         var wbuf: [64]u8 = undefined;
-        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&wbuf, "\nChild {0} exited with status {1}\n", .{ child_pid, exit_status }));
+        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&wbuf, "Child {0} exited with status {1}\n", .{ child_pid, exit_status }));
+    } else {
+        _ = sys.write(sys.STDOUT, "\n");
     }
 }
 

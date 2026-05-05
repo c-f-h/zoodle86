@@ -61,7 +61,9 @@ fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
     const cmd_name = args.next() orelse return;
 
     if (findCommand(cmd_name)) |command| {
-        try command.handler(shell, &args);
+        command.handler(shell, &args) catch |err| {
+            printErrorDesc(err);
+        };
     } else {
         console.puts("Unknown command ");
         console.puts(cmd_name);
@@ -163,8 +165,8 @@ fn cmdHelp(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdLs(shell: *Shell, args: *ArgsIterator) !void {
-    _ = args;
-    try listFiles(shell.disk_fs);
+    const path = args.next() orelse &.{};
+    try listFiles(shell.disk_fs, path);
 }
 
 fn cmdCat(shell: *Shell, args: *ArgsIterator) !void {
@@ -200,7 +202,7 @@ fn cmdMv(shell: *Shell, args: *ArgsIterator) !void {
         printUsage("mv");
         return;
     };
-    renameFile(shell.disk_fs, old_name, new_name);
+    try renameFile(shell.disk_fs, old_name, new_name);
 }
 
 fn cmdCpuid(shell: *Shell, args: *ArgsIterator) !void {
@@ -471,7 +473,7 @@ fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
 
 fn tryLoadProgram(fname: []const u8, argv: []const []const u8) ?*task.Task {
     const ptask = kernel.loadUserspaceElf(fname, argv) catch |err| {
-        console.put(.{ "Failed to load ", fname, ": ", @errorName(err), "\n" });
+        console.put(.{ "Failed to load ", fname, ": ", kernel.getErrorDesc(err), "\n" });
         return null;
     };
     if (kernel.secondary_console.vconsole_instance != null) {
@@ -630,12 +632,15 @@ fn readLineInto(buf: []u8) ![]u8 {
     return buf[0..copy_len];
 }
 
-fn listFiles(disk_fs: *fs.FileSystem) !void {
+fn listFiles(disk_fs: *fs.FileSystem, path: []const u8) !void {
     var found_any = false;
     var index: usize = 0;
     var buf: [128]u8 = undefined;
+
+    const dir_inode = try disk_fs.walkFilePathToInode(fs.ROOT_INODE_INDEX, path);
+
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        if (try disk_fs.getFileInfo(fs.ROOT_INODE_INDEX, index)) |info| {
+        if (try disk_fs.getFileInfo(dir_inode, index)) |info| {
             found_any = true;
             const str = try std.fmt.bufPrint(&buf, " {s:<16} {s:5} {d:>7}\n", .{
                 info.name[0..info.name_len],
@@ -652,10 +657,7 @@ fn listFiles(disk_fs: *fs.FileSystem) !void {
 }
 
 fn catFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
-    const data = disk_fs.readFileAt(alloc, fs.ROOT_INODE_INDEX, name) catch |err| {
-        printErrorDesc(err);
-        return;
-    };
+    const data = try disk_fs.readFile(alloc, name);
     defer alloc.free(data);
 
     console.puts(data);
@@ -667,7 +669,7 @@ fn catFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) 
 fn writeFileFromConsole(
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
-    name: []const u8,
+    path: []const u8,
 ) !void {
     var contents: std.ArrayList(u8) = .empty;
     defer contents.deinit(alloc);
@@ -682,32 +684,23 @@ fn writeFileFromConsole(
         try contents.append(alloc, '\n');
     }
 
-    disk_fs.writeFileAt(fs.ROOT_INODE_INDEX, name, contents.items) catch |err| {
-        printErrorDesc(err);
-        return;
-    };
+    try disk_fs.writeFile(path, contents.items);
 
     console.puts("Wrote ");
-    console.puts(name);
+    console.puts(path);
     console.puts(".\n");
 }
 
 fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) !void {
-    filedesc.unlinkFile(disk_fs, name) catch |err| {
-        printErrorDesc(err);
-        return;
-    };
+    try filedesc.unlinkFile(disk_fs, name);
 
     console.puts("Deleted ");
     console.puts(name);
     console.puts(".\n");
 }
 
-fn renameFile(disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u8) void {
-    disk_fs.renameFile(old_name, new_name) catch |err| {
-        printErrorDesc(err);
-        return;
-    };
+fn renameFile(disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u8) !void {
+    try disk_fs.renameFile(old_name, new_name);
 
     console.puts("Renamed ");
     console.puts(old_name);

@@ -68,7 +68,7 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
     const bytes_read = try file.readPositionalAll(io.*, elf_bytes, 0);
     const elf = elf_bytes[0..bytes_read];
 
-    const ehdr = @as(*align(1) const Elf32_Ehdr, @ptrCast(elf.ptr));
+    const ehdr = try elf32.getHeader(elf);
 
     if (!std.mem.eql(u8, ehdr.e_ident[0..4], "\x7fELF")) {
         return FlattenElfError.InvalidElfSignature;
@@ -99,7 +99,7 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
 
     var i: u16 = 0;
     while (i < ehdr.e_phnum) : (i += 1) {
-        const phdr = ehdr.phdrPtr(elf.ptr, i);
+        const phdr = try ehdr.phdrPtr(elf, i);
 
         // print segment information to stdout
         try stdout.print(" section type={x:08} offset={x:08} vaddr={x:08} paddr={x:08} filesz={x:08} memsz={x:08}  \n", .{ phdr.p_type, phdr.p_offset, phdr.p_vaddr, phdr.p_paddr, phdr.p_filesz, phdr.p_memsz });
@@ -133,7 +133,7 @@ fn flattenElf(elf_path: []const u8, allocator: std.mem.Allocator, io: *const std
     // copy contents of load segments into the flat image
     i = 0;
     while (i < ehdr.e_phnum) : (i += 1) {
-        const phdr = ehdr.phdrPtr(elf.ptr, i);
+        const phdr = try ehdr.phdrPtr(elf, i);
 
         if (phdr.p_type != elf32.PT_LOAD) {
             continue;

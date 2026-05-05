@@ -267,6 +267,8 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.DirectoryFull => "Directory is full.",
         error.FileExists => "File already exists.",
         error.FileNotFound => "File not found.",
+        error.NotARegularFile => "Not a regular file.",
+        error.NotADirectory => "Not a directory.",
         error.InvalidName => "Invalid filename.",
         error.InvalidSuperblock => "Filesystem superblock is invalid.",
         error.NoSpace => "Filesystem is out of space.",
@@ -274,7 +276,7 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.WriteError => "Disk write error.",
         error.InvalidBlock => "Invalid disk block address.",
         error.BufferTooSmall => "Buffer too small",
-        error.InvalidELF => "Invalid ELF",
+        error.InvalidElf => "Invalid ELF executable",
 
         ide.IdeError.Timeout => "IDE timeout",
         ide.IdeError.DeviceFault => "IDE device fault",
@@ -523,13 +525,13 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     }
 
     console.put(.{ "Loading ", fname, "...\n" });
-    const elf_data = try disk_fs.readFileAt(alloc, fs.ROOT_INODE_INDEX, fname);
+    const elf_data = try disk_fs.readFile(alloc, fname);
     defer alloc.free(elf_data);
 
-    const ehdr: *align(1) elf32.Elf32_Ehdr = @ptrCast(elf_data.ptr);
+    const ehdr = try elf32.getHeader(elf_data);
 
     // compute image extents and locate stack and heap
-    const code_start, const code_end, const data_start, const data_end = ehdr.computeImageExtents(elf_data.ptr);
+    const code_start, const code_end, const data_start, const data_end = try ehdr.computeImageExtents(elf_data);
     ptask.heap_start = paging.roundToNext(data_end, paging.PAGE);
     ptask.heap_brk = ptask.heap_start;
     if (ptask.heap_start >= USER_STACK_BOTTOM) {
@@ -553,7 +555,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     var i: u32 = 0;
 
     while (i < ehdr.e_phnum) : (i += 1) {
-        const phdr = ehdr.phdrPtr(elf_data.ptr, i);
+        const phdr = try ehdr.phdrPtr(elf_data, i);
         if (phdr.p_type != elf32.PT_LOAD) continue;
 
         const file_start = elf_data.ptr + phdr.p_offset;
