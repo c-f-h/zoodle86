@@ -599,14 +599,25 @@ pub const FileSystem = struct {
         return null;
     }
 
-    /// Given the name of a file in a directory, find its directory slot index.
+    /// Given the name of a regular file in a directory, find its directory slot index.
     fn findFileIndex(self: *const FileSystem, dir_inode_index: u16, name: []const u8) FsError!?usize {
-        const entry = (try self.findDirEntry(dir_inode_index, name)) orelse return null;
-        if (entry.kind != InodeKind.File) return null;
-        return entry.inode_index;
+        if (!validateName(name)) return error.InvalidName;
+
+        const dir_inode = try self.readDirectoryInode(dir_inode_index);
+        var index: usize = 0;
+        while (index < DIRECTORY_ENTRY_COUNT) : (index += 1) {
+            const entry = try self.readDirEntry(&dir_inode, index);
+            if (entry.kind != InodeKind.File) continue;
+            if (entry.name_len != @as(u8, @intCast(name.len))) continue;
+            if (std.mem.eql(u8, entry.name[0..entry.name_len], name)) {
+                return index;
+            }
+        }
+
+        return null;
     }
 
-    /// Given the name of a file in a directory, find its inode index.
+    /// Given the name of a regular file in a directory, find its inode index.
     pub fn findFileInodeIndex(self: *const FileSystem, dir_inode_index: u16, name: []const u8) FsError!?u16 {
         const entry = (try self.findDirEntry(dir_inode_index, name)) orelse return null;
         if (entry.kind != InodeKind.File) return null;

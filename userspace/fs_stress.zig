@@ -3,8 +3,12 @@ const sys = @import("sys.zig");
 
 const FAIL = 0xFFFFFFFF;
 
-fn expectSyscall(rc: u32) !u32 {
-    if (rc == FAIL) return error.SyscallFailed;
+inline fn expectSyscall(rc: u32, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !u32 {
+    if (rc == FAIL) {
+        var buf: [160]u8 = undefined;
+        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall failed: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
+        return error.SyscallFailed;
+    }
     return rc;
 }
 
@@ -19,14 +23,14 @@ const total_bytes = chunk_size * chunk_count;
 const seek_expected = "01234AB789XY\x00\x00Z";
 
 fn writeAll(fd: u32, buf: []const u8) !void {
-    const written = try expectSyscall(sys.write(fd, buf));
+    const written = try expectSyscall(sys.write(fd, buf), "writeAll: write", @src());
     if (written != buf.len) return error.ShortWrite;
 }
 
 fn readExact(fd: u32, dest: []u8) !void {
     var filled: usize = 0;
     while (filled < dest.len) {
-        const bytes_read = try expectSyscall(sys.read(fd, dest[filled..]));
+        const bytes_read = try expectSyscall(sys.read(fd, dest[filled..]), "readExact: read", @src());
         if (bytes_read == 0) return error.ShortRead;
         filled += bytes_read;
     }
@@ -34,7 +38,7 @@ fn readExact(fd: u32, dest: []u8) !void {
 
 fn expectEof(fd: u32) !void {
     var buf: [1]u8 = undefined;
-    const bytes_read = try expectSyscall(sys.read(fd, &buf));
+    const bytes_read = try expectSyscall(sys.read(fd, &buf), "expectEof: read", @src());
     if (bytes_read != 0) return error.ExpectedEof;
 }
 
@@ -65,7 +69,7 @@ fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
 }
 
 fn verifyFileContents(path: []const u8, expected: []const u8) !void {
-    const fd = try expectSyscall(sys.open(path, .{}));
+    const fd = try expectSyscall(sys.open(path, .{}), "verifyFileContents: open", @src());
     defer _ = sys.close(fd);
 
     var actual: [total_bytes]u8 = undefined;
@@ -79,24 +83,24 @@ fn verifySeekSemantics() !void {
         .open_mode = .ReadWrite,
         .create = true,
         .truncate = true,
-    }));
+    }), "verifySeekSemantics: open seek file", @src());
     errdefer _ = sys.close(fd);
 
     try writeAll(fd, "0123456789");
-    try expectOffset(try expectSyscall(sys.lseek(fd, 4, .Set)), 4);
+    try expectOffset(try expectSyscall(sys.lseek(fd, 4, .Set), "verifySeekSemantics: lseek set 4", @src()), 4);
 
     var window: [3]u8 = undefined;
-    const bytes_read = try expectSyscall(sys.read(fd, &window));
+    const bytes_read = try expectSyscall(sys.read(fd, &window), "verifySeekSemantics: read window", @src());
     if (bytes_read != window.len) return error.ShortRead;
     try expectBytes(&window, "456");
 
-    try expectOffset(try expectSyscall(sys.lseek(fd, -2, .Cur)), 5);
+    try expectOffset(try expectSyscall(sys.lseek(fd, -2, .Cur), "verifySeekSemantics: lseek cur -2", @src()), 5);
     try writeAll(fd, "AB");
 
-    try expectOffset(try expectSyscall(sys.lseek(fd, 0, .End)), 10);
+    try expectOffset(try expectSyscall(sys.lseek(fd, 0, .End), "verifySeekSemantics: lseek end 0", @src()), 10);
     try writeAll(fd, "XY");
 
-    try expectOffset(try expectSyscall(sys.lseek(fd, 2, .End)), 14);
+    try expectOffset(try expectSyscall(sys.lseek(fd, 2, .End), "verifySeekSemantics: lseek end +2", @src()), 14);
     try writeAll(fd, "Z");
 
     if (sys.lseek(fd, -100, .Cur) != FAIL) return error.ExpectedFailure;
@@ -104,7 +108,7 @@ fn verifySeekSemantics() !void {
 
     if (sys.close(fd) == FAIL) return error.SyscallFailed;
 
-    const verify_fd = try expectSyscall(sys.open(seek_file, .{}));
+    const verify_fd = try expectSyscall(sys.open(seek_file, .{}), "verifySeekSemantics: reopen seek file", @src());
     defer _ = sys.close(verify_fd);
 
     var actual: [seek_expected.len]u8 = undefined;
@@ -118,7 +122,7 @@ fn verifyUnlinkSemantics() !void {
         .open_mode = .ReadWrite,
         .create = true,
         .truncate = true,
-    }));
+    }), "verifyUnlinkSemantics: open unlink file", @src());
 
     try writeAll(fd, "temporary contents");
 
@@ -128,8 +132,8 @@ fn verifyUnlinkSemantics() !void {
         return error.SyscallFailed;
     }
 
-    if (sys.close(fd) == FAIL) return error.SyscallFailed;
-    if (sys.unlink(unlink_file) == FAIL) return error.SyscallFailed;
+    _ = try expectSyscall(sys.close(fd), "verifyUnlinkSemantics: close before unlink", @src());
+    _ = try expectSyscall(sys.unlink(unlink_file), "verifyUnlinkSemantics: unlink closed file", @src());
 
     if (sys.open(unlink_file, .{}) != FAIL) {
         _ = sys.write(sys.STDOUT, "unexpectedly reopened unlinked file\n");
@@ -153,8 +157,8 @@ pub fn main(argv: []const []const u8) !void {
         .create = true,
         .truncate = true,
     };
-    const fd_a = try expectSyscall(sys.open(stress_file_a, create_flags));
-    const fd_b = try expectSyscall(sys.open(stress_file_b, create_flags));
+    const fd_a = try expectSyscall(sys.open(stress_file_a, create_flags), "main: open stress_file_a", @src());
+    const fd_b = try expectSyscall(sys.open(stress_file_b, create_flags), "main: open stress_file_b", @src());
 
     const fd_c = sys.open(nonexistent_file, .{});
     if (fd_c != FAIL) {
@@ -181,8 +185,8 @@ pub fn main(argv: []const []const u8) !void {
         try writeAll(fd_b, &chunk_b);
     }
 
-    _ = try expectSyscall(sys.close(fd_a));
-    _ = try expectSyscall(sys.close(fd_b));
+    _ = try expectSyscall(sys.close(fd_a), "main: close stress_file_a", @src());
+    _ = try expectSyscall(sys.close(fd_b), "main: close stress_file_b", @src());
 
     try verifyFileContents(stress_file_a, &expected_a);
     try verifyFileContents(stress_file_b, &expected_b);
