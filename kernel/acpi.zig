@@ -50,6 +50,34 @@ fn scanRange(start: usize, end: usize) ?*const RSDP {
 const initial_table_va: usize = 0xFC00_0000;
 var next_table_va: usize = initial_table_va;
 const final_table_va: usize = 0xFE00_0000; // for bounds checking
+const max_table_length: u32 = 1024 * 1024;
+
+fn validateTableLength(length: u32) void {
+    if (length < @sizeOf(SDTHeader)) {
+        @panic("ACPI table shorter than SDT header");
+    }
+    if (length > max_table_length) {
+        @panic("ACPI table length is implausibly large");
+    }
+}
+
+fn numPagesForTable(phys_addr: u32, length: u32) u32 {
+    validateTableLength(length);
+
+    const phys_end = @addWithOverflow(phys_addr, length);
+    if (phys_end[1] != 0) {
+        @panic("ACPI table physical range overflows");
+    }
+
+    return paging.numPagesBetween(phys_addr, phys_end[0]);
+}
+
+fn ensureMappingCapacity(additional_pages: u32) void {
+    const additional_bytes = @as(usize, additional_pages) * paging.PAGE;
+    if (next_table_va > final_table_va or additional_bytes > final_table_va - next_table_va) {
+        @panic("ACPI tables too large for virtual memory");
+    }
+}
 
 /// Map the ACPI table at the given physical address into virtual memory and return a pointer to it.
 fn mapTable(phys_addr: u32) *const SDTHeader {
@@ -65,22 +93,21 @@ fn mapTable(phys_addr: u32) *const SDTHeader {
         // (common with several small ACPI tables packed together in the same physical page)
         header = @ptrFromInt(prev_table_va + phys_offset);
     } else {
-        // Different physical page (nor none mapped yet), so create a new mapping
+        // Different physical page (or none mapped yet), so create a new mapping
+        ensureMappingCapacity(1);
         paging.mapContiguousRangeAt(next_table_va, phys_page, 1, false, false, false);
         header = @ptrFromInt(next_table_va + phys_offset);
         next_table_va += paging.PAGE;
     }
 
     // Is the table longer than 1 page? Then we need to map additional memory
-    const total_pages = paging.numPagesBetween(phys_addr, phys_addr + header.length);
+    const total_pages = numPagesForTable(phys_addr, header.length);
     if (total_pages > 1) {
+        ensureMappingCapacity(total_pages - 1);
         paging.mapContiguousRangeAt(next_table_va, phys_page + paging.PAGE, total_pages - 1, false, false, false);
         next_table_va += (total_pages - 1) * paging.PAGE;
     }
 
-    if (next_table_va > final_table_va) {
-        @panic("ACPI tables too large for virtual memory");
-    }
     verifyChecksum(header);
 
     return header;
@@ -100,9 +127,13 @@ fn verifyChecksum(header: *const SDTHeader) void {
 pub fn init() void {
     console.puts("Scanning ACPI tables...\n");
     const ebda_short_ptr: *const u16 = @ptrFromInt(0x40E);
-    const ebda_addr = @intFromPtr(ebda_short_ptr) << 4;
+    const ebda_addr = @as(usize, ebda_short_ptr.*) << 4;
+    const rsdp_from_ebda = if (ebda_addr != 0 and ebda_addr < 0x000A_0000)
+        scanRange(ebda_addr, @min(ebda_addr + 1024, 0x000A_0000))
+    else
+        null;
     const rsdp =
-        scanRange(ebda_addr, 0x000A_0000) orelse
+        rsdp_from_ebda orelse
         scanRange(0x000E_0000, 0x0010_0000) orelse
         @panic("ACPI RSDP not found");
     console.put(.{ "RSDP OEMID: ", &rsdp.oemid, " revision: ", rsdp.revision, " RSDT address: ", rsdp.rsdt_address, "\n" });
