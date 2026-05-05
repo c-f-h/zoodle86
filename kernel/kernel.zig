@@ -105,7 +105,7 @@ var disk_block_device: ide.IdeBlockDevice = undefined;
 // VConsole instances and secondary console for the two-panel framebuffer layout.
 var primary_vconsole: vconsole.VConsole = .{};
 var secondary_vconsole: vconsole.VConsole = .{};
-var secondary_console: console.Console = .{};
+pub var secondary_console: console.Console = .{};
 
 /// Returns the kernel allocator used for filesystem-backed syscall scratch buffers.
 pub fn getAllocator() std.mem.Allocator {
@@ -389,7 +389,7 @@ fn kernel_enter() !noreturn {
 
         // Secondary console occupies the right half of the screen.
         const sec_ts = try vconsole.preferredTextSize(half_w, full_h);
-        try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "hello");
+        try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "userspace programs");
         try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows);
         secondary_console.vconsole_instance = &secondary_vconsole;
 
@@ -399,16 +399,7 @@ fn kernel_enter() !noreturn {
         secondary_vconsole.drawFrame();
 
         console.refresh();
-
-        // Load hello into the secondary console and run it before entering the shell.
-        if (loadUserspaceElf("hello", &.{ "hello", "10", "20" })) |hello_task| {
-            hello_task.stdout_console = &secondary_console;
-            run(hello_task);
-        } else |err| {
-            console.put(.{ "Failed to load hello: ", @errorName(err), "\n" });
-        }
     }
-    _ = syscall.syscall_dispatch; // referenced by interrupts.asm's syscall_isr; force inclusion
     enterKernelShell();
 }
 

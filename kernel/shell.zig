@@ -469,6 +469,17 @@ fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
+fn tryLoadProgram(fname: []const u8, argv: []const []const u8) ?*task.Task {
+    const ptask = kernel.loadUserspaceElf(fname, argv) catch |err| {
+        console.put(.{ "Failed to load ", fname, ": ", @errorName(err), "\n" });
+        return null;
+    };
+    if (kernel.secondary_console.vconsole_instance != null) {
+        ptask.stdout_console = &kernel.secondary_console;
+    }
+    return ptask;
+}
+
 fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     _ = shell;
     const raw_count = args.next() orelse {
@@ -506,9 +517,10 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     var first_task: ?*task.Task = null;
     var remaining = copy_count;
     while (remaining != 0) : (remaining -= 1) {
-        const ptask = try kernel.loadUserspaceElf(fname, argv_buf[0..argc]);
-        if (first_task == null) {
-            first_task = ptask;
+        if (tryLoadProgram(fname, argv_buf[0..argc])) |ptask| {
+            if (first_task == null) first_task = ptask;
+        } else {
+            return;
         }
     }
 
@@ -536,8 +548,9 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
         argc += 1;
     }
 
-    const ptask = try kernel.loadUserspaceElf(fname, argv_buf[0..argc]);
-    kernel.run(ptask);
+    if (tryLoadProgram(fname, argv_buf[0..argc])) |ptask| {
+        kernel.run(ptask);
+    }
 }
 
 fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {
