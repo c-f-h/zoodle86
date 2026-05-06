@@ -89,6 +89,7 @@ fn readlineKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
     if (ev.pressed == 0) return 0;
 
     var self: *ReadlineApp = @ptrCast(@alignCast(ctx.?));
+    const con = self.console;
     var readline = &self.readline;
 
     var redraw_all = false;
@@ -150,7 +151,7 @@ fn readlineKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
         switch (ev.keycode) {
             keyboard.VK_ENTER => {
                 self.done = true;
-                console.setCursorVisible(false);
+                con.setCursorVisible(false);
             },
             keyboard.VK_HOME => readline.cursor = 0,
             keyboard.VK_END => readline.cursor = readline.len,
@@ -179,41 +180,42 @@ fn readlineKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
 
     var i: u32 = 0;
     while (i < readline.len) : (i += 1) {
-        console.putCharAt(readline_row, i, readline.buf[i], VGA_ATTR);
+        con.putCharAt(readline_row, i, readline.buf[i], VGA_ATTR);
     }
     // it's usually sufficient to blank out one char past the end of the buffer
     if (readline.len < READLINE_BUF_MAX_LEN) {
-        console.putCharAt(readline_row, i, ' ', VGA_ATTR);
+        con.putCharAt(readline_row, i, ' ', VGA_ATTR);
     }
     // only if we killed a longer portion of the buffer
     if (redraw_all) {
         while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-            console.putCharAt(readline_row, i, ' ', VGA_ATTR);
+            con.putCharAt(readline_row, i, ' ', VGA_ATTR);
         }
     }
 
-    console.setCursor(readline_row, readline.cursor);
+    con.setCursor(readline_row, readline.cursor);
     return 0;
 }
 
 pub const ReadlineApp = struct {
+    console: *console.Console = &console.primary,
     done: bool = false,
     readline: ReadlineBuf = undefined,
 
     pub fn init(self: *ReadlineApp) void {
         kernel.setKeyboardHandler(readlineKeyhandler, self);
 
-        const cpos = console.getCursorPos();
+        const cpos = self.console.getCursorPos();
         readline_row = cpos[0];
         self.readline = .{};
 
-        console.setCursor(readline_row, 0);
-        console.setCursorVisible(true);
+        self.console.setCursor(readline_row, 0);
+        self.console.setCursorVisible(true);
 
         // clear display row
         var i: u32 = 0;
         while (i < READLINE_BUF_MAX_LEN) : (i += 1) {
-            console.putCharAt(readline_row, i, ' ', VGA_ATTR);
+            self.console.putCharAt(readline_row, i, ' ', VGA_ATTR);
         }
     }
 

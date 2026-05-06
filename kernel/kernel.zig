@@ -195,10 +195,11 @@ fn exception_handler(frame: *const interrupt_frame.InterruptFrame) noreturn {
     // The original cs tells us whether the fault happened in userspace (ring 3); in that
     // case we should terminate only the userspace program and continue.
     if (frame.fromUserMode()) {
-        console.setAttr(0x0f);
-        console.puts(&err);
-        console.setAttr(VGA_ATTR);
-        console.puts("\nTerminating program.\n");
+        const user_console = task.getCurrentTask().stdout_console orelse &console.primary;
+        user_console.setAttr(0x0f);
+        user_console.puts(&err);
+        user_console.setAttr(VGA_ATTR);
+        user_console.puts("\nTerminating program.\n");
         exitCurrentTask(0xFFFF_FFFF);
     } else {
         // The fault occurred in the kernel; panic!
@@ -230,7 +231,7 @@ fn findUsableMemoryWindow(verbose: bool) struct { u32, u32 } {
 
     for (entries) |*entry| {
         if (verbose) {
-            console.put(.{ "  ", entry.base, " - ", entry.base + entry.length, " - type ", entry.type_, "\n" });
+            console.primary.put(.{ "  ", entry.base, " - ", entry.base + entry.length, " - type ", entry.type_, "\n" });
         }
 
         if (entry.type_ == 1) {
@@ -307,6 +308,7 @@ var page_dir_phys: u32 = undefined;
 
 fn kernel_enter() !noreturn {
     // NB: This function runs on a temporary stack; its locals won't survive into the kernel shell.
+    const kernel_console = &console.primary;
     serial.init();
     serial.puts(" --- kernel_enter  ---\n");
     initGdt();
@@ -330,13 +332,13 @@ fn kernel_enter() !noreturn {
         idt.load();
     }
 
-    console.init(VGA_ATTR);
+    kernel_console.init(VGA_ATTR);
     if (video_info_phys_addr != 0) {
         graphical = true;
-        console.enableBufferedBackend();
+        kernel_console.enableBufferedBackend();
     }
 
-    console.puts(" -------- zoodle86 loaded --------\n\n");
+    kernel_console.puts(" -------- zoodle86 loaded --------\n\n");
 
     const mem_base, const mem_size = findUsableMemoryWindow(false);
     // The page allocator must only manage extended memory (above 1 MB) so that
@@ -350,13 +352,13 @@ fn kernel_enter() !noreturn {
     kprof.init(alloc);
     taskman.init();
 
-    console.put(.{
+    kernel_console.put(.{
         "Usable memory: ", mem_base,
         " - ",             mem_base + mem_size,
         ", size=",
     });
-    console.putDecU32(@divTrunc(mem_size, 1024 * 1024));
-    console.puts(" MiB\n\n");
+    kernel_console.putDecU32(@divTrunc(mem_size, 1024 * 1024));
+    kernel_console.puts(" MiB\n\n");
 
     acpi.init();
     filedesc.init();
@@ -377,7 +379,7 @@ fn kernel_enter() !noreturn {
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions.
         vconsole.loadFont(alloc, &disk_fs, "/fonts/ter-u14n.psf") catch |err| {
-            console.put(.{ "Failed to load font (", @errorName(err), ").\n" });
+            kernel_console.put(.{ "Failed to load font (", @errorName(err), ").\n" });
         };
 
         const half_w = framebuf.width() / 2;
@@ -385,7 +387,7 @@ fn kernel_enter() !noreturn {
 
         // Primary console occupies the left half of the screen.
         const primary_ts = try vconsole.preferredTextSize(half_w, full_h);
-        try console.enableFramebufBackend(alloc, primary_ts.cols, primary_ts.rows);
+        try kernel_console.enableFramebufBackend(alloc, primary_ts.cols, primary_ts.rows);
         try primary_vconsole.init(alloc, 0, 0, half_w, full_h, primary_ts.cols, primary_ts.rows, "zoodle86 shell");
         console.primary.vconsole_instance = &primary_vconsole;
 
@@ -400,7 +402,7 @@ fn kernel_enter() !noreturn {
         primary_vconsole.drawFrame();
         secondary_vconsole.drawFrame();
 
-        console.refresh();
+        kernel_console.refresh();
     }
     enterKernelShell();
 }
@@ -437,12 +439,13 @@ fn enterKernelShell() noreturn {
 
 // Re-run the kernel shell on the dedicated kernel shell stack rather than the just-exited task stack.
 fn kernel_reenter() noreturn {
+    const kernel_console = &console.primary;
     // Switch back to the kernel page directory (without userspace mapping)
     paging.loadPageDir(page_dir_phys);
 
-    console.puts("Returned to kernel, esp = ");
-    console.putHexU32(getRegister("esp".*));
-    console.newline();
+    kernel_console.puts("Returned to kernel, esp = ");
+    kernel_console.putHexU32(getRegister("esp".*));
+    kernel_console.newline();
 
     enterKernelShell();
 }
@@ -512,6 +515,7 @@ pub fn exitCurrentTask(exit_code: u32) noreturn {
 /// Loads an ELF file into a fresh task with an isolated user address space.
 /// Returns with the kernel page directory reloaded so the caller can decide when to run it.
 pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task {
+    const kernel_console = &console.primary;
     // Task initialization clones the currently active page directory, so start
     // from the kernel-only page tables instead of whatever user task was most
     // recently loaded.
@@ -524,7 +528,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
         ptask.terminate();
     }
 
-    console.put(.{ "Loading ", fname, "...\n" });
+    kernel_console.put(.{ "Loading ", fname, "...\n" });
     const elf_data = try disk_fs.readFile(alloc, fname);
     defer alloc.free(elf_data);
 
@@ -547,7 +551,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     ptask.stack_bottom = USER_STACK_BOTTOM;
     _ = ptask.stack_mem.allocate(ptask.stack_top - paging.PAGE, ptask.stack_top, true, true);
 
-    console.put(.{
+    kernel_console.put(.{
         "CODE:  ",   code_start,         " - ", code_end,        ", DATA: ",   data_start,           " - ", data_end,        "; entry: 0x", ehdr.e_entry,
         "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, " (mapped: ", ptask.stack_mem.base, " - ", ptask.stack_top, ")\n",
     });
@@ -569,17 +573,17 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
         @memset(dest[filesz..memsz], 0);
 
         if (phdr.p_flags & elf32.P_X != 0) {
-            console.puts("Loaded code segment: ");
+            kernel_console.puts("Loaded code segment: ");
         } else {
-            console.puts("Loaded data segment: ");
+            kernel_console.puts("Loaded data segment: ");
         }
-        console.putHexU32(phdr.p_vaddr);
-        console.puts(" (");
-        console.putDecU32(filesz);
-        console.puts(" + ");
-        console.putDecU32(memsz - filesz);
-        console.puts(" bss bytes)");
-        console.newline();
+        kernel_console.putHexU32(phdr.p_vaddr);
+        kernel_console.puts(" (");
+        kernel_console.putDecU32(filesz);
+        kernel_console.puts(" + ");
+        kernel_console.putDecU32(memsz - filesz);
+        kernel_console.puts(" bss bytes)");
+        kernel_console.newline();
     }
 
     // mark code segment read-only after initialization
@@ -596,31 +600,33 @@ pub fn run(ptask: *task.Task) void {
 }
 
 fn mountFs() !void {
+    const kernel_console = &console.primary;
     const drive = ide.Drive.master;
     ide.selectDrive(drive);
 
     const drive_info = try ide.identifyDrive(drive);
-    console.puts("Drive model:     ");
-    console.puts(&drive_info.model);
-    console.puts("\nDrive serial:    ");
-    console.puts(&drive_info.serial);
-    console.puts("\nSectors (LBA28): ");
-    console.putDecU32(drive_info.max_lba28);
-    console.newline();
+    kernel_console.puts("Drive model:     ");
+    kernel_console.puts(&drive_info.model);
+    kernel_console.puts("\nDrive serial:    ");
+    kernel_console.puts(&drive_info.serial);
+    kernel_console.puts("\nSectors (LBA28): ");
+    kernel_console.putDecU32(drive_info.max_lba28);
+    kernel_console.newline();
 
     disk_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
     disk_fs = try fs.FileSystem.mountOrFormat(&disk_block_device.block_dev);
 }
 
 pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
+    const kernel_console = &console.primary;
     _ = trace;
     _ = return_address;
     serial.puts("KERNEL PANIC:\n");
     serial.puts(message);
     serial.puts("\nSystem halted.\n");
-    console.setCursor(0, 0);
-    console.setAttr(0x4F); // Red background, white text
-    console.put(.{ "KERNEL PANIC:\n", message, "\nSystem halted." });
+    kernel_console.setCursor(0, 0);
+    kernel_console.setAttr(0x4F); // Red background, white text
+    kernel_console.put(.{ "KERNEL PANIC:\n", message, "\nSystem halted." });
     while (true) {}
 }
 
@@ -647,6 +653,7 @@ fn handlePageFault(va: usize, errcode: u32) bool {
 /// Page fault dispatcher: handles growable user stacks; terminates the program on
 /// unrecoverable faults; panics if the fault happened in kernel mode.
 fn page_fault_handler(frame: *const interrupt_frame.InterruptFrame) void {
+    const kernel_console = &console.primary;
     const errcode = frame.error_code;
     const eip = frame.eip;
 
@@ -658,21 +665,21 @@ fn page_fault_handler(frame: *const interrupt_frame.InterruptFrame) void {
     if (handlePageFault(fault_va, errcode))
         return;
 
-    const old_mirror_state = console.isSerialMirrorEnabled();
-    console.setSerialMirrorEnabled(true);
-    console.put(.{
+    const old_mirror_state = kernel_console.isSerialMirrorEnabled();
+    kernel_console.setSerialMirrorEnabled(true);
+    kernel_console.put(.{
         "\n!!! PAGE FAULT !!!\nError code: ", errcode,
         "\nAddress:    ",                     fault_va,
         "\neip:        ",                     eip,
     });
-    console.setSerialMirrorEnabled(old_mirror_state);
+    kernel_console.setSerialMirrorEnabled(old_mirror_state);
 
     if (frame.fromUserMode()) {
-        console.puts("\nTerminating program.\n");
-        console.setSerialMirrorEnabled(old_mirror_state);
+        const user_console = task.getCurrentTask().stdout_console orelse &console.primary;
+        user_console.puts("\nTerminating program.\n");
         exitCurrentTask(0xFFFF_FFFF);
     } else {
-        console.puts("\nHalting.\n");
+        kernel_console.puts("\nHalting.\n");
         while (true) {
             asm volatile ("hlt");
         }

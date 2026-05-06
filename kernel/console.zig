@@ -349,16 +349,6 @@ pub const Console = struct {
         }
     }
 
-    pub fn formatHexU(comptime bytes: u8, value: @Int(.unsigned, 8 * bytes), out: *[2 * bytes]u8) void {
-        const hex = "0123456789ABCDEF";
-        var shift: i8 = 8 * bytes - 4;
-        var ofs: u8 = 0;
-        while (shift >= 0) : (shift -= 4) {
-            out.*[ofs] = hex[(value >> @intCast(shift)) & 0x0F];
-            ofs += 1;
-        }
-    }
-
     pub fn putHexU8(self: *Console, value: u8) void {
         const hex = "0123456789ABCDEF";
         self.putch(hex[(value >> 4) & 0x0F]);
@@ -367,13 +357,13 @@ pub const Console = struct {
 
     pub fn putHexU16(self: *Console, value: u16) void {
         var str: [4]u8 = undefined;
-        Console.formatHexU(2, value, &str);
+        formatHexU(2, value, &str);
         self.puts(&str);
     }
 
     pub fn putHexU32(self: *Console, value: u32) void {
         var str: [8]u8 = undefined;
-        Console.formatHexU(4, value, &str);
+        formatHexU(4, value, &str);
         self.puts(&str);
     }
 
@@ -469,115 +459,12 @@ pub const Console = struct {
 /// Primary console instance. All module-level wrapper functions delegate here.
 pub var primary: Console = .{};
 
-// ── Module-level wrappers (delegate to primary) ─────────────────────────────
-
-pub fn init(attr: u8) void {
-    primary.init(attr);
-}
-
-/// Format an unsigned integer as lowercase hex into `out`.  Static utility with no per-console state.
-pub const formatHexU = Console.formatHexU;
-pub fn refresh() void {
-    primary.refresh();
-}
-
-pub fn clearCells(attr: u8) void {
-    primary.clearCells(attr);
-}
-
-pub fn clear() void {
-    primary.clear();
-}
-
-pub fn setCursor(row: u32, col: u32) void {
-    primary.setCursor(row, col);
-}
-
-pub fn getCursorPos() struct { u32, u32 } {
-    return primary.getCursorPos();
-}
-
-pub fn setAttr(attr: u8) void {
-    primary.setAttr(attr);
-}
-
-pub fn setCursorVisible(visible: bool) void {
-    primary.setCursorVisible(visible);
-}
-
-pub fn setSerialMirrorEnabled(enabled: bool) void {
-    primary.setSerialMirrorEnabled(enabled);
-}
-
-pub fn isSerialMirrorEnabled() bool {
-    return primary.isSerialMirrorEnabled();
-}
-
-pub fn readCell(row: u32, col: u32) u16 {
-    return primary.readCell(row, col);
-}
-
-pub fn putCharAt(row: u32, col: u32, ch: u8, attr: u8) void {
-    primary.putCharAt(row, col, ch, attr);
-}
-
-/// Stress text rendering by overwriting 1000 character cells per pass without advancing into scrollback.
-pub fn stressWrite(iterations: u32) void {
-    primary.stressWrite(iterations);
-}
-
-pub fn enableFramebufBackend(allocator: std.mem.Allocator, text_width: u32, text_height: u32) !void {
-    return primary.enableFramebufBackend(allocator, text_width, text_height);
-}
-
-pub fn deinit(allocator: std.mem.Allocator) void {
-    primary.deinit(allocator);
-}
-
-pub fn enableBufferedBackend() void {
-    primary.enableBufferedBackend();
-}
-
-pub fn newline() void {
-    primary.newline();
-}
-
-pub fn putch(ch: u8) void {
-    primary.putch(ch);
-}
-
-pub fn puts(s: []const u8) void {
-    primary.puts(s);
-}
-
-pub fn putHexU8(value: u8) void {
-    primary.putHexU8(value);
-}
-
-pub fn putHexU16(value: u16) void {
-    primary.putHexU16(value);
-}
-
-pub fn putHexU32(value: u32) void {
-    primary.putHexU32(value);
-}
-
-pub fn putHexU64(value: u64) void {
-    primary.putHexU64(value);
-}
-
-pub fn putDecU32(value: u32) void {
-    primary.putDecU32(value);
-}
-
-pub fn putBinaryU32(value: u32) void {
-    primary.putBinaryU32(value);
-}
-
-pub inline fn put(multiple: anytype) void {
-    primary.put(multiple);
-}
-
-pub fn dumpMem(addr: u32, num_lines: u32) void {
-    primary.dumpMem(addr, num_lines);
+pub fn formatHexU(comptime bytes: u8, value: @Int(.unsigned, 8 * bytes), out: *[2 * bytes]u8) void {
+    const hex = "0123456789ABCDEF";
+    var shift: i8 = 8 * bytes - 4;
+    var ofs: u8 = 0;
+    while (shift >= 0) : (shift -= 4) {
+        out.*[ofs] = hex[(value >> @intCast(shift)) & 0x0F];
+        ofs += 1;
+    }
 }

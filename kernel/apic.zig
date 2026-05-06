@@ -26,6 +26,7 @@ var isos: [32]InterruptSourceOverride = undefined;
 var iso_count: u8 = 0;
 
 pub fn parseApicEntries(p_madt: *const acpi.MADT) void {
+    const kernel_console = &console.primary;
     const bytes: [*]const u8 = @ptrCast(p_madt);
     var offset: usize = @sizeOf(acpi.MADT);
 
@@ -34,7 +35,7 @@ pub fn parseApicEntries(p_madt: *const acpi.MADT) void {
     while (offset < p_madt.header.length) {
         const entry_type = bytes[offset];
         const entry_len = bytes[offset + 1];
-        console.put(.{ "    APIC Entry type: ", entry_type, " length: ", entry_len, "\n" });
+        kernel_console.put(.{ "    APIC Entry type: ", entry_type, " length: ", entry_len, "\n" });
 
         switch (entry_type) {
             0 => { // Processor Local APIC
@@ -42,7 +43,7 @@ pub fn parseApicEntries(p_madt: *const acpi.MADT) void {
                 const local_apic_id = bytes[offset + 3];
                 const flagsptr: [*]u32 = @ptrFromInt(@intFromPtr(bytes) + offset + 4);
                 const flags = flagsptr[0];
-                console.put(.{ "      Local APIC ID: ", local_apic_id, " processor: ", proc_id, " flags: ", flags, "\n" });
+                kernel_console.put(.{ "      Local APIC ID: ", local_apic_id, " processor: ", proc_id, " flags: ", flags, "\n" });
             },
             1 => { // I/O APIC
                 const io_apic_id = bytes[offset + 3];
@@ -54,7 +55,7 @@ pub fn parseApicEntries(p_madt: *const acpi.MADT) void {
                     // For now, map only the I/O APIC for GSI base 0 - we check that at least 16 entries are present
                     ioapic_mmio_base = io_apic_address;
                 }
-                console.put(.{ "      I/O APIC ID: ", io_apic_id, " address: ", io_apic_address, " global base: ", global_base, "\n" });
+                kernel_console.put(.{ "      I/O APIC ID: ", io_apic_id, " address: ", io_apic_address, " global base: ", global_base, "\n" });
             },
             2 => { // Interrupt Source Override
                 const bus_source = bytes[offset + 2];
@@ -74,14 +75,14 @@ pub fn parseApicEntries(p_madt: *const acpi.MADT) void {
                     iso_count += 1;
                 }
 
-                console.put(.{ "      Interrupt Source Override: bus ", bus_source, " irq ", irq_source, " -> GSI ", global_system_interrupt, " flags: ", flags, "\n" });
+                kernel_console.put(.{ "      Interrupt Source Override: bus ", bus_source, " irq ", irq_source, " -> GSI ", global_system_interrupt, " flags: ", flags, "\n" });
             },
             4 => { // Local APIC NMI
                 const local_apic_id = bytes[offset + 3];
                 const flagsptr: *u16 = @ptrFromInt(@intFromPtr(bytes) + offset + 4);
                 const flags = flagsptr.*;
                 const local_apic_lint = bytes[offset + 5];
-                console.put(.{ "      Local APIC NMI: local APIC ID ", local_apic_id, " flags: ", flags, " LINT#: ", local_apic_lint, "\n" });
+                kernel_console.put(.{ "      Local APIC NMI: local APIC ID ", local_apic_id, " flags: ", flags, " LINT#: ", local_apic_lint, "\n" });
             },
             else => {},
         }

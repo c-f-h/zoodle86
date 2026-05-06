@@ -599,7 +599,7 @@ fn printUsage(shell: *Shell, name: []const u8) void {
 }
 
 fn readLineInto(shell: *Shell, buf: []u8) ![]u8 {
-    var rl: readline.ReadlineApp = .{};
+    var rl: readline.ReadlineApp = .{ .console = shell.console };
     rl.init();
     defer rl.deinit();
 

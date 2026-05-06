@@ -35,10 +35,11 @@ var rsdt: *const SDTHeader = undefined;
 var madt: ?*const MADT = null;
 
 fn scanRange(start: usize, end: usize) ?*const RSDP {
+    const kernel_console = &console.primary;
     var ptr: [*]u8 = @ptrFromInt(start);
     while (@intFromPtr(ptr) < end) {
         if (std.mem.eql(u8, ptr[0..8], "RSD PTR ")) {
-            console.put(.{ "Found RSDP at ", @intFromPtr(ptr), "\n" });
+            kernel_console.put(.{ "Found RSDP at ", @intFromPtr(ptr), "\n" });
             return @ptrCast(@alignCast(ptr));
         }
         ptr += 16;
@@ -125,7 +126,8 @@ fn verifyChecksum(header: *const SDTHeader) void {
 }
 
 pub fn init() void {
-    console.puts("Scanning ACPI tables...\n");
+    const kernel_console = &console.primary;
+    kernel_console.puts("Scanning ACPI tables...\n");
     const ebda_short_ptr: *const u16 = @ptrFromInt(0x40E);
     const ebda_addr = @as(usize, ebda_short_ptr.*) << 4;
     const rsdp_from_ebda = if (ebda_addr != 0 and ebda_addr < 0x000A_0000)
@@ -136,20 +138,20 @@ pub fn init() void {
         rsdp_from_ebda orelse
         scanRange(0x000E_0000, 0x0010_0000) orelse
         @panic("ACPI RSDP not found");
-    console.put(.{ "RSDP OEMID: ", &rsdp.oemid, " revision: ", rsdp.revision, " RSDT address: ", rsdp.rsdt_address, "\n" });
+    kernel_console.put(.{ "RSDP OEMID: ", &rsdp.oemid, " revision: ", rsdp.revision, " RSDT address: ", rsdp.rsdt_address, "\n" });
 
     rsdt = mapTable(rsdp.rsdt_address);
 
     const rsdt_entries: [*]u32 = @ptrFromInt(@intFromPtr(rsdt) + @sizeOf(SDTHeader));
     const num_entries = (rsdt.length - @sizeOf(SDTHeader)) / 4;
 
-    console.put(.{ "RSDT OEMID: ", &rsdt.oemid, " revision: ", rsdt.revision, " num entries: ", num_entries, "\n" });
+    kernel_console.put(.{ "RSDT OEMID: ", &rsdt.oemid, " revision: ", rsdt.revision, " num entries: ", num_entries, "\n" });
     for (rsdt_entries[0..num_entries]) |entry_phys_ptr| {
         const entry_header = mapTable(entry_phys_ptr);
-        console.put(.{ "  Entry: ", &entry_header.signature, " OEMID: ", &entry_header.oemid, " length: ", entry_header.length, " revision: ", entry_header.revision, "\n" });
+        kernel_console.put(.{ "  Entry: ", &entry_header.signature, " OEMID: ", &entry_header.oemid, " length: ", entry_header.length, " revision: ", entry_header.revision, "\n" });
         if (std.mem.eql(u8, entry_header.signature[0..4], "APIC")) {
             madt = @ptrCast(entry_header);
-            console.put(.{ "    MADT found: local APIC address: ", madt.?.local_apic_address, " flags: ", madt.?.flags, "\n" });
+            kernel_console.put(.{ "    MADT found: local APIC address: ", madt.?.local_apic_address, " flags: ", madt.?.flags, "\n" });
             apic.parseApicEntries(madt.?);
         }
     }
