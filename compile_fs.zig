@@ -45,7 +45,7 @@ fn importDirectory(
                 defer init.gpa.free(child_relative_path);
 
                 try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
-                const child_inode = try disk_fs.createDirectory(fs_dir_inode, entry.name);
+                const child_inode = try disk_fs.createDirectoryAt(fs_dir_inode, entry.name);
                 counts.directories += 1;
                 try importDirectory(init, stdout, disk_fs, child_host_path, child_inode, child_relative_path, counts);
             },

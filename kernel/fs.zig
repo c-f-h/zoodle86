@@ -396,8 +396,15 @@ pub const FileSystem = struct {
         return self.createFileInternal(dir_inode_index, name, InodeKind.File, 0);
     }
 
+    /// Creates a new directory with the given full path and returns its inode index.
+    pub fn createDirectory(self: *FileSystem, path: []const u8) FsError!InodeT {
+        const split = splitPath(path);
+        const dir_inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, split.dir);
+        return self.createDirectoryAt(dir_inode_index, split.name);
+    }
+
     /// Creates a new empty directory in the given directory and returns its inode index.
-    pub fn createDirectory(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
+    pub fn createDirectoryAt(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
         return self.createFileInternal(dir_inode_index, name, InodeKind.Directory, ROOT_DIRECTORY_BYTES);
     }
 
@@ -529,16 +536,6 @@ pub const FileSystem = struct {
         if (path.len == 1 and path[0] == '/') return ROOT_INODE_INDEX;
         _, _, const entry = try self.walkFilePathToDirEntry(dir_inode_index, path);
         return entry.inode_index;
-    }
-
-    fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } {
-        const trimmed = std.mem.trimEnd(u8, path, "/");
-        const last_slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');
-        if (last_slash) |idx| {
-            return .{ .dir = trimmed[0..idx], .name = trimmed[idx + 1 ..] };
-        } else {
-            return .{ .dir = &.{}, .name = trimmed };
-        }
     }
 
     /// Deletes a regular file from the given directory and frees its inode and blocks.
@@ -1108,4 +1105,14 @@ fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsErro
     if (entry.inode_index >= inode_count) return error.Corrupt;
     if (entry.name_len == 0 or entry.name_len > FILENAME_MAX_LEN) return error.Corrupt;
     if (!validateName(entry.name[0..entry.name_len])) return error.Corrupt;
+}
+
+pub fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } {
+    const trimmed = std.mem.trimEnd(u8, path, "/");
+    const last_slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');
+    if (last_slash) |idx| {
+        return .{ .dir = trimmed[0..idx], .name = trimmed[idx + 1 ..] };
+    } else {
+        return .{ .dir = &.{}, .name = trimmed };
+    }
 }

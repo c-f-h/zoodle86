@@ -12,11 +12,12 @@ inline fn expectSyscall(rc: u32, comptime step: []const u8, comptime callsite: s
     return rc;
 }
 
-const stress_file_a = "fdstrs_a.txt";
-const stress_file_b = "fdstrs_b.txt";
-const seek_file = "seek.txt";
-const sparse_seek_file = "sparse_seek.txt";
-const unlink_file = "unlink.txt";
+const tmpdir = "/tmp";
+const stress_file_a = tmpdir ++ "/fdstrs_a.txt";
+const stress_file_b = tmpdir ++ "/fdstrs_b.txt";
+const seek_file = tmpdir ++ "/seek.txt";
+const sparse_seek_file = tmpdir ++ "/sparse_seek.txt";
+const unlink_file = tmpdir ++ "/unlink.txt";
 const nonexistent_file = "nonexistent.txt";
 const sector_size = 512;
 const chunk_size = 640;
@@ -208,6 +209,8 @@ pub fn main(argv: []const []const u8) !void {
     _ = argv;
     var buf: [96]u8 = undefined;
     _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
+
+    _ = sys.mkdir(tmpdir) catch {}; // on error, assume tmp exists
 
     const create_flags: sys.FileOpenFlags = .{
         .open_mode = .ReadWrite,

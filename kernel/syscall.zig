@@ -17,6 +17,7 @@ const Syscall = enum(u32) {
     GetPid = 39,
     Exit = 60,
     WaitPid = 61,
+    Mkdir = 83,
     Unlink = 87,
     Spawn = 1001,
     SetChildReap = 1002,
@@ -201,6 +202,11 @@ fn sys_waitpid(pid: u32) u32 {
     kernel.reschedule(); // does not return; exit handler will call setSyscallReturn() and set state=active
 }
 
+fn sys_mkdir(path_slice_va: u32) u32 {
+    const path = task.getCurrentTask().readUserSlice(u8, path_slice_va) catch |err| return mapError(err);
+    return kernel.getFileSystem().createDirectory(path) catch |err| mapError(err);
+}
+
 /// Marks the current task so that all its children are auto-reaped on exit
 /// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
 fn sys_set_child_reap() u32 {
@@ -225,6 +231,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Write => sys_write(arg1, arg2, arg3),
         .Unlink => sys_unlink(arg1, arg2),
         .WaitPid => sys_waitpid(arg1),
+        .Mkdir => sys_mkdir(arg1),
         .SetChildReap => sys_set_child_reap(),
         .Yield => kernel.reschedule(),
         .Spawn => sys_spawn(arg1),

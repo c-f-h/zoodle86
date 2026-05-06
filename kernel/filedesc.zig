@@ -56,9 +56,12 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
 
-    const inode_index = try disk_fs.findFileInodeIndex(fs.ROOT_INODE_INDEX, path) orelse blk: {
+    const split = fs.splitPath(path);
+    const parent_inode = try disk_fs.walkFilePathToInode(fs.ROOT_INODE_INDEX, split.dir);
+
+    const inode_index = try disk_fs.findFileInodeIndex(parent_inode, split.name) orelse blk: {
         if ((flags & O_CREAT) == 0) return error.FileNotFound;
-        break :blk try disk_fs.createFile(fs.ROOT_INODE_INDEX, path);
+        break :blk try disk_fs.createFile(parent_inode, split.name);
     };
 
     if ((flags & O_TRUNC) != 0) {

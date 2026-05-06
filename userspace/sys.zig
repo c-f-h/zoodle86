@@ -12,6 +12,13 @@ pub const AbiSlice = extern struct {
     fn toSlice(slice: *const AbiSlice, comptime T: type) []const T {
         return @as([*]const T, @ptrFromInt(slice.ptr))[0..slice.len];
     }
+
+    fn fromSlice(comptime T: type, s: []const T) AbiSlice {
+        return .{
+            .ptr = @intFromPtr(s.ptr),
+            .len = @intCast(s.len),
+        };
+    }
 };
 
 /// Maximum number of arguments supported in the argv startup array.
@@ -53,6 +60,7 @@ const Syscall = enum(u32) {
     GetPid = 39,
     Exit = 60,
     WaitPid = 61,
+    Mkdir = 83,
     Unlink = 87,
     Spawn = 1001,
     SetChildReap = 1002,
@@ -171,6 +179,13 @@ pub fn yield() void {
 /// Returns FAIL if the PID is not a child of the calling process.
 pub fn waitpid(pid: u32) u32 {
     return syscall(.WaitPid, pid, 0, 0);
+}
+
+pub fn mkdir(path: []const u8) !void {
+    const path_abi = AbiSlice.fromSlice(u8, path);
+    if (syscall(.Mkdir, @intFromPtr(&path_abi), 0, 0) == FAIL) {
+        return error.MkdirFailed;
+    }
 }
 
 /// Marks the calling process so all its children are auto-reaped on exit

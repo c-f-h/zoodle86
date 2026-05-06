@@ -55,6 +55,10 @@ def main() -> int:
     if not root.is_dir():
         print(f"Expected directory, got: {root}")
         return 2
+    root = root / "tmp"
+    if not root.is_dir():
+        print(f"Did not find /tmp directory in extracted path")
+        return 2
 
     for name, tag in EXPECTED_FILES.items():
         path = root / name

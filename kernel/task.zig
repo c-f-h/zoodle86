@@ -345,6 +345,12 @@ pub const Task = struct {
         return @ptrFromInt(va);
     }
 
+    /// Assumes that va points to an AbiSlice of type T within user memory and returns a pointer to its data.
+    pub fn readUserSlice(task: *Task, comptime T: type, va: u32) UserMemError![]T {
+        const slice = try task.getUserPtr(AbiSlice, va);
+        return task.getUserSlice(T, slice.ptr, slice.len);
+    }
+
     /// Updates the active CPU TSS to use this task's kernel stack.
     fn updateTss(task: *Task, tss: *gdt.Tss) void {
         const stack_top = @intFromPtr(&task.kernel_stack) + @sizeOf(KernelStack);
