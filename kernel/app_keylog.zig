@@ -6,90 +6,93 @@ const VGA_ATTR: u8 = 0x07;
 
 /// Handle keyboard events and log them to console
 fn appKeylogKeyhandler(ctx: ?*anyopaque, ev: *const keyboard.KeyEvent) u32 {
-    _ = ctx;
+    const con: *console.Console = @ptrCast(@alignCast(ctx.?));
     // Print press/release status
-    console.puts(if (ev.pressed != 0) "Down: " else "Up:   ");
+    con.puts(if (ev.pressed != 0) "Down: " else "Up:   ");
 
     // Print ASCII character if available
     if (ev.ascii != 0) {
-        console.putch('\'');
-        console.setAttr(0x0f);
+        con.putch('\'');
+        con.setAttr(0x0f);
         if (ev.ascii == '\n') {
-            console.putch('\\');
-            console.putch('n');
+            con.putch('\\');
+            con.putch('n');
         } else {
-            console.putch(ev.ascii);
+            con.putch(ev.ascii);
         }
-        console.setAttr(VGA_ATTR);
-        console.putch('\'');
+        con.setAttr(VGA_ATTR);
+        con.putch('\'');
     } else if (keyboard.keycodeName(ev.keycode)) |name| {
         // Print key name if available
-        console.setAttr(0x0f);
+        con.setAttr(0x0f);
         // Output each character of the name until null terminator
         var i: usize = 0;
         while (name[i] != 0) : (i += 1) {
-            console.putch(name[i]);
+            con.putch(name[i]);
         }
-        console.setAttr(VGA_ATTR);
+        con.setAttr(VGA_ATTR);
     } else {
         // Print hex keycode
-        console.puts("keycode 0x");
-        console.setAttr(0x0f);
-        console.putHexU16(ev.keycode);
-        console.setAttr(VGA_ATTR);
+        con.puts("keycode 0x");
+        con.setAttr(0x0f);
+        con.putHexU16(ev.keycode);
+        con.setAttr(VGA_ATTR);
     }
-    console.newline();
+    con.newline();
 
     // Print raw scancode
-    console.puts("Raw:     ");
+    con.puts("Raw:     ");
     if ((ev.keycode & keyboard.VK_EXTENDED) != 0) {
-        console.puts("0xE0 ");
+        con.puts("0xE0 ");
     }
-    console.puts("0x");
-    console.setAttr(0x0f);
-    console.putHexU8(ev.scancode);
-    console.setAttr(VGA_ATTR);
-    console.newline();
+    con.puts("0x");
+    con.setAttr(0x0f);
+    con.putHexU8(ev.scancode);
+    con.setAttr(VGA_ATTR);
+    con.newline();
 
     // Print modifier keys
-    console.puts("Mods:    ");
-    console.setAttr(0x0f);
+    con.puts("Mods:    ");
+    con.setAttr(0x0f);
     if ((ev.modifiers & keyboard.MOD_SHIFT) != 0) {
-        console.puts("Shift ");
+        con.puts("Shift ");
     }
     if ((ev.modifiers & keyboard.MOD_ALT) != 0) {
-        console.puts("Alt ");
+        con.puts("Alt ");
     }
     if ((ev.modifiers & keyboard.MOD_CTRL) != 0) {
-        console.puts("Ctrl ");
+        con.puts("Ctrl ");
     } else if (ev.modifiers == 0) {
-        console.puts("-");
+        con.puts("-");
     }
-    console.setAttr(VGA_ATTR);
-    console.newline();
+    con.setAttr(VGA_ATTR);
+    con.newline();
 
     // Print IRQ count
-    console.puts("IRQs:    ");
-    console.setAttr(0x0f);
-    console.putDecU32(keyboard.keyboard_irq_count);
-    console.setAttr(VGA_ATTR);
-    console.newline();
+    con.puts("IRQs:    ");
+    con.setAttr(0x0f);
+    con.putDecU32(keyboard.keyboard_irq_count);
+    con.setAttr(VGA_ATTR);
+    con.newline();
 
     // Print overflow count
-    console.puts("Dropped: ");
-    console.setAttr(0x0f);
-    console.putDecU32(keyboard.keyboard_overflow_count);
-    console.setAttr(VGA_ATTR);
-    console.newline();
-    console.newline();
+    con.puts("Dropped: ");
+    con.setAttr(0x0f);
+    con.putDecU32(keyboard.keyboard_overflow_count);
+    con.setAttr(VGA_ATTR);
+    con.newline();
+    con.newline();
 
     return 0;
 }
 
 pub const Keylog = struct {
-    pub fn init(_: *Keylog) void {
-        kernel.setKeyboardHandler(appKeylogKeyhandler, null);
+    console: *console.Console,
+
+    pub fn init(self: *Keylog) void {
+        kernel.setKeyboardHandler(appKeylogKeyhandler, self.console);
     }
+
     pub fn deinit(_: *Keylog) void {
         kernel.clearKeyboardHandler();
     }

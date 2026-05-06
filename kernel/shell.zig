@@ -129,10 +129,9 @@ fn runAutoexec(shell: *Shell) !void {
 }
 
 fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     _ = args;
 
-    var app: app_keylog.Keylog = .{};
+    var app: app_keylog.Keylog = .{ .console = shell.console };
     app.init();
     defer app.deinit();
 
@@ -142,10 +141,9 @@ fn cmdKeylog(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdMemmap(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     _ = args;
 
-    var app: app_memmap.Memmap = .{};
+    var app: app_memmap.Memmap = .{ .console = shell.console };
     app.init();
     defer app.deinit();
 

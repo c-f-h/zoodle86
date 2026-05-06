@@ -3,7 +3,7 @@ const interrupt_frame = @import("interrupt_frame.zig");
 const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
-const console_mod = @import("console.zig");
+const console = @import("console.zig");
 const std = @import("std");
 
 const KERNEL_STACK_SIZE = 4096;
@@ -90,7 +90,7 @@ pub const Task = struct {
     fd_table: [MAX_FDS]FdSlot = [_]FdSlot{.{}} ** MAX_FDS,
 
     /// Console to use for stdout/stderr writes; null means use the primary console.
-    stdout_console: ?*console_mod.Console = null,
+    stdout_console: ?*console.Console = null,
 
     /// Initializes a fresh task slot and its initial userspace context.
     pub fn init(task: *Task) void {
