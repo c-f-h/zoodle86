@@ -376,7 +376,7 @@ fn kernel_enter() !noreturn {
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions.
-        vconsole.loadFont(alloc, &disk_fs, "/fonts/cp850-8x14.psf") catch |err| {
+        vconsole.loadFont(alloc, &disk_fs, "/fonts/ter-u14n.psf") catch |err| {
             console.put(.{ "Failed to load font (", @errorName(err), ").\n" });
         };
 
