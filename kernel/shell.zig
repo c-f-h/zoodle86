@@ -24,6 +24,7 @@ const ArgsIterator = std.mem.TokenIterator(u8, .any);
 const Shell = struct {
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
+    console: *console.Console,
 };
 
 const Command = struct {
@@ -62,12 +63,12 @@ fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
 
     if (findCommand(cmd_name)) |command| {
         command.handler(shell, &args) catch |err| {
-            printErrorDesc(err);
+            printErrorDesc(shell, err);
         };
     } else {
-        console.puts("Unknown command ");
-        console.puts(cmd_name);
-        console.newline();
+        shell.console.puts("Unknown command ");
+        shell.console.puts(cmd_name);
+        shell.console.newline();
     }
 }
 
@@ -76,13 +77,14 @@ pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
     var shell = Shell{
         .alloc = alloc,
         .disk_fs = disk_fs,
+        .console = &console.primary,
     };
 
     try runAutoexec(&shell);
 
     while (true) {
         var cmdline_buf = [1]u8{0} ** 128;
-        const cmdline = try readLineInto(&cmdline_buf);
+        const cmdline = try readLineInto(&shell, &cmdline_buf);
         try handleCommand(&shell, cmdline);
     }
 }
@@ -109,7 +111,7 @@ fn runAutoexec(shell: *Shell) !void {
     defer shell.alloc.free(script);
 
     if (autoexec_next_line_idx == 0) {
-        console.puts("Running autoexec.\n");
+        shell.console.puts("Running autoexec.\n");
     }
 
     var line_idx: usize = 0;
@@ -153,219 +155,213 @@ fn cmdMemmap(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdHelp(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     _ = args;
 
     for (commands) |command| {
-        console.puts(command.name);
-        console.puts(" - ");
-        console.puts(command.description);
-        console.newline();
+        shell.console.puts(command.name);
+        shell.console.puts(" - ");
+        shell.console.puts(command.description);
+        shell.console.newline();
     }
 }
 
 fn cmdLs(shell: *Shell, args: *ArgsIterator) !void {
     const path = args.next() orelse &.{};
-    try listFiles(shell.disk_fs, path);
+    try listFiles(shell, shell.disk_fs, path);
 }
 
 fn cmdCat(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        try catFile(shell.alloc, shell.disk_fs, name);
+        try catFile(shell, shell.alloc, shell.disk_fs, name);
     } else {
-        printUsage("cat");
+        printUsage(shell, "cat");
     }
 }
 
 fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        try writeFileFromConsole(shell.alloc, shell.disk_fs, name);
+        try writeFileFromConsole(shell, shell.alloc, shell.disk_fs, name);
     } else {
-        printUsage("write");
+        printUsage(shell, "write");
     }
 }
 
 fn cmdRm(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        try deleteFile(shell.disk_fs, name);
+        try deleteFile(shell, shell.disk_fs, name);
     } else {
-        printUsage("rm");
+        printUsage(shell, "rm");
     }
 }
 
 fn cmdMv(shell: *Shell, args: *ArgsIterator) !void {
     const old_name = args.next() orelse {
-        printUsage("mv");
+        printUsage(shell, "mv");
         return;
     };
     const new_name = args.next() orelse {
-        printUsage("mv");
+        printUsage(shell, "mv");
         return;
     };
-    try renameFile(shell.disk_fs, old_name, new_name);
+    try renameFile(shell, shell.disk_fs, old_name, new_name);
 }
 
 fn cmdCpuid(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
-
     const leaf_arg = args.next();
     if (leaf_arg) |raw_leaf| {
         const leaf = parseNumericArg(raw_leaf) catch {
-            printUsage("cpuid");
+            printUsage(shell, "cpuid");
             return;
         };
         const subleaf = if (args.next()) |raw_subleaf|
             parseNumericArg(raw_subleaf) catch {
-                printUsage("cpuid");
+                printUsage(shell, "cpuid");
                 return;
             }
         else
             0;
         if (args.next() != null) {
-            printUsage("cpuid");
+            printUsage(shell, "cpuid");
             return;
         }
-        printCpuidLeaf(leaf, subleaf);
+        printCpuidLeaf(shell, leaf, subleaf);
         return;
     }
 
     const vendor = cpuid.vendorInfo();
-    console.puts("CPUID vendor: ");
-    console.puts(vendor.vendor[0..]);
-    console.newline();
+    shell.console.puts("CPUID vendor: ");
+    shell.console.puts(vendor.vendor[0..]);
+    shell.console.newline();
 
-    console.puts("Max basic leaf: ");
-    console.putHexU32(vendor.max_basic_leaf);
-    console.newline();
+    shell.console.puts("Max basic leaf: ");
+    shell.console.putHexU32(vendor.max_basic_leaf);
+    shell.console.newline();
 
     const max_extended = cpuid.maxExtendedLeaf();
-    console.puts("Max extended leaf: ");
-    console.putHexU32(max_extended);
-    console.newline();
+    shell.console.puts("Max extended leaf: ");
+    shell.console.putHexU32(max_extended);
+    shell.console.newline();
 
     if (vendor.max_basic_leaf >= 0x01) {
         const leaf1 = cpuid.query(0x01, 0);
-        console.puts("Local APIC present: ");
-        console.puts(if ((leaf1.edx & (1 << 9)) != 0) "yes" else "no");
-        console.newline();
+        shell.console.puts("Local APIC present: ");
+        shell.console.puts(if ((leaf1.edx & (1 << 9)) != 0) "yes" else "no");
+        shell.console.newline();
     }
 
     if (vendor.max_basic_leaf >= 0x15) {
         const leaf15 = cpuid.query(0x15, 0);
-        console.put(.{ "Leaf 00000015: eax=", leaf15.eax, " ebx=", leaf15.ebx, " ecx=", leaf15.ecx, " edx=", leaf15.edx, "\n" });
+        shell.console.put(.{ "Leaf 00000015: eax=", leaf15.eax, " ebx=", leaf15.ebx, " ecx=", leaf15.ecx, " edx=", leaf15.edx, "\n" });
 
         if (leaf15.eax != 0 and leaf15.ebx != 0) {
-            console.puts("  TSC/crystal ratio: ");
-            console.putDecU32(leaf15.ebx);
-            console.puts("/");
-            console.putDecU32(leaf15.eax);
-            console.newline();
+            shell.console.puts("  TSC/crystal ratio: ");
+            shell.console.putDecU32(leaf15.ebx);
+            shell.console.puts("/");
+            shell.console.putDecU32(leaf15.eax);
+            shell.console.newline();
         }
         if (leaf15.ecx != 0) {
-            console.puts("  Crystal clock (Hz): ");
-            console.putDecU32(leaf15.ecx);
-            console.newline();
+            shell.console.puts("  Crystal clock (Hz): ");
+            shell.console.putDecU32(leaf15.ecx);
+            shell.console.newline();
         }
     } else {
-        console.puts("Leaf 00000015 not supported.\n");
+        shell.console.puts("Leaf 00000015 not supported.\n");
     }
 
     if (vendor.max_basic_leaf >= 0x16) {
         const leaf16 = cpuid.query(0x16, 0);
-        console.put(.{ "Leaf 00000016: eax=", leaf16.eax, " ebx=", leaf16.ebx, " ecx=", leaf16.ecx, " edx=", leaf16.edx, "\n" });
+        shell.console.put(.{ "Leaf 00000016: eax=", leaf16.eax, " ebx=", leaf16.ebx, " ecx=", leaf16.ecx, " edx=", leaf16.edx, "\n" });
 
         if (leaf16.eax != 0) {
-            console.puts("  Base frequency (MHz): ");
-            console.putDecU32(leaf16.eax);
-            console.newline();
+            shell.console.puts("  Base frequency (MHz): ");
+            shell.console.putDecU32(leaf16.eax);
+            shell.console.newline();
         }
         if (leaf16.ebx != 0) {
-            console.puts("  Max frequency (MHz): ");
-            console.putDecU32(leaf16.ebx);
-            console.newline();
+            shell.console.puts("  Max frequency (MHz): ");
+            shell.console.putDecU32(leaf16.ebx);
+            shell.console.newline();
         }
         if (leaf16.ecx != 0) {
-            console.puts("  Bus/reference frequency (MHz): ");
-            console.putDecU32(leaf16.ecx);
-            console.newline();
+            shell.console.puts("  Bus/reference frequency (MHz): ");
+            shell.console.putDecU32(leaf16.ecx);
+            shell.console.newline();
         }
     } else {
-        console.puts("Leaf 00000016 not supported.\n");
+        shell.console.puts("Leaf 00000016 not supported.\n");
     }
 }
 
 fn cmdMkfs(shell: *Shell, args: *ArgsIterator) !void {
     _ = args;
     try shell.disk_fs.format();
-    console.puts("Filesystem reformatted.\n");
+    shell.console.puts("Filesystem reformatted.\n");
 }
 
 fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     if (args.next()) |addr_str| {
         if (std.fmt.parseInt(u32, addr_str, 16)) |addr| {
-            console.dumpMem(addr, 16);
+            shell.console.dumpMem(addr, 16);
         } else |_| {
-            console.puts("Enter a hex address.\n");
+            shell.console.puts("Enter a hex address.\n");
         }
     } else {
-        printUsage("dumpmem");
+        printUsage(shell, "dumpmem");
     }
 }
 
-fn printPageUsage(page_count: usize, page_size_bytes: usize) void {
-    console.putDecU32(@intCast(page_count));
-    console.puts(" pages (");
-    console.putDecU32(@intCast((page_count * page_size_bytes) / 1024));
-    console.puts(" KiB)");
+fn printPageUsage(shell: *Shell, page_count: usize, page_size_bytes: usize) void {
+    shell.console.putDecU32(@intCast(page_count));
+    shell.console.puts(" pages (");
+    shell.console.putDecU32(@intCast((page_count * page_size_bytes) / 1024));
+    shell.console.puts(" KiB)");
 }
 
 fn cmdMemstat(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     if (args.next() != null) {
-        printUsage("memstat");
+        printUsage(shell, "memstat");
         return;
     }
 
     const stats = pageallocator.getStats();
     const used_pages = stats.total_pages - stats.free_pages;
 
-    console.puts("Page allocator:\n");
-    console.puts("  range: ");
-    console.putHexU32(@intCast(stats.managed_start));
-    console.puts("..");
-    console.putHexU32(@intCast(stats.managed_end));
-    console.newline();
+    shell.console.puts("Page allocator:\n");
+    shell.console.puts("  range: ");
+    shell.console.putHexU32(@intCast(stats.managed_start));
+    shell.console.puts("..");
+    shell.console.putHexU32(@intCast(stats.managed_end));
+    shell.console.newline();
 
-    console.puts("  total: ");
-    printPageUsage(stats.total_pages, stats.page_size_bytes);
-    console.newline();
+    shell.console.puts("  total: ");
+    printPageUsage(shell, stats.total_pages, stats.page_size_bytes);
+    shell.console.newline();
 
-    console.puts("  used : ");
-    printPageUsage(used_pages, stats.page_size_bytes);
-    console.newline();
+    shell.console.puts("  used : ");
+    printPageUsage(shell, used_pages, stats.page_size_bytes);
+    shell.console.newline();
 
-    console.puts("  free : ");
-    printPageUsage(stats.free_pages, stats.page_size_bytes);
-    console.newline();
+    shell.console.puts("  free : ");
+    printPageUsage(shell, stats.free_pages, stats.page_size_bytes);
+    shell.console.newline();
 
-    console.puts("  word[");
-    console.putDecU32(@intCast(stats.current_word_index));
-    console.puts("]: ");
-    console.putBinaryU32(stats.current_word_bits);
-    console.newline();
+    shell.console.puts("  word[");
+    shell.console.putDecU32(@intCast(stats.current_word_index));
+    shell.console.puts("]: ");
+    shell.console.putBinaryU32(stats.current_word_bits);
+    shell.console.newline();
 }
 
 fn cmdTaskSwitch(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     if (args.next() != null) {
-        printUsage("taskswitch");
+        printUsage(shell, "taskswitch");
         return;
     }
 
-    console.puts("Task switches: ");
-    console.putDecU32(kernel.getTaskSwitchCount());
-    console.newline();
+    shell.console.puts("Task switches: ");
+    shell.console.putDecU32(kernel.getTaskSwitchCount());
+    shell.console.newline();
 }
 
 fn cmdTicks(shell: *Shell, args: *ArgsIterator) !void {
@@ -384,96 +380,90 @@ fn cmdTicks(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdProfile(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
-
     const action = args.next() orelse {
-        printUsage("profile");
+        printUsage(shell, "profile");
         return;
     };
 
     if (args.next() != null) {
-        printUsage("profile");
+        printUsage(shell, "profile");
         return;
     }
 
     if (std.mem.eql(u8, action, "start")) {
         kprof.start() catch |err| {
             switch (err) {
-                error.AlreadyRunning => console.puts("Profiler already running.\n"),
-                error.NotInitialized => console.puts("Profiler not initialized.\n"),
-                error.OutOfMemory => console.puts("Profiler could not allocate sampling page(s).\n"),
+                error.AlreadyRunning => shell.console.puts("Profiler already running.\n"),
+                error.NotInitialized => shell.console.puts("Profiler not initialized.\n"),
+                error.OutOfMemory => shell.console.puts("Profiler could not allocate sampling page(s).\n"),
                 else => return err,
             }
             return;
         };
-        console.puts("Profiler started.\n");
+        shell.console.puts("Profiler started.\n");
         return;
     }
 
     if (std.mem.eql(u8, action, "stop")) {
         kprof.stop() catch |err| {
             switch (err) {
-                error.NotRunning => console.puts("Profiler is not running.\n"),
-                error.NotInitialized => console.puts("Profiler not initialized.\n"),
-                error.OutOfMemory => console.puts("Profiler aggregation ran out of memory.\n"),
+                error.NotRunning => shell.console.puts("Profiler is not running.\n"),
+                error.NotInitialized => shell.console.puts("Profiler not initialized.\n"),
+                error.OutOfMemory => shell.console.puts("Profiler aggregation ran out of memory.\n"),
                 else => return err,
             }
             return;
         };
-        console.puts("Profiler stopped; histogram written to serial.\n");
+        shell.console.puts("Profiler stopped; histogram written to serial.\n");
         return;
     }
 
-    printUsage("profile");
+    printUsage(shell, "profile");
 }
 
 fn cmdFontbench(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
-
     const raw_count = args.next() orelse {
-        printUsage("fontbench");
+        printUsage(shell, "fontbench");
         return;
     };
     const iterations = parseNumericArg(raw_count) catch {
-        printUsage("fontbench");
+        printUsage(shell, "fontbench");
         return;
     };
     if (args.next() != null) {
-        printUsage("fontbench");
+        printUsage(shell, "fontbench");
         return;
     }
     if (iterations == 0) {
-        console.puts("fontbench count must be at least 1.\n");
+        shell.console.puts("fontbench count must be at least 1.\n");
         return;
     }
 
-    console.stressWrite(iterations);
+    shell.console.stressWrite(iterations);
 }
 
 fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
-
     const state = args.next() orelse {
-        console.puts("Serial mirroring is ");
-        console.puts(if (console.isSerialMirrorEnabled()) "on.\n" else "off.\n");
-        printUsage("serial");
+        shell.console.puts("Serial mirroring is ");
+        shell.console.puts(if (shell.console.isSerialMirrorEnabled()) "on.\n" else "off.\n");
+        printUsage(shell, "serial");
         return;
     };
 
     if (std.mem.eql(u8, state, "on")) {
-        console.setSerialMirrorEnabled(true);
-        console.puts("Serial mirroring enabled.\n");
+        shell.console.setSerialMirrorEnabled(true);
+        shell.console.puts("Serial mirroring enabled.\n");
     } else if (std.mem.eql(u8, state, "off")) {
-        console.setSerialMirrorEnabled(false);
-        console.puts("Serial mirroring disabled.\n");
+        shell.console.setSerialMirrorEnabled(false);
+        shell.console.puts("Serial mirroring disabled.\n");
     } else {
-        printUsage("serial");
+        printUsage(shell, "serial");
     }
 }
 
-fn tryLoadProgram(fname: []const u8, argv: []const []const u8) ?*task.Task {
+fn tryLoadProgram(shell: *Shell, fname: []const u8, argv: []const []const u8) ?*task.Task {
     const ptask = kernel.loadUserspaceElf(fname, argv) catch |err| {
-        console.put(.{ "Failed to load ", fname, ": ", kernel.getErrorDesc(err), "\n" });
+        shell.console.put(.{ "Failed to load ", fname, ": ", kernel.getErrorDesc(err), "\n" });
         return null;
     };
     if (kernel.secondary_console.vconsole_instance != null) {
@@ -483,22 +473,21 @@ fn tryLoadProgram(fname: []const u8, argv: []const []const u8) ?*task.Task {
 }
 
 fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     const raw_count = args.next() orelse {
-        console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
+        shell.console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
         return;
     };
     const copy_count = parseNumericArg(raw_count) catch {
-        console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
+        shell.console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
         return;
     };
     const fname = args.next() orelse {
-        console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
+        shell.console.puts("Usage: multirun <count> <executable> [<arg> ...]\n");
         return;
     };
 
     if (copy_count == 0) {
-        console.puts("multirun count must be at least 1.\n");
+        shell.console.puts("multirun count must be at least 1.\n");
         return;
     }
 
@@ -509,7 +498,7 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     argc += 1;
     while (args.next()) |arg| {
         if (argc >= argv_buf.len) {
-            console.puts("Too many arguments.\n");
+            shell.console.puts("Too many arguments.\n");
             return;
         }
         argv_buf[argc] = arg;
@@ -519,7 +508,7 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     var first_task: ?*task.Task = null;
     var remaining = copy_count;
     while (remaining != 0) : (remaining -= 1) {
-        if (tryLoadProgram(fname, argv_buf[0..argc])) |ptask| {
+        if (tryLoadProgram(shell, fname, argv_buf[0..argc])) |ptask| {
             if (first_task == null) first_task = ptask;
         } else {
             return;
@@ -530,9 +519,8 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
-    _ = shell;
     const fname = args.next() orelse {
-        console.puts("Usage: run <executable> [<arg> ...]\n");
+        shell.console.puts("Usage: run <executable> [<arg> ...]\n");
         return;
     };
 
@@ -543,14 +531,14 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     argc += 1;
     while (args.next()) |arg| {
         if (argc >= argv_buf.len) {
-            console.puts("Too many arguments.\n");
+            shell.console.puts("Too many arguments.\n");
             return;
         }
         argv_buf[argc] = arg;
         argc += 1;
     }
 
-    if (tryLoadProgram(fname, argv_buf[0..argc])) |ptask| {
+    if (tryLoadProgram(shell, fname, argv_buf[0..argc])) |ptask| {
         kernel.run(ptask);
     }
 }
@@ -576,43 +564,43 @@ fn parseNumericArg(raw: []const u8) !u32 {
     return try std.fmt.parseInt(u32, raw, 10);
 }
 
-fn printCpuidLeaf(leaf: u32, subleaf: u32) void {
+fn printCpuidLeaf(shell: *Shell, leaf: u32, subleaf: u32) void {
     const regs = cpuid.query(leaf, subleaf);
-    console.put(.{ "CPUID ", leaf, ":", subleaf, " -> eax=", regs.eax, " ebx=", regs.ebx, " ecx=", regs.ecx, " edx=", regs.edx, "\n" });
+    shell.console.put(.{ "CPUID ", leaf, ":", subleaf, " -> eax=", regs.eax, " ebx=", regs.ebx, " ecx=", regs.ecx, " edx=", regs.edx, "\n" });
 }
 
-fn printUsage(name: []const u8) void {
+fn printUsage(shell: *Shell, name: []const u8) void {
     if (findCommand(name)) |command| {
-        console.puts("Usage: ");
-        console.puts(command.name);
+        shell.console.puts("Usage: ");
+        shell.console.puts(command.name);
         if (std.mem.eql(u8, command.name, "cat")) {
-            console.puts(" <name>");
+            shell.console.puts(" <name>");
         } else if (std.mem.eql(u8, command.name, "write")) {
-            console.puts(" <name>");
+            shell.console.puts(" <name>");
         } else if (std.mem.eql(u8, command.name, "rm")) {
-            console.puts(" <name>");
+            shell.console.puts(" <name>");
         } else if (std.mem.eql(u8, command.name, "mv")) {
-            console.puts(" <old> <new>");
+            shell.console.puts(" <old> <new>");
         } else if (std.mem.eql(u8, command.name, "cpuid")) {
-            console.puts(" [<leaf> [<subleaf>]]");
+            shell.console.puts(" [<leaf> [<subleaf>]]");
         } else if (std.mem.eql(u8, command.name, "dumpmem")) {
-            console.puts(" <hex-address>");
+            shell.console.puts(" <hex-address>");
         } else if (std.mem.eql(u8, command.name, "memstat")) {
-            console.puts(" (no arguments)");
+            shell.console.puts(" (no arguments)");
         } else if (std.mem.eql(u8, command.name, "taskswitch")) {
-            console.puts(" (no arguments)");
+            shell.console.puts(" (no arguments)");
         } else if (std.mem.eql(u8, command.name, "profile")) {
-            console.puts(" <start|stop>");
+            shell.console.puts(" <start|stop>");
         } else if (std.mem.eql(u8, command.name, "fontbench")) {
-            console.puts(" <count>");
+            shell.console.puts(" <count>");
         } else if (std.mem.eql(u8, command.name, "serial")) {
-            console.puts(" <on|off>");
+            shell.console.puts(" <on|off>");
         }
-        console.puts("\n");
+        shell.console.puts("\n");
     }
 }
 
-fn readLineInto(buf: []u8) ![]u8 {
+fn readLineInto(shell: *Shell, buf: []u8) ![]u8 {
     var rl: readline.ReadlineApp = .{};
     rl.init();
     defer rl.deinit();
@@ -620,7 +608,7 @@ fn readLineInto(buf: []u8) ![]u8 {
     while (!rl.done) {
         keyboard.pollingLoop();
     }
-    console.newline();
+    shell.console.newline();
 
     const line = rl.readline.result();
     if (line.len > buf.len) {
@@ -632,7 +620,7 @@ fn readLineInto(buf: []u8) ![]u8 {
     return buf[0..copy_len];
 }
 
-fn listFiles(disk_fs: *fs.FileSystem, path: []const u8) !void {
+fn listFiles(shell: *Shell, disk_fs: *fs.FileSystem, path: []const u8) !void {
     var found_any = false;
     var index: usize = 0;
     var buf: [128]u8 = undefined;
@@ -647,26 +635,27 @@ fn listFiles(disk_fs: *fs.FileSystem, path: []const u8) !void {
                 if (info.is_directory) "(DIR)" else ".....",
                 info.size_bytes,
             });
-            console.puts(str);
+            shell.console.puts(str);
         }
     }
 
     if (!found_any) {
-        console.puts("(empty)\n");
+        shell.console.puts("(empty)\n");
     }
 }
 
-fn catFile(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
+fn catFile(shell: *Shell, alloc: std.mem.Allocator, disk_fs: *fs.FileSystem, name: []const u8) !void {
     const data = try disk_fs.readFile(alloc, name);
     defer alloc.free(data);
 
-    console.puts(data);
+    shell.console.puts(data);
     if (data.len == 0 or data[data.len - 1] != '\n') {
-        console.newline();
+        shell.console.newline();
     }
 }
 
 fn writeFileFromConsole(
+    shell: *Shell,
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
     path: []const u8,
@@ -674,11 +663,11 @@ fn writeFileFromConsole(
     var contents: std.ArrayList(u8) = .empty;
     defer contents.deinit(alloc);
 
-    console.puts("Enter file contents. Single '.' line saves.\n");
+    shell.console.puts("Enter file contents. Single '.' line saves.\n");
 
     while (true) {
         var buf = [1]u8{0} ** 128;
-        const line = try readLineInto(&buf);
+        const line = try readLineInto(shell, &buf);
         if (line.len == 1 and line[0] == '.') break;
         try contents.appendSlice(alloc, line);
         try contents.append(alloc, '\n');
@@ -686,30 +675,30 @@ fn writeFileFromConsole(
 
     try disk_fs.writeFile(path, contents.items);
 
-    console.puts("Wrote ");
-    console.puts(path);
-    console.puts(".\n");
+    shell.console.puts("Wrote ");
+    shell.console.puts(path);
+    shell.console.puts(".\n");
 }
 
-fn deleteFile(disk_fs: *fs.FileSystem, name: []const u8) !void {
+fn deleteFile(shell: *Shell, disk_fs: *fs.FileSystem, name: []const u8) !void {
     try filedesc.unlinkFile(disk_fs, name);
 
-    console.puts("Deleted ");
-    console.puts(name);
-    console.puts(".\n");
+    shell.console.puts("Deleted ");
+    shell.console.puts(name);
+    shell.console.puts(".\n");
 }
 
-fn renameFile(disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u8) !void {
+fn renameFile(shell: *Shell, disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u8) !void {
     try disk_fs.renameFile(old_name, new_name);
 
-    console.puts("Renamed ");
-    console.puts(old_name);
-    console.puts(" to ");
-    console.puts(new_name);
-    console.puts(".\n");
+    shell.console.puts("Renamed ");
+    shell.console.puts(old_name);
+    shell.console.puts(" to ");
+    shell.console.puts(new_name);
+    shell.console.puts(".\n");
 }
 
-fn printErrorDesc(err: anyerror) void {
-    console.puts(kernel.getErrorDesc(err));
-    console.newline();
+fn printErrorDesc(shell: *Shell, err: anyerror) void {
+    shell.console.puts(kernel.getErrorDesc(err));
+    shell.console.newline();
 }
