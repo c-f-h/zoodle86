@@ -84,9 +84,9 @@ Complete listing of every source file and its role.
 - `build/stage2.elf`: linked from `kernel/stage2.zig` and `kernel/stage2_video_rm.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
-- `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `hello`.
-- `build/fib.elf`: linked from `userspace/fib.zig` and copied into the filesystem image as `fib`.
-- `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `fs_stress`.
-- `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `alloc_stress`.
+- `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `bin/hello`.
+- `build/fib.elf`: linked from `userspace/fib.zig` and copied into the filesystem image as `bin/fib`.
+- `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `bin/fs_stress`.
+- `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `bin/alloc_stress`.
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.

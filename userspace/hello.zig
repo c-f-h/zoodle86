@@ -8,7 +8,7 @@ pub fn main(argv: []const []const u8) !void {
     }
 
     const child_pid = if (argv.len > 2)
-        try sys.spawn("hello", &.{argv[2]})
+        try sys.spawn(argv[0], &.{argv[2]})
     else
         0;
 

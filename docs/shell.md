@@ -6,7 +6,7 @@ The kernel provides an interactive shell with the following commands:
 |---------|-----------|-------------|
 | **help** | (none) | List available commands. |
 | **keylog** | (none) | Run the key event logger. |
-| **ls** | (none) | List files in the filesystem. |
+| **ls** | `[<dir>]` | List files in the root or any other directory. |
 | **cat** | `<name>` | Print a file's contents. |
 | **write** | `<name>` | Write a file from console input. (Single `.` line saves.) |
 | **rm** | `<name>` | Delete a file. |
@@ -21,7 +21,7 @@ The kernel provides an interactive shell with the following commands:
 | **profile** | `<start\|stop>` | Control the kernel timer-tick EIP profiler. `start` begins sampling to page-backed buffers; `stop` writes a descending EIP count histogram to COM1. |
 | **fontbench** | `<count>` | Stress framebuffer font rendering without scrollback by drawing 1000 characters, restoring the original cursor position, and repeating the pass `count` times. |
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
-| **run** | `<executable> [<arg> ...]` | Run an ELF executable with command-line arguments. (argv[0] = executable name, plus optional args.) |
+| **run** | `<executable> [<arg> ...]` | Run an ELF executable with optional command-line arguments. |
 | **multirun** | `<count> <executable> [<arg> ...]` | Run `count` concurrent copies of one ELF executable, forwarding the same argv to each copy. |
 | **shutdown** | (none) | Power off Bochs/QEMU. |
 | **break** | (none) | Invoke a Bochs magic breakpoint. |
@@ -31,7 +31,7 @@ The kernel provides an interactive shell with the following commands:
 At boot, the shell executes an optional `autoexec` file from the filesystem before entering the interactive prompt. This allows automation of startup tasks. Inject a custom autoexec via SCons:
 
 ```sh
-scons run AUTOEXEC="serial on\nrun hello\nshutdown"
+scons run AUTOEXEC="serial on\nrun /bin/hello\nshutdown"
 ```
 
 End scripts with `shutdown` for a clean exit.

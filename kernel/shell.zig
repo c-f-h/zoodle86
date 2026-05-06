@@ -35,7 +35,7 @@ const Command = struct {
 const commands = [_]Command{
     .{ .name = "help", .description = "List available commands.", .handler = cmdHelp },
     .{ .name = "keylog", .description = "Run the key event logger.", .handler = cmdKeylog },
-    .{ .name = "ls", .description = "List files in the filesystem.", .handler = cmdLs },
+    .{ .name = "ls", .description = "List files in a directory.", .handler = cmdLs },
     .{ .name = "cat", .description = "Print a file's contents.", .handler = cmdCat },
     .{ .name = "write", .description = "Write a file from console input.", .handler = cmdWrite },
     .{ .name = "rm", .description = "Delete a file.", .handler = cmdRm },
@@ -50,7 +50,7 @@ const commands = [_]Command{
     .{ .name = "profile", .description = "Kernel EIP profiler control: profile start|stop.", .handler = cmdProfile },
     .{ .name = "fontbench", .description = "Stress font rendering without scrollback: fontbench <count>.", .handler = cmdFontbench },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
-    .{ .name = "run", .description = "Run an ELF executable with command-line arguments (argv[0] = executable name).", .handler = cmdRun },
+    .{ .name = "run", .description = "Run an ELF executable with command-line arguments.", .handler = cmdRun },
     .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },

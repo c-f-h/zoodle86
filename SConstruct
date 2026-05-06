@@ -327,10 +327,12 @@ def build_fs_image(target, source, env):
             ]
         )
 
-    # Inject each userspace binary into the filesystem image, dropping the .elf extension.
+    # Inject each userspace binary into the /bin directory, dropping the .elf extension.
+    bin_dir = FS_IMAGE_DIR / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
     for userspace_exe in source[0:len(USERSPACE_EXES)]:
         userspace_path = pathlib.Path(str(userspace_exe))
-        shutil.copy2(userspace_path, FS_IMAGE_DIR / userspace_path.stem)
+        shutil.copy2(userspace_path, bin_dir / userspace_path.stem)
 
     # Inject the kernel module as "kernel".
     kernel_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))
