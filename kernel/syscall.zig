@@ -97,7 +97,7 @@ fn sys_read(fd: u32, ofs: u32, count: u32) u32 {
 
 fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
     const data = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
-    return @intCast(filedesc.writeFile(kernel.getFileSystem(), kernel.getAllocator(), task.getCurrentTask(), fd, data) catch |err| return mapError(err));
+    return @intCast(filedesc.writeFile(kernel.getFileSystem(), task.getCurrentTask(), fd, data) catch |err| return mapError(err));
 }
 
 fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {

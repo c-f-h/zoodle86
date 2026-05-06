@@ -15,8 +15,10 @@ inline fn expectSyscall(rc: u32, comptime step: []const u8, comptime callsite: s
 const stress_file_a = "fdstrs_a.txt";
 const stress_file_b = "fdstrs_b.txt";
 const seek_file = "seek.txt";
+const sparse_seek_file = "sparse_seek.txt";
 const unlink_file = "unlink.txt";
 const nonexistent_file = "nonexistent.txt";
+const sector_size = 512;
 const chunk_size = 640;
 const chunk_count = 6;
 const total_bytes = chunk_size * chunk_count;
@@ -117,6 +119,61 @@ fn verifySeekSemantics() !void {
     try expectBytes(&actual, seek_expected);
 }
 
+// Writes several seed files with nonzero data, then deletes them.
+// This hardens the seeking test by ensuring that the disk contains sectors that must be explicitly zeroed.
+fn seedDiskWithNonzeroData() !void {
+    var seed: [sector_size]u8 = undefined;
+    var seed_name_buf: [10]u8 = undefined;
+    for (0..10) |seed_index| {
+        const seed_name = try std.fmt.bufPrint(&seed_name_buf, "seed{d:0>2}.txt", .{seed_index});
+        const seed_fd = try expectSyscall(sys.open(seed_name, .{
+            .open_mode = .ReadWrite,
+            .create = true,
+            .truncate = true,
+        }), "verifySparseSeekSemantics: open seed file", @src());
+        errdefer _ = sys.close(seed_fd);
+
+        @memset(&seed, @as(u8, '0') + @as(u8, @intCast(seed_index)));
+        try writeAll(seed_fd, &seed);
+        _ = try expectSyscall(sys.close(seed_fd), "verifySparseSeekSemantics: close seed file", @src());
+        _ = try expectSyscall(sys.unlink(seed_name), "verifySparseSeekSemantics: unlink seed file", @src());
+    }
+}
+
+fn verifySparseSeekSemantics() !void {
+    try seedDiskWithNonzeroData();
+
+    const fd = try expectSyscall(sys.open(sparse_seek_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "verifySparseSeekSemantics: open sparse file", @src());
+    errdefer _ = sys.close(fd);
+
+    var head: [sector_size]u8 = undefined;
+    var tail: [sector_size]u8 = undefined;
+    @memset(&head, 'H');
+    @memset(&tail, 'T');
+
+    try writeAll(fd, &head);
+    try expectOffset(try expectSyscall(sys.lseek(fd, sector_size * 2, .End), "verifySparseSeekSemantics: lseek end +2 sectors", @src()), sector_size * 3);
+    try writeAll(fd, &tail);
+    _ = try expectSyscall(sys.close(fd), "verifySparseSeekSemantics: close sparse file", @src());
+
+    const verify_fd = try expectSyscall(sys.open(sparse_seek_file, .{}), "verifySparseSeekSemantics: reopen sparse file", @src());
+    defer _ = sys.close(verify_fd);
+
+    var actual: [sector_size * 4]u8 = undefined;
+    var expected: [sector_size * 4]u8 = undefined;
+    @memset(&expected, 0);
+    @memcpy(expected[0..sector_size], &head);
+    @memcpy(expected[sector_size * 3 ..], &tail);
+
+    try readExact(verify_fd, &actual);
+    try expectEof(verify_fd);
+    try expectBytes(&actual, &expected);
+}
+
 fn verifyUnlinkSemantics() !void {
     const fd = try expectSyscall(sys.open(unlink_file, .{
         .open_mode = .ReadWrite,
@@ -191,6 +248,7 @@ pub fn main(argv: []const []const u8) !void {
     try verifyFileContents(stress_file_a, &expected_a);
     try verifyFileContents(stress_file_b, &expected_b);
     try verifySeekSemantics();
+    try verifySparseSeekSemantics();
     try verifyUnlinkSemantics();
 
     _ = sys.write(sys.STDOUT, "filesystem alternating descriptor stress test OK\n");

@@ -105,7 +105,7 @@ pub fn readFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, dest: []u8)
 }
 
 /// Writes to a task-owned descriptor from a user buffer.
-pub fn writeFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *task.Task, fd: u32, src: []const u8) FiledescError!usize {
+pub fn writeFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, src: []const u8) FiledescError!usize {
     if (src.len == 0) return 0;
 
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
@@ -123,7 +123,7 @@ pub fn writeFile(disk_fs: *fs.FileSystem, allocator: std.mem.Allocator, ptask: *
                 try disk_fs.getInodeSize(open_file.inode_index)
             else
                 open_file.offset;
-            const written = try disk_fs.writeInodeAt(allocator, open_file.inode_index, write_offset, src);
+            const written = try disk_fs.writeInodeAt(open_file.inode_index, write_offset, src);
             open_file.offset = std.math.add(u32, write_offset, written) catch return error.NoSpace;
             break :blk written;
         },
