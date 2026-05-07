@@ -27,6 +27,7 @@ const stress_file_a = tmpdir ++ "/fdstrs_a.txt";
 const stress_file_b = tmpdir ++ "/fdstrs_b.txt";
 const seek_file = tmpdir ++ "/seek.txt";
 const sparse_seek_file = tmpdir ++ "/sparse_seek.txt";
+const truncate_file = tmpdir ++ "/truncate.txt";
 const unlink_file = tmpdir ++ "/unlink.txt";
 const nonexistent_file = "nonexistent.txt";
 const sector_size = 512;
@@ -34,6 +35,7 @@ const chunk_size = 640;
 const chunk_count = 6;
 const total_bytes = chunk_size * chunk_count;
 const seek_expected = "01234AB789XY\x00\x00Z";
+const truncate_expected = "ABCD\x00\x00\x00\x00\x00\x00";
 
 fn writeAll(fd: u32, buf: []const u8) !void {
     const written = try expectSyscall(sys.write(fd, buf), "writeAll: write", @src());
@@ -207,6 +209,37 @@ fn verifyUnlinkSemantics() !void {
     _ = try syscallShouldFail(sys.unlink(unlink_file), "verifyUnlinkSemantics: unlink missing file", @src());
 }
 
+fn verifyTruncateSemantics() !void {
+    const fd = try expectSyscall(sys.open(truncate_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "verifyTruncateSemantics: open truncate file", @src());
+    errdefer _ = sys.close(fd);
+
+    try writeAll(fd, "ABCDEFGHIJ");
+    try expectOffset(try expectSyscall(sys.lseek(fd, 3, .Set), "verifyTruncateSemantics: lseek set 3", @src()), 3);
+    _ = try expectSyscall(sys.ftruncate(fd, 4), "verifyTruncateSemantics: shrink to 4", @src());
+    try expectOffset(try expectSyscall(sys.lseek(fd, 0, .Cur), "verifyTruncateSemantics: current offset after shrink", @src()), 3);
+
+    try expectOffset(try expectSyscall(sys.lseek(fd, 1, .Set), "verifyTruncateSemantics: lseek set 1", @src()), 1);
+    _ = try expectSyscall(sys.ftruncate(fd, 10), "verifyTruncateSemantics: grow to 10", @src());
+    try expectOffset(try expectSyscall(sys.lseek(fd, 0, .Cur), "verifyTruncateSemantics: current offset after grow", @src()), 1);
+
+    _ = try expectSyscall(sys.close(fd), "verifyTruncateSemantics: close truncation fd", @src());
+
+    const verify_fd = try expectSyscall(sys.open(truncate_file, .{}), "verifyTruncateSemantics: reopen truncate file", @src());
+    defer _ = sys.close(verify_fd);
+
+    var actual: [truncate_expected.len]u8 = undefined;
+    try readExact(verify_fd, &actual);
+    try expectEof(verify_fd);
+    try expectBytes(&actual, truncate_expected);
+
+    try syscallShouldFail(sys.ftruncate(verify_fd, 2), "verifyTruncateSemantics: truncate readonly fd", @src());
+    try syscallShouldFail(sys.ftruncate(sys.STDOUT, 0), "verifyTruncateSemantics: truncate stdout", @src());
+}
+
 fn verifyRmdirSemantics() !void {
     const test_dir = "/tmp_rmdir";
     const sub_file = test_dir ++ "/file.txt";
@@ -284,6 +317,7 @@ pub fn main(argv: []const []const u8) !void {
     try verifyFileContents(stress_file_b, &expected_b);
     try verifySeekSemantics();
     try verifySparseSeekSemantics();
+    try verifyTruncateSemantics();
     try verifyUnlinkSemantics();
     try verifyRmdirSemantics();
 

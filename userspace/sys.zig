@@ -63,6 +63,7 @@ const Syscall = enum(u32) {
     Mkdir = 83,
     Rmdir = 84,
     Unlink = 87,
+    Ftruncate = 93,
     Spawn = 1001,
     SetChildReap = 1002,
 };
@@ -124,6 +125,11 @@ pub fn close(fd: u32) u32 {
 /// Repositions a userspace-visible file descriptor and returns the new offset.
 pub fn lseek(fd: u32, offset: i32, whence: SeekWhence) u32 {
     return syscall(.Seek, fd, @bitCast(offset), @intFromEnum(whence));
+}
+
+/// Resizes a filesystem-backed file descriptor to the requested byte length.
+pub fn ftruncate(fd: u32, length: u32) u32 {
+    return syscall(.Ftruncate, fd, length, 0);
 }
 
 /// Unlinks a filesystem path by name.

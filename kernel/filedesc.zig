@@ -65,7 +65,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
     };
 
     if ((flags & O_TRUNC) != 0) {
-        try disk_fs.truncateInode(inode_index);
+        try disk_fs.resizeInode(inode_index, 0);
     }
 
     open_files[open_index] = .{
@@ -166,6 +166,19 @@ pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32
         },
         else => error.BadFd,
     };
+}
+
+/// Resizes a task-owned filesystem-backed descriptor without changing its current offset.
+pub fn truncateFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, size: u32) FiledescError!void {
+    const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
+    switch (slot.kind) {
+        .file => {
+            const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
+            if (!open_file.writable) return error.AccessDenied;
+            try disk_fs.resizeInode(open_file.inode_index, size);
+        },
+        else => return error.BadFd,
+    }
 }
 
 /// Closes a task-local descriptor and releases any backing open-file slot.

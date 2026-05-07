@@ -415,10 +415,15 @@ pub const FileSystem = struct {
         return inode.size_bytes;
     }
 
+    /// Resizes a file identified directly by inode number, zero-filling any newly exposed range.
+    pub fn resizeInode(self: *FileSystem, inode_index: InodeT, new_size: u32) FsError!void {
+        var inode = try self.readFileInode(inode_index);
+        try self.resizeInodeToSize(inode_index, &inode, new_size);
+    }
+
     /// Truncates a file identified directly by inode number to zero bytes.
     pub fn truncateInode(self: *FileSystem, inode_index: InodeT) FsError!void {
-        var inode = try self.readFileInode(inode_index);
-        try self.writeToInodeAtOffset(inode_index, &inode, 0, &.{}, true);
+        try self.resizeInode(inode_index, 0);
     }
 
     //////////// FILE READING ////////////
@@ -805,6 +810,7 @@ pub const FileSystem = struct {
         data: []const u8,
         truncate: bool,
     ) FsError!void {
+        const old_size = inode.size_bytes;
         const data_end: u32 = std.math.add(u32, ofs, @intCast(data.len)) catch return error.NoSpace;
         const new_size: u32 = if (truncate)
             data_end // if truncating, the file will end after the given data
@@ -812,28 +818,12 @@ pub const FileSystem = struct {
             @max(inode.size_bytes, data_end); // otherwise, keep any existing data after the write window
         // NB: new_size >= data_end = ofs + data.len
 
-        const old_total_blocks = fileBlocksForSize(inode.size_bytes);
-        const new_total_blocks = fileBlocksForSize(new_size);
-        if (new_total_blocks > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
-
-        // Allocate the block tree structure
-        try self.allocBlockTree(inode, new_total_blocks);
-
-        // Update the inode on disk (do this early to minimize risk of leaving orphaned blocks)
-        inode.size_bytes = new_size;
-        try self.writeInode(inode_index, inode);
-
-        const first_block = ofs / BLOCK_SIZE; // First block index which contains the new data being written
-
-        // If the write starts beyond the current end of the file, we need to zero-pad the gap between the old end and the start of the write.
-        if (first_block > old_total_blocks) {
-            var block_idx = old_total_blocks; // block currently being zeroed
-            while (block_idx < first_block) : (block_idx += 1) {
-                const data_block = try self.getInodeDataBlock(inode, @intCast(block_idx));
-                try self.zeroBlock(data_block);
-            }
+        const old_total_blocks = fileBlocksForSize(old_size);
+        if (new_size > old_size) {
+            try self.resizeInodeToSize(inode_index, inode, new_size);
         }
 
+        const first_block = ofs / BLOCK_SIZE;
         var sector = [_]u8{0} ** BLOCK_SIZE;
 
         // Fill the allocated blocks with the new data
@@ -841,7 +831,6 @@ pub const FileSystem = struct {
         var block_cursor: u32 = ofs % BLOCK_SIZE; // offset within current block (only relevant for first block)
         var data_cursor: usize = 0; // current offset within data slice
 
-        // TODO: Possible bug: if the data has length 0, no zeroing occurs.
         while (data_cursor < data.len) {
             const num_bytes: usize = @min(data.len - data_cursor, BLOCK_SIZE - block_cursor);
             const data_block = try self.getInodeDataBlock(inode, @intCast(block_idx));
@@ -861,6 +850,64 @@ pub const FileSystem = struct {
             data_cursor += num_bytes;
             block_idx += 1;
             block_cursor = 0;
+        }
+
+        if (truncate and new_size < old_size) {
+            try self.resizeInodeToSize(inode_index, inode, new_size);
+        }
+    }
+
+    /// Change the size of an inode, allocating or freeing blocks as needed.
+    /// If the inode is being grown, any newly exposed regions will be zero-filled.
+    fn resizeInodeToSize(self: *FileSystem, inode_index: InodeT, inode: *Inode, new_size: u32) FsError!void {
+        const old_size = inode.size_bytes;
+        if (new_size == old_size) return;
+
+        const new_total_blocks = fileBlocksForSize(new_size);
+        if (new_total_blocks > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
+
+        if (new_size > old_size) {
+            // grow: allocate new blocks, then zero out the newly exposed range
+            try self.allocBlockTree(inode, new_total_blocks);
+            try self.zeroInodeRange(inode, old_size, new_size - old_size);
+        } else {
+            // shrink: zero out the tail of the new final block
+            const partial_block_bytes = new_size % BLOCK_SIZE;
+            if (partial_block_bytes != 0) {
+                const bytes_to_clear: u32 = @min(old_size - new_size, BLOCK_SIZE - partial_block_bytes);
+                try self.zeroInodeRange(inode, new_size, bytes_to_clear);
+            }
+            try self.allocBlockTree(inode, new_total_blocks);
+        }
+
+        inode.size_bytes = new_size;
+        try self.writeInode(inode_index, inode);
+    }
+
+    /// Zero out a byte range within an inode.
+    fn zeroInodeRange(self: *FileSystem, inode: *Inode, start: u32, len: u32) FsError!void {
+        if (len == 0) return;
+
+        var remaining = len;
+        var block_idx: u32 = start / BLOCK_SIZE;
+        var block_offset: usize = @intCast(start % BLOCK_SIZE);
+        var sector = [_]u8{0} ** BLOCK_SIZE;
+
+        while (remaining > 0) : (block_idx += 1) {
+            const chunk_len: usize = @min(@as(usize, remaining), BLOCK_SIZE - block_offset);
+            const data_block = try self.getInodeDataBlock(inode, block_idx);
+
+            if (chunk_len != BLOCK_SIZE) {
+                try self.readDataBlock(data_block, &sector);
+            } else {
+                @memset(&sector, 0);
+            }
+
+            @memset(sector[block_offset .. block_offset + chunk_len], 0);
+            try self.writeDataBlock(data_block, &sector);
+
+            remaining -= @intCast(chunk_len);
+            block_offset = 0;
         }
     }
 

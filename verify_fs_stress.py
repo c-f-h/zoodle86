@@ -13,6 +13,8 @@ SEEK_EXPECTED = b"01234AB789XY\x00\x00Z"
 SPARSE_SEEK_FILE = "sparse_seek.txt"
 SECTOR_SIZE = 512
 SPARSE_SEEK_EXPECTED = (b"H" * SECTOR_SIZE) + (b"\x00" * (SECTOR_SIZE * 2)) + (b"T" * SECTOR_SIZE)
+TRUNCATE_FILE = "truncate.txt"
+TRUNCATE_EXPECTED = b"ABCD\x00\x00\x00\x00\x00\x00"
 
 
 def fill_chunk(file_tag: int, iteration: int) -> bytes:
@@ -100,6 +102,18 @@ def main() -> int:
         return 1
 
     print(f"Verified {SPARSE_SEEK_FILE}: {len(sparse_seek_data)} bytes")
+
+    truncate_path = root / TRUNCATE_FILE
+    if not truncate_path.is_file():
+        print(f"Missing expected file: {truncate_path}")
+        return 1
+
+    truncate_data = truncate_path.read_bytes()
+    if truncate_data != TRUNCATE_EXPECTED:
+        print(f"Content mismatch for {TRUNCATE_FILE}")
+        return 1
+
+    print(f"Verified {TRUNCATE_FILE}: {len(truncate_data)} bytes")
 
     return 0
 

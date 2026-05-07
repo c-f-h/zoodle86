@@ -20,6 +20,7 @@ const Syscall = enum(u32) {
     Mkdir = 83,
     Rmdir = 84,
     Unlink = 87,
+    Ftruncate = 93,
     Spawn = 1001,
     SetChildReap = 1002,
     _,
@@ -107,6 +108,11 @@ fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
 fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {
     const offset: i32 = @bitCast(offset_bits);
     return filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence) catch |err| mapError(err);
+}
+
+fn sys_ftruncate(fd: u32, size: u32) u32 {
+    filedesc.truncateFile(kernel.getFileSystem(), task.getCurrentTask(), fd, size) catch |err| return mapError(err);
+    return 0;
 }
 
 fn sys_brk(addr: u32) u32 {
@@ -239,6 +245,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),
         .Unlink => sys_unlink(arg1, arg2),
+        .Ftruncate => sys_ftruncate(arg1, arg2),
         .WaitPid => sys_waitpid(arg1),
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
