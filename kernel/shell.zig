@@ -443,16 +443,18 @@ fn cmdFontbench(shell: *Shell, args: *ArgsIterator) !void {
 fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     const state = args.next() orelse {
         shell.console.puts("Serial mirroring is ");
-        shell.console.puts(if (shell.console.isSerialMirrorEnabled()) "on.\n" else "off.\n");
+        shell.console.puts(if (console.primary.isSerialMirrorEnabled()) "on.\n" else "off.\n");
         printUsage(shell, "serial");
         return;
     };
 
     if (std.mem.eql(u8, state, "on")) {
-        shell.console.setSerialMirrorEnabled(true);
+        console.primary.setSerialMirrorEnabled(true);
+        kernel.secondary_console.setSerialMirrorEnabled(true);
         shell.console.puts("Serial mirroring enabled.\n");
     } else if (std.mem.eql(u8, state, "off")) {
-        shell.console.setSerialMirrorEnabled(false);
+        console.primary.setSerialMirrorEnabled(false);
+        kernel.secondary_console.setSerialMirrorEnabled(false);
         shell.console.puts("Serial mirroring disabled.\n");
     } else {
         printUsage(shell, "serial");
