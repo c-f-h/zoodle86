@@ -9,7 +9,17 @@ inline fn expectSyscall(rc: u32, comptime step: []const u8, comptime callsite: s
         _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall failed: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
         return error.SyscallFailed;
     }
+    _ = sys.write(sys.STDOUT, ".");
     return rc;
+}
+
+inline fn syscallShouldFail(rc: u32, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !void {
+    if (rc != FAIL) {
+        var buf: [160]u8 = undefined;
+        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall unexpectedly succeeded: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
+        return error.ExpectedFailure;
+    }
+    _ = sys.write(sys.STDOUT, ".");
 }
 
 const tmpdir = "/tmp";
@@ -106,8 +116,8 @@ fn verifySeekSemantics() !void {
     try expectOffset(try expectSyscall(sys.lseek(fd, 2, .End), "verifySeekSemantics: lseek end +2", @src()), 14);
     try writeAll(fd, "Z");
 
-    if (sys.lseek(fd, -100, .Cur) != FAIL) return error.ExpectedFailure;
-    if (sys.lseek(sys.STDOUT, 0, .Set) != FAIL) return error.ExpectedFailure;
+    try syscallShouldFail(sys.lseek(fd, -100, .Cur), "verifySeekSemantics: lseek cur -100", @src());
+    try syscallShouldFail(sys.lseek(sys.STDOUT, 0, .Set), "verifySeekSemantics: lseek stdout set 0", @src());
 
     if (sys.close(fd) == FAIL) return error.SyscallFailed;
 
@@ -193,15 +203,37 @@ fn verifyUnlinkSemantics() !void {
     _ = try expectSyscall(sys.close(fd), "verifyUnlinkSemantics: close before unlink", @src());
     _ = try expectSyscall(sys.unlink(unlink_file), "verifyUnlinkSemantics: unlink closed file", @src());
 
-    if (sys.open(unlink_file, .{}) != FAIL) {
-        _ = sys.write(sys.STDOUT, "unexpectedly reopened unlinked file\n");
-        return error.SyscallFailed;
-    }
+    _ = try syscallShouldFail(sys.open(unlink_file, .{}), "verifyUnlinkSemantics: open unlinked file", @src());
+    _ = try syscallShouldFail(sys.unlink(unlink_file), "verifyUnlinkSemantics: unlink missing file", @src());
+}
 
-    if (sys.unlink(unlink_file) != FAIL) {
-        _ = sys.write(sys.STDOUT, "unexpectedly unlinked missing file\n");
-        return error.SyscallFailed;
-    }
+fn verifyRmdirSemantics() !void {
+    const test_dir = "/tmp_rmdir";
+    const sub_file = test_dir ++ "/file.txt";
+
+    _ = try syscallShouldFail(sys.open(sub_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+    }), "verifyRmdirSemantics: open subfile in non-existent directory", @src());
+
+    _ = sys.mkdir(test_dir) catch {};
+
+    // 1. Fail to remove non-empty directory
+    const fd = try expectSyscall(sys.open(sub_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+    }), "verifyRmdirSemantics: create subfile", @src());
+    _ = try expectSyscall(sys.write(fd, "data"), "verifyRmdirSemantics: write subfile", @src());
+    _ = try expectSyscall(sys.close(fd), "verifyRmdirSemantics: close subfile", @src());
+
+    _ = try syscallShouldFail(sys.rmdir(test_dir), "verifyRmdirSemantics: rmdir non-empty directory", @src());
+
+    // 2. Succeed to remove empty directory
+    _ = try expectSyscall(sys.unlink(sub_file), "verifyRmdirSemantics: unlink subfile", @src());
+    _ = try expectSyscall(sys.rmdir(test_dir), "verifyRmdirSemantics: rmdir empty directory", @src());
+
+    // 3. Fail to remove nonexistent directory
+    _ = try syscallShouldFail(sys.rmdir(test_dir), "verifyRmdirSemantics: rmdir missing directory", @src());
 }
 
 /// Exercises filesystem syscalls with alternating writes, seeks, and unlinks.
@@ -253,8 +285,9 @@ pub fn main(argv: []const []const u8) !void {
     try verifySeekSemantics();
     try verifySparseSeekSemantics();
     try verifyUnlinkSemantics();
+    try verifyRmdirSemantics();
 
-    _ = sys.write(sys.STDOUT, "filesystem alternating descriptor stress test OK\n");
+    _ = sys.write(sys.STDOUT, "filesystem tests OK\n");
     sys.yield();
 }
 

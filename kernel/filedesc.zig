@@ -88,6 +88,14 @@ pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void 
     try disk_fs.deleteFile(parent_inode, index);
 }
 
+/// Removes a directory unless it is still referenced by an open descriptor or is not empty.
+pub fn removeDirectory(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
+    const parent_inode, const index, const entry = try disk_fs.walkFilePathToDirEntry(fs.ROOT_INODE_INDEX, path);
+
+    if (isInodeOpen(entry.inode_index)) return error.FileInUse;
+    try disk_fs.deleteDirectory(parent_inode, index);
+}
+
 /// Reads from a task-owned descriptor into a user buffer.
 pub fn readFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, dest: []u8) FiledescError!usize {
     if (dest.len == 0) return 0;

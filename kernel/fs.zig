@@ -227,6 +227,7 @@ pub const FsError = error{
     FileNotFound,
     NotARegularFile,
     NotADirectory,
+    DirNotEmpty,
     InvalidName,
     InvalidSuperblock,
     NoSpace,
@@ -552,6 +553,35 @@ pub const FileSystem = struct {
         try self.writeSuperblock();
     }
 
+    /// Deletes an empty directory from the given directory and frees its inode and blocks.
+    pub fn deleteDirectory(self: *FileSystem, dir_inode_index: InodeT, index: u32) FsError!void {
+        const entry = try self.readDirectoryEntry(dir_inode_index, index);
+
+        if (entry.kind != .Directory) return error.NotADirectory;
+
+        if (!try self.isDirectoryEmpty(entry.inode_index)) return error.DirNotEmpty;
+
+        try self.destroyInode(entry.inode_index);
+        var cleared: DirectoryEntry = .{};
+        try self.writeDirEntry(dir_inode_index, index, &cleared);
+
+        self.superblock.file_count -= 1;
+        try self.writeSuperblock();
+    }
+
+    fn isDirectoryEmpty(self: *const FileSystem, inode_index: InodeT) FsError!bool {
+        const dir_inode = try self.readDirectoryInode(inode_index);
+        var i: usize = 0;
+        while (i < DIRECTORY_ENTRY_COUNT) : (i += 1) {
+            const entry = try self.readDirEntry(&dir_inode, i);
+            if (entry.kind != .Free) {
+                // TODO: once we support . and .., we should allow them.
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// Renames a regular file within the root directory.
     pub fn renameFile(self: *FileSystem, old_name: []const u8, new_name: []const u8) FsError!void {
         if (!validateName(new_name)) return error.InvalidName;
@@ -835,7 +865,8 @@ pub const FileSystem = struct {
     }
 
     fn destroyInode(self: *FileSystem, inode_index: InodeT) FsError!void {
-        var inode = try self.readFileInode(inode_index);
+        var inode = try self.readInode(inode_index);
+        try self.validateInode(&inode);
 
         try self.allocBlockTree(&inode, 0);
 

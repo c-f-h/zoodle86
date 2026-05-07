@@ -270,6 +270,7 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.FileNotFound => "File not found.",
         error.NotARegularFile => "Not a regular file.",
         error.NotADirectory => "Not a directory.",
+        error.DirNotEmpty => "Directory is not empty.",
         error.InvalidName => "Invalid filename.",
         error.InvalidSuperblock => "Filesystem superblock is invalid.",
         error.NoSpace => "Filesystem is out of space.",

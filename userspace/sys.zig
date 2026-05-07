@@ -61,6 +61,7 @@ const Syscall = enum(u32) {
     Exit = 60,
     WaitPid = 61,
     Mkdir = 83,
+    Rmdir = 84,
     Unlink = 87,
     Spawn = 1001,
     SetChildReap = 1002,
@@ -186,6 +187,12 @@ pub fn mkdir(path: []const u8) !void {
     if (syscall(.Mkdir, @intFromPtr(&path_abi), 0, 0) == FAIL) {
         return error.MkdirFailed;
     }
+}
+
+/// Removes a directory by name.
+pub fn rmdir(path: []const u8) u32 {
+    const path_abi = AbiSlice.fromSlice(u8, path);
+    return syscall(.Rmdir, @intFromPtr(&path_abi), 0, 0);
 }
 
 /// Marks the calling process so all its children are auto-reaped on exit

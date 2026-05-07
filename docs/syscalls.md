@@ -15,6 +15,7 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `exit` | 60 | exit_code | — | Terminates task with the given exit code, closes descriptors, and reschedules; does not return |
 | `waitpid` | 61 | pid | exit_status or `FAIL` | Blocks until the child with the given PID exits; returns its exit status. Returns `FAIL` if PID is not a direct child. |
 | `mkdir` | 83 | path_slice | 0 or `FAIL` | Creates a directory; path_slice is a userspace address pointing to an `AbiSlice` describing the path |
+| `rmdir` | 84 | path_offset, path_len | 0 or `FAIL` | Removes a directory; fails if not empty or in use |
 | `unlink` | 87 | path_offset, path_len | 0 or `FAIL` | Removes a filesystem entry; fails if the file is still open by any task |
 | `spawn` | 1001 | argv_slice_ptr | child PID or `FAIL` | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable |
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |

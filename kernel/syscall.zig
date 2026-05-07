@@ -18,6 +18,7 @@ const Syscall = enum(u32) {
     Exit = 60,
     WaitPid = 61,
     Mkdir = 83,
+    Rmdir = 84,
     Unlink = 87,
     Spawn = 1001,
     SetChildReap = 1002,
@@ -38,6 +39,7 @@ const ERRNO_EBADF: u32 = 9;
 const ERRNO_EBUSY: u32 = 16;
 const ERRNO_EINVAL: u32 = 22;
 const ERRNO_ENOSPC: u32 = 28;
+const ERRNO_ENOTEMPTY: u32 = 39;
 
 fn errnoResult(errno: u32) u32 {
     _ = errno;
@@ -56,6 +58,7 @@ fn mapError(err: anyerror) u32 {
         error.Corrupt => ERRNO_EIO,
         error.DeviceFault => ERRNO_EIO,
         error.DirectoryFull => ERRNO_ENOSPC,
+        error.DirNotEmpty => ERRNO_ENOTEMPTY,
         error.FileExists => ERRNO_EEXIST,
         error.FileNotFound => ERRNO_ENOENT,
         error.InvalidFlags => ERRNO_EINVAL,
@@ -207,6 +210,12 @@ fn sys_mkdir(path_slice_va: u32) u32 {
     return kernel.getFileSystem().createDirectory(path) catch |err| mapError(err);
 }
 
+fn sys_rmdir(path_slice_va: u32) u32 {
+    const path = task.getCurrentTask().readUserSlice(u8, path_slice_va) catch |err| return mapError(err);
+    filedesc.removeDirectory(kernel.getFileSystem(), path) catch |err| return mapError(err);
+    return 0;
+}
+
 /// Marks the current task so that all its children are auto-reaped on exit
 /// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
 fn sys_set_child_reap() u32 {
@@ -232,6 +241,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Unlink => sys_unlink(arg1, arg2),
         .WaitPid => sys_waitpid(arg1),
         .Mkdir => sys_mkdir(arg1),
+        .Rmdir => sys_rmdir(arg1),
         .SetChildReap => sys_set_child_reap(),
         .Yield => kernel.reschedule(),
         .Spawn => sys_spawn(arg1),
