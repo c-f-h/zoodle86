@@ -16,6 +16,10 @@ const serial = @import("serial.zig");
 const task = @import("task.zig");
 
 const autoexec_name = "autoexec";
+const executable_search_path = [_][]const u8{
+    "/bin",
+};
+
 var autoexec_next_line_idx: usize = 0;
 var autoexec_finished: bool = false;
 
@@ -461,9 +465,33 @@ fn cmdSerial(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
-fn tryLoadProgram(shell: *Shell, fname: []const u8, argv: []const []const u8) ?*task.Task {
+fn resolveProgramPath(shell: *Shell, fname: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, fname, '/') != null) {
+        return try shell.alloc.dupe(u8, fname);
+    }
+
+    for (executable_search_path) |path_prefix| {
+        const needs_separator = path_prefix.len != 0 and path_prefix[path_prefix.len - 1] != '/';
+        const candidate = try std.mem.concat(shell.alloc, u8, &.{
+            path_prefix,
+            if (needs_separator) "/" else "",
+            fname,
+        });
+        errdefer shell.alloc.free(candidate);
+
+        if (try shell.disk_fs.pathExists(candidate)) {
+            return candidate;
+        }
+
+        shell.alloc.free(candidate);
+    }
+
+    return error.FileNotFound;
+}
+
+fn tryLoadProgram(shell: *Shell, display_name: []const u8, fname: []const u8, argv: []const []const u8) ?*task.Task {
     const ptask = kernel.loadUserspaceElf(fname, argv) catch |err| {
-        shell.console.put(.{ "Failed to load ", fname, ": ", kernel.getErrorDesc(err), "\n" });
+        shell.console.put(.{ "Failed to load ", display_name, ": ", kernel.getErrorDesc(err), "\n" });
         return null;
     };
     if (kernel.secondary_console.vconsole_instance != null) {
@@ -491,10 +519,16 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
         return;
     }
 
+    const resolved = resolveProgramPath(shell, fname) catch |err| {
+        shell.console.put(.{ "Failed to load ", fname, ": ", kernel.getErrorDesc(err), "\n" });
+        return;
+    };
+    defer shell.alloc.free(resolved);
+
     // argv[0] is the executable name; remaining tokens follow.
     var argv_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
     var argc: usize = 0;
-    argv_buf[argc] = fname;
+    argv_buf[argc] = resolved;
     argc += 1;
     while (args.next()) |arg| {
         if (argc >= argv_buf.len) {
@@ -508,7 +542,7 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
     var first_task: ?*task.Task = null;
     var remaining = copy_count;
     while (remaining != 0) : (remaining -= 1) {
-        if (tryLoadProgram(shell, fname, argv_buf[0..argc])) |ptask| {
+        if (tryLoadProgram(shell, fname, resolved, argv_buf[0..argc])) |ptask| {
             if (first_task == null) first_task = ptask;
         } else {
             return;
@@ -524,10 +558,16 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
         return;
     };
 
+    const resolved = resolveProgramPath(shell, fname) catch |err| {
+        shell.console.put(.{ "Failed to load ", fname, ": ", kernel.getErrorDesc(err), "\n" });
+        return;
+    };
+    defer shell.alloc.free(resolved);
+
     // argv[0] is the executable name; remaining tokens follow.
     var argv_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
     var argc: usize = 0;
-    argv_buf[argc] = fname;
+    argv_buf[argc] = resolved;
     argc += 1;
     while (args.next()) |arg| {
         if (argc >= argv_buf.len) {
@@ -538,7 +578,7 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
         argc += 1;
     }
 
-    if (tryLoadProgram(shell, fname, argv_buf[0..argc])) |ptask| {
+    if (tryLoadProgram(shell, fname, resolved, argv_buf[0..argc])) |ptask| {
         kernel.run(ptask);
     }
 }
@@ -625,7 +665,7 @@ fn listFiles(shell: *Shell, disk_fs: *fs.FileSystem, path: []const u8) !void {
     var index: usize = 0;
     var buf: [128]u8 = undefined;
 
-    const dir_inode = try disk_fs.walkFilePathToInode(fs.ROOT_INODE_INDEX, path);
+    const dir_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, path);
 
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
         if (try disk_fs.getFileInfo(dir_inode, index)) |info| {

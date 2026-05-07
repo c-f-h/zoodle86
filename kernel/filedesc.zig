@@ -57,7 +57,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
 
     const split = fs.splitPath(path);
-    const parent_inode = try disk_fs.walkFilePathToInode(fs.ROOT_INODE_INDEX, split.dir);
+    const parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
 
     const inode_index = try disk_fs.findFileInodeIndex(parent_inode, split.name) orelse blk: {
         if ((flags & O_CREAT) == 0) return error.FileNotFound;
@@ -82,7 +82,7 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
 pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
-    const parent_inode, const index, const entry = try disk_fs.walkFilePathToDirEntry(fs.ROOT_INODE_INDEX, path);
+    const parent_inode, const index, const entry = try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, path);
 
     if (isInodeOpen(entry.inode_index)) return error.FileInUse;
     try disk_fs.deleteFile(parent_inode, index);
@@ -90,7 +90,7 @@ pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void 
 
 /// Removes a directory unless it is still referenced by an open descriptor or is not empty.
 pub fn removeDirectory(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
-    const parent_inode, const index, const entry = try disk_fs.walkFilePathToDirEntry(fs.ROOT_INODE_INDEX, path);
+    const parent_inode, const index, const entry = try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, path);
 
     if (isInodeOpen(entry.inode_index)) return error.FileInUse;
     try disk_fs.deleteDirectory(parent_inode, index);

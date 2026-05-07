@@ -400,7 +400,7 @@ pub const FileSystem = struct {
     /// Creates a new directory with the given full path and returns its inode index.
     pub fn createDirectory(self: *FileSystem, path: []const u8) FsError!InodeT {
         const split = splitPath(path);
-        const dir_inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, split.dir);
+        const dir_inode_index = try self.walkPathToInode(ROOT_INODE_INDEX, split.dir);
         return self.createDirectoryAt(dir_inode_index, split.name);
     }
 
@@ -430,7 +430,7 @@ pub const FileSystem = struct {
 
     /// Reads an entire regular file, given by its full path, into allocator-owned memory.
     pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
-        const inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, path);
+        const inode_index = try self.walkPathToInode(ROOT_INODE_INDEX, path);
         const inode = try self.readFileInode(inode_index);
         return self.readInodeContents(allocator, &inode);
     }
@@ -483,7 +483,7 @@ pub const FileSystem = struct {
     /// Creates or overwrites a file in the given directory with the provided full contents.
     pub fn writeFile(self: *FileSystem, path: []const u8, data: []const u8) WriteFileError!void {
         const split = splitPath(path);
-        const dir_inode_index = try self.walkFilePathToInode(ROOT_INODE_INDEX, split.dir);
+        const dir_inode_index = try self.walkPathToInode(ROOT_INODE_INDEX, split.dir);
         try self.writeFileAt(dir_inode_index, split.name, data);
     }
 
@@ -511,7 +511,7 @@ pub const FileSystem = struct {
 
     /// Walk a full file path, starting from the given directory inode index.
     /// Returns { parent_dir_inode_index, dir_entry_index, dir_entry } or error.FileNotFound.
-    pub fn walkFilePathToDirEntry(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!struct { InodeT, u32, DirectoryEntry } {
+    pub fn walkPathToDirEntry(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!struct { InodeT, u32, DirectoryEntry } {
         var current_dir = dir_inode_index;
         var path_iter = std.mem.splitScalar(u8, path, '/');
 
@@ -537,11 +537,20 @@ pub const FileSystem = struct {
 
     /// Walk a full file path, starting from the given directory inode index.
     /// Returns the final file's inode index or error.FileNotFound.
-    pub fn walkFilePathToInode(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!InodeT {
+    pub fn walkPathToInode(self: *const FileSystem, dir_inode_index: InodeT, path: []const u8) FsError!InodeT {
         if (path.len == 0) return dir_inode_index;
         if (path.len == 1 and path[0] == '/') return ROOT_INODE_INDEX;
-        _, _, const entry = try self.walkFilePathToDirEntry(dir_inode_index, path);
+        _, _, const entry = try self.walkPathToDirEntry(dir_inode_index, path);
         return entry.inode_index;
+    }
+
+    /// Returns true if a file or directory exists at the given path, false if not found.
+    pub fn pathExists(self: *const FileSystem, path: []const u8) !bool {
+        _ = self.walkPathToInode(ROOT_INODE_INDEX, path) catch |err| switch (err) {
+            error.FileNotFound => return false,
+            else => return err,
+        };
+        return true;
     }
 
     /// Deletes a regular file from the given directory and frees its inode and blocks.
