@@ -21,6 +21,7 @@ Complete listing of every source file and its role.
 - `kernel/acpi.zig`: ACPI table discovery and parsing (RSDP/RSDT/MADT), checksum validation, and ACPI table virtual mapping.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
+- `kernel/pci.zig`: PCI config-space access and bus enumeration, including multi-host-controller root scanning and PCI-to-PCI bridge traversal.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
 - `kernel/interrupt_frame.zig`: standard stack frame layout used when entering the kernel.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.

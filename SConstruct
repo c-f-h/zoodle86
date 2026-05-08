@@ -110,10 +110,11 @@ def write_bochsrc(target, source, env):
                 f'romimage: file="{BOCHS_DIR / "BIOS-bochs-latest"}", options=fastboot',
                 f'vgaromimage: file="{BOCHS_DIR / "VGABIOS-lgpl-latest.bin"}"',
                 "boot: c",
-                f'ata0-master: type=disk, path="{BOOT_IMG.relative_to(ROOT)}", mode=flat',
-                f'log: {BOCHSOUT_PATH.relative_to(ROOT)}',
-                f'com1: enabled=1, mode=file, dev="{SERIALOUT_PATH.relative_to(ROOT).as_posix()}"',
+                f'ata0-master: type=disk, path="{BOOT_IMG}", mode=flat',
+                f'log: {BOCHSOUT_PATH}',
+                f'com1: enabled=1, mode=file, dev="{SERIALOUT_PATH.as_posix()}"',
                 'display_library: win32, options="autoscale, gui_debug"',
+                'plugin_ctrl: e1000=1',
                 "panic: action=ask",
                 "error: action=report",
                 "info: action=report",
@@ -396,12 +397,12 @@ def check_bochs_returncode(rc):
 
 def run_bochs(target, source, env):
     print(f"Bochs: {BOCHS_EXE}")
-    completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH)], cwd=ROOT)
+    completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH)], cwd=BUILD_DIR)
     check_bochs_returncode(completed.returncode)
 
 def debug_bochs(target, source, env):
     print(f"Bochs: {BOCHS_EXE}")
-    completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH), "-debugger"], cwd=ROOT)
+    completed = subprocess.run([str(BOCHS_EXE), "-q", "-f", str(BOCHSRC_PATH), "-debugger"], cwd=BUILD_DIR)
     check_bochs_returncode(completed.returncode)
 
 def run_qemu(target, source, env):

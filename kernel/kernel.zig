@@ -26,6 +26,7 @@ const syscall = @import("syscall.zig");
 const pit = @import("pit.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
+const pci = @import("pci.zig");
 
 const std = @import("std");
 
@@ -362,6 +363,8 @@ fn kernel_enter() !noreturn {
     kernel_console.puts(" MiB\n\n");
 
     acpi.init();
+    pci.scan(kernel_console);
+
     filedesc.init();
 
     //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer

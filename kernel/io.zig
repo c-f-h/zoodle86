@@ -14,6 +14,14 @@ pub inline fn outw(port: u16, value: u16) void {
     );
 }
 
+pub inline fn outl(port: u16, value: u32) void {
+    asm volatile ("outl %[val], %[port]"
+        :
+        : [val] "{eax}" (value),
+          [port] "N{dx}" (port),
+    );
+}
+
 pub inline fn inb(port: u16) u8 {
     return asm volatile ("inb %[port], %[ret]"
         : [ret] "={al}" (-> u8),
@@ -28,24 +36,9 @@ pub inline fn inw(port: u16) u16 {
     );
 }
 
-/// Copies bytes from a far pointer (segment:offset) to a location in the current
-/// data segment. Uses the DS segment register with REP MOVSB to perform the copy.
-/// Preserves the original DS register value (source for MOVSB).
-pub noinline fn memcpy_from_segment(dest: [*]u8, src_segment: u16, src_offset: u32, len: usize) void {
-    asm volatile (
-        \\ push %%ds
-        \\ mov %[seg], %%ax
-        \\ mov %%ax, %%ds
-        \\ mov %[off], %%esi
-        \\ mov %[dst], %%edi
-        \\ mov %[len], %%ecx
-        \\ cld
-        \\ rep movsb
-        \\ pop %%ds
-        :
-        : [seg] "{ax}" (src_segment),
-          [off] "{esi}" (src_offset),
-          [dst] "{edi}" (@intFromPtr(dest)),
-          [len] "{ecx}" (len),
-        : .{ .memory = true, .eax = true, .esi = true, .edi = true, .ecx = true }); // clobber
+pub inline fn inl(port: u16) u32 {
+    return asm volatile ("inl %[port], %[ret]"
+        : [ret] "={eax}" (-> u32),
+        : [port] "N{dx}" (port),
+    );
 }

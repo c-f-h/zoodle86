@@ -349,6 +349,11 @@ pub const Console = struct {
         }
     }
 
+    pub fn putHexU4(self: *Console, value: u4) void {
+        const hex = "0123456789ABCDEF";
+        self.putch(hex[value & 0x0F]);
+    }
+
     pub fn putHexU8(self: *Console, value: u8) void {
         const hex = "0123456789ABCDEF";
         self.putch(hex[(value >> 4) & 0x0F]);
@@ -416,6 +421,8 @@ pub const Console = struct {
                 self.putHexU16(val);
             } else if (@TypeOf(val) == u8) {
                 self.putHexU8(val);
+            } else if (@TypeOf(val) == u4) {
+                self.putHexU4(val);
             } else {
                 self.puts(val);
             }
