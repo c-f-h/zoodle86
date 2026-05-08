@@ -2,6 +2,8 @@ const console = @import("console.zig");
 const fs = @import("fs.zig");
 const std = @import("std");
 const task = @import("task.zig");
+const pipe = @import("pipe.zig");
+const kernel = @import("kernel.zig");
 
 pub const O_RDONLY: u32 = 0;
 pub const O_WRONLY: u32 = 1;
@@ -15,6 +17,137 @@ pub const SEEK_CUR: u32 = 1;
 pub const SEEK_END: u32 = 2;
 
 pub const MAX_OPEN_FILES = 32;
+
+pub const FdKind = enum(u8) {
+    empty,
+    stdin,
+    stdout,
+    stderr,
+    file,
+    pipe,
+};
+
+pub const FileDesc = union(FdKind) {
+    empty: void,
+    stdin: void,
+    stdout: *task.Task,
+    stderr: *task.Task,
+    file: u8, // Always refers to a valid index in the global open_files table
+    pipe: struct { handle: *pipe.Pipe, writable: bool },
+
+    /// Closes a descriptor and releases any backing pipe or open-file state.
+    pub fn close(self: *FileDesc) error{BadFd}!void {
+        switch (self.*) {
+            .stdin => {},
+            .stdout => {},
+            .stderr => {},
+            .file => |file_index| {
+                closeOpenFile(file_index);
+            },
+            .pipe => |pipe_info| {
+                const pp = pipe_info.handle;
+                const is_writer = pipe_info.writable;
+                if (is_writer) {
+                    if (pp.num_writers == 0) @panic("invalid pipe state: no writers");
+                    pp.num_writers -= 1;
+                } else {
+                    if (pp.num_readers == 0) @panic("invalid pipe state: no readers");
+                    pp.num_readers -= 1;
+                }
+                if (pp.num_readers == 0 and pp.num_writers == 0) {
+                    pp.deinit(kernel.getAllocator());
+                    kernel.getAllocator().destroy(pp);
+                }
+            },
+            else => return error.BadFd,
+        }
+        self.* = .empty;
+    }
+
+    /// Closes a descriptor if it is open and always leaves the slot empty.
+    pub fn closeIfOpen(self: *FileDesc) void {
+        self.close() catch {};
+        self.* = .empty;
+    }
+
+    /// Reads bytes from a descriptor into the provided buffer.
+    pub fn read(self: *FileDesc, dest: []u8) (fs.FsError || error{ BadFd, AccessDenied })!usize {
+        switch (self.*) {
+            .file => |file_index| {
+                const open_file = getOpenFile(file_index);
+                if (!open_file.readable) return error.AccessDenied;
+
+                const inode = try open_file.disk_fs.readFileInode(open_file.inode_index);
+                const bytes_read = try open_file.disk_fs.readInodeAt(&inode, open_file.offset, dest);
+                open_file.offset = std.math.add(u32, open_file.offset, bytes_read) catch return error.NoSpace;
+                return bytes_read;
+            },
+            .pipe => |pipe_info| {
+                const pp = pipe_info.handle;
+                const is_writer = pipe_info.writable;
+                if (is_writer) return error.AccessDenied;
+                const bytes_read = pp.read(dest);
+                if (bytes_read == 0) {
+                    if (pp.num_writers == 0) {
+                        return 0; // EOF
+                    } else {
+                        return error.BadFd; // TODO: should block on empty pipe with writers
+                    }
+                }
+                return bytes_read;
+            },
+            else => return error.BadFd,
+        }
+    }
+
+    /// Writes bytes from the provided buffer to a descriptor.
+    pub fn write(self: *FileDesc, src: []const u8) !usize {
+        switch (self.*) {
+            .stdout, .stderr => |ptask| {
+                const con = ptask.stdout_console orelse &console.primary;
+                con.puts(src);
+                return src.len;
+            },
+            .file => |file_index| {
+                const open_file = getOpenFile(file_index);
+                if (!open_file.writable) return error.AccessDenied;
+
+                const write_offset = if (open_file.append)
+                    try open_file.disk_fs.getInodeSize(open_file.inode_index)
+                else
+                    open_file.offset;
+                const written = try open_file.disk_fs.writeInodeAt(open_file.inode_index, write_offset, src);
+                open_file.offset = std.math.add(u32, write_offset, written) catch return error.NoSpace;
+                return written;
+            },
+            .pipe => |pipe_info| {
+                const pp = pipe_info.handle;
+                const is_writer = pipe_info.writable;
+                if (!is_writer) return error.AccessDenied;
+                if (pp.num_readers == 0) return error.BrokenPipe;
+                const written = pp.write(src);
+                if (written == 0) {
+                    return error.BadFd; // TODO: should block on full pipe with readers
+                }
+                return written;
+            },
+            else => return error.BadFd,
+        }
+    }
+};
+
+/// Creates a fresh pipe and returns descriptors for its read and write ends.
+pub fn makePipe(capacity: usize) error{OutOfMemory}!struct { FileDesc, FileDesc } {
+    const pp = try kernel.getAllocator().create(pipe.Pipe);
+    errdefer kernel.getAllocator().destroy(pp);
+    pp.* = try pipe.Pipe.init(kernel.getAllocator(), capacity);
+    pp.num_readers = 1;
+    pp.num_writers = 1;
+    return .{
+        FileDesc{ .pipe = .{ .handle = pp, .writable = false } },
+        FileDesc{ .pipe = .{ .handle = pp, .writable = true } },
+    };
+}
 
 pub const FiledescError = fs.WriteFileError || error{
     AccessDenied,
@@ -34,6 +167,7 @@ const SeekWhence = enum(u32) {
 
 const OpenFile = struct {
     in_use: bool = false,
+    disk_fs: *fs.FileSystem = undefined,
     inode_index: fs.InodeT = 0,
     offset: u32 = 0,
     readable: bool = false,
@@ -42,13 +176,6 @@ const OpenFile = struct {
 };
 
 var open_files: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
-
-/// Initializes the global kernel open-file table.
-pub fn init() void {
-    for (&open_files) |*open_file| {
-        open_file.* = .{};
-    }
-}
 
 /// Opens or creates a filesystem-backed descriptor for a task.
 pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
@@ -70,13 +197,14 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
 
     open_files[open_index] = .{
         .in_use = true,
+        .disk_fs = disk_fs,
         .inode_index = inode_index,
         .offset = 0,
         .readable = access_mode != O_WRONLY,
         .writable = access_mode != O_RDONLY,
         .append = (flags & O_APPEND) != 0,
     };
-    ptask.setFileFd(fd, open_index);
+    ptask.setFdSlot(fd, FileDesc{ .file = @truncate(open_index) });
     return fd;
 }
 
@@ -97,57 +225,29 @@ pub fn removeDirectory(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!
 }
 
 /// Reads from a task-owned descriptor into a user buffer.
-pub fn readFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, dest: []u8) FiledescError!usize {
+pub fn readFromFd(ptask: *task.Task, fd: u32, dest: []u8) FiledescError!usize {
     if (dest.len == 0) return 0;
 
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
-    return switch (slot.kind) {
-        .file => blk: {
-            const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
-            if (!open_file.readable) return error.AccessDenied;
-
-            const inode = try disk_fs.readFileInode(open_file.inode_index);
-            const bytes_read = try disk_fs.readInodeAt(&inode, open_file.offset, dest);
-            open_file.offset = std.math.add(u32, open_file.offset, bytes_read) catch return error.NoSpace;
-            break :blk bytes_read;
-        },
-        else => error.BadFd,
-    };
+    return slot.read(dest);
 }
 
+const WriteError = FiledescError || error{BrokenPipe};
+
 /// Writes to a task-owned descriptor from a user buffer.
-pub fn writeFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, src: []const u8) FiledescError!usize {
+pub fn writeToFd(ptask: *task.Task, fd: u32, src: []const u8) WriteError!usize {
     if (src.len == 0) return 0;
 
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
-    return switch (slot.kind) {
-        .stdout, .stderr => blk: {
-            const con = ptask.stdout_console orelse &console.primary;
-            con.puts(src);
-            break :blk src.len;
-        },
-        .file => blk: {
-            const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
-            if (!open_file.writable) return error.AccessDenied;
-
-            const write_offset = if (open_file.append)
-                try disk_fs.getInodeSize(open_file.inode_index)
-            else
-                open_file.offset;
-            const written = try disk_fs.writeInodeAt(open_file.inode_index, write_offset, src);
-            open_file.offset = std.math.add(u32, write_offset, written) catch return error.NoSpace;
-            break :blk written;
-        },
-        else => error.BadFd,
-    };
+    return slot.write(src);
 }
 
 /// Repositions a task-owned file descriptor and returns the resulting byte offset.
 pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32, whence_raw: u32) FiledescError!u32 {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
-    return switch (slot.kind) {
-        .file => blk: {
-            const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
+    return switch (slot.*) {
+        .file => |file_index| blk: {
+            const open_file = getOpenFile(file_index);
             const whence = switch (whence_raw) {
                 SEEK_SET => SeekWhence.Set,
                 SEEK_CUR => SeekWhence.Cur,
@@ -171,9 +271,9 @@ pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32
 /// Resizes a task-owned filesystem-backed descriptor without changing its current offset.
 pub fn truncateFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, size: u32) FiledescError!void {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
-    switch (slot.kind) {
-        .file => {
-            const open_file = getOpenFile(slot.file_index) orelse return error.BadFd;
+    switch (slot.*) {
+        .file => |file_index| {
+            const open_file = getOpenFile(file_index);
             if (!open_file.writable) return error.AccessDenied;
             try disk_fs.resizeInode(open_file.inode_index, size);
         },
@@ -184,30 +284,13 @@ pub fn truncateFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, size: u
 /// Closes a task-local descriptor and releases any backing open-file slot.
 pub fn closeFile(ptask: *task.Task, fd: u32) FiledescError!void {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
-    switch (slot.kind) {
-        .empty => return error.BadFd,
-        .file => {
-            if (getOpenFile(slot.file_index)) |_| {
-                open_files[slot.file_index] = .{};
-            } else {
-                return error.BadFd;
-            }
-        },
-        else => {},
-    }
-    ptask.clearFd(fd);
+    try slot.close(); // will also set the slot to empty
 }
 
 /// Closes all descriptors owned by a task before the task slot is recycled.
 pub fn closeTaskFiles(ptask: *task.Task) void {
-    for (&ptask.fd_table, 0..) |slot, fd| {
-        switch (slot.kind) {
-            .file => {
-                open_files[slot.file_index] = .{};
-            },
-            else => {},
-        }
-        ptask.fd_table[fd] = .{};
+    for (&ptask.fd_table) |*slot| {
+        slot.closeIfOpen();
     }
 }
 
@@ -233,10 +316,17 @@ fn findFreeOpenFileIndex() ?usize {
     return null;
 }
 
-fn getOpenFile(index: u8) ?*OpenFile {
-    if (index >= open_files.len) return null;
-    if (!open_files[index].in_use) return null;
+fn getOpenFile(index: u8) *OpenFile {
+    if (index >= open_files.len) @panic("invalid open file index");
+    if (!open_files[index].in_use) @panic("open file index not in use");
     return &open_files[index];
+}
+
+fn closeOpenFile(index: u8) void {
+    // TODO: should track reference count
+    if (index >= open_files.len) @panic("invalid open file index");
+    if (!open_files[index].in_use) @panic("open file index not in use");
+    open_files[index] = .{};
 }
 
 fn isInodeOpen(inode_index: fs.InodeT) bool {

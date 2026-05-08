@@ -56,6 +56,7 @@ const Syscall = enum(u32) {
     Close = 3,
     Seek = 8,
     Brk = 12, // change program heap size
+    Pipe = 22,
     Yield = 24,
     GetPid = 39,
     Exit = 60,
@@ -175,6 +176,17 @@ pub fn spawn(path: []const u8, args: []const []const u8) !u32 {
         argv_buf[i + 1] = arg;
     }
     return spawnv(argv_buf[0 .. args.len + 1]);
+}
+
+/// Creates a unidirectional pipe and returns `{ read_fd, write_fd }`.
+pub fn pipe() !struct { u32, u32 } {
+    var fds: [2]u32 = undefined;
+    const fds_slice = AbiSlice.fromSlice(u32, &fds);
+    const result = syscall(.Pipe, @intFromPtr(&fds_slice), 0, 0);
+    if (result == FAIL) {
+        return error.SyscallFailed;
+    }
+    return .{ fds[0], fds[1] };
 }
 
 /// Voluntarily yields execution to the scheduler.

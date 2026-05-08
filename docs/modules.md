@@ -25,7 +25,9 @@ Complete listing of every source file and its role.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
 - `kernel/interrupt_frame.zig`: standard stack frame layout used when entering the kernel.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
-- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over the filesystem and console streams.
+- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over filesystem files, console streams, and pipe endpoints.
+- `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
+- `kernel/ringbuf.zig`: fixed-capacity byte ring buffer used by the pipe implementation.
 - `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode.
 
 ## Console & Input/Output
@@ -67,7 +69,7 @@ Complete listing of every source file and its role.
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
-- `userspace/fs_stress.zig`: filesystem stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, and `ftruncate` semantics.
+- `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/alloc_stress.zig`: heap allocator stress test covering allocate/free/realloc behavior.
 - `userspace/sys.zig`, `userspace.ld`: shared syscall ABI helpers, linker script, and startup entry point `_start` which passes command-line arguments to `main`.

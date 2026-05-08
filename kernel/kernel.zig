@@ -264,7 +264,6 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.ProcessFileTableFull => "Process file table is full.",
         error.SystemFileTableFull => "System file table is full.",
         error.OutOfMemory => "Out of memory.",
-
         error.Corrupt => "Filesystem is corrupt.",
         error.DirectoryFull => "Directory is full.",
         error.FileExists => "File already exists.",
@@ -280,7 +279,7 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.InvalidBlock => "Invalid disk block address.",
         error.BufferTooSmall => "Buffer too small",
         error.InvalidElf => "Invalid ELF executable",
-
+        error.BrokenPipe => "Broken pipe",
         ide.IdeError.Timeout => "IDE timeout",
         ide.IdeError.DeviceFault => "IDE device fault",
         ide.IdeError.ControllerError => "IDE controller error",
@@ -364,8 +363,6 @@ fn kernel_enter() !noreturn {
 
     acpi.init();
     pci.scan(kernel_console);
-
-    filedesc.init();
 
     //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer
     apic.assignInterruptVector(0, 1, VECTOR_KEYBOARD); // IRQ1: keyboard

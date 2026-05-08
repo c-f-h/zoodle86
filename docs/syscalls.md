@@ -4,12 +4,13 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 
 | Syscall | Number | Arguments | Returns | Notes |
 |---------|--------|-----------|---------|-------|
-| `read` | 0 | fd, buf_offset, count | bytes read or `FAIL` | Reads from filesystem-backed fds |
-| `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to stdout/stderr or filesystem-backed fds |
+| `read` | 0 | fd, buf_offset, count | bytes read or `FAIL` | Reads from filesystem-backed or pipe fds |
+| `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to stdout/stderr, filesystem-backed, or pipe fds |
 | `open` | 2 | path_offset, path_len, flags | fd or `FAIL` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
-| `close` | 3 | fd | 0 or `FAIL` | Closes stdio or filesystem-backed fds |
+| `close` | 3 | fd | 0 or `FAIL` | Closes stdio, pipe, or filesystem-backed fds |
 | `lseek` | 8 | fd, signed_offset, whence | new offset or `FAIL` | Supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`; may seek past EOF |
 | `brk` | 12 | addr | new break or `FAIL` | Gets heap break if addr=0; sets break to addr if valid; validates bounds and grows/shrinks data memory |
+| `pipe` | 22 | fds_slice_ptr | 0 or `FAIL` | Expects an `AbiSlice` describing a writable 2-element `u32` buffer and fills it with `{ read_fd, write_fd }` |
 | `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
 | `exit` | 60 | exit_code | — | Terminates task with the given exit code, closes descriptors, and reschedules; does not return |

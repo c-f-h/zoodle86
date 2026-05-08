@@ -24,19 +24,6 @@ pub const UserMemError = error{AccessViolation};
 
 pub const MAX_FDS = 16;
 
-pub const FdKind = enum(u8) {
-    empty,
-    stdin,
-    stdout,
-    stderr,
-    file,
-};
-
-pub const FdSlot = struct {
-    kind: FdKind = .empty,
-    file_index: u8 = 0,
-};
-
 /// Lifecycle state of a task slot.
 pub const TaskState = enum {
     free, // slot is available for reuse
@@ -87,7 +74,7 @@ pub const Task = struct {
     data_mem: paging.VMemRange = .{},
     stack_mem: paging.VMemRange = .{}, // actual extents of current stack (may grow downwards)
 
-    fd_table: [MAX_FDS]FdSlot = [_]FdSlot{.{}} ** MAX_FDS,
+    fd_table: [MAX_FDS]filedesc.FileDesc = [_]filedesc.FileDesc{.empty} ** MAX_FDS,
 
     /// Console to use for stdout/stderr writes; null means use the primary console.
     stdout_console: ?*console.Console = null,
@@ -148,11 +135,11 @@ pub const Task = struct {
 
     fn initFdTable(task: *Task) void {
         for (&task.fd_table) |*slot| {
-            slot.* = .{};
+            slot.* = filedesc.FileDesc{ .empty = {} };
         }
-        task.fd_table[0] = .{ .kind = .stdin };
-        task.fd_table[1] = .{ .kind = .stdout };
-        task.fd_table[2] = .{ .kind = .stderr };
+        task.fd_table[0] = filedesc.FileDesc{ .stdin = {} };
+        task.fd_table[1] = filedesc.FileDesc{ .stdout = task };
+        task.fd_table[2] = filedesc.FileDesc{ .stderr = task };
     }
 
     /// Makes this task's page directory active on the current CPU.
@@ -193,31 +180,37 @@ pub const Task = struct {
     pub fn findFreeFd(task: *Task) ?u32 {
         var fd: u32 = 3;
         while (fd < task.fd_table.len) : (fd += 1) {
-            if (task.fd_table[fd].kind == .empty) {
+            if (task.fd_table[fd] == .empty) {
                 return fd;
             }
         }
         return null;
     }
 
-    /// Binds a task-local file descriptor to a kernel open-file table slot.
-    pub fn setFileFd(task: *Task, fd: u32, file_index: usize) void {
-        task.fd_table[fd] = .{
-            .kind = .file,
-            .file_index = @truncate(file_index),
-        };
+    /// Binds a task-local file descriptor slot to a descriptor value.
+    pub fn setFdSlot(task: *Task, fd: u32, fd_desc: filedesc.FileDesc) void {
+        task.fd_table[fd] = fd_desc;
+    }
+
+    /// Finds the first two free userspace-visible file descriptor slots.
+    pub fn findFreeFdPair(task: *Task) ?struct { u32, u32 } {
+        var first: ?u32 = null;
+        var fd: u32 = 3;
+        while (fd < task.fd_table.len) : (fd += 1) {
+            if (task.fd_table[fd] != .empty) continue;
+            if (first == null) {
+                first = fd;
+                continue;
+            }
+            return .{ first.?, fd };
+        }
+        return null;
     }
 
     /// Returns the descriptor slot for a task-local fd, or null if it is out of range.
-    pub fn getFdSlot(task: *Task, fd: u32) ?*FdSlot {
+    pub fn getFdSlot(task: *Task, fd: u32) ?*filedesc.FileDesc {
         if (fd >= task.fd_table.len) return null;
         return &task.fd_table[fd];
-    }
-
-    /// Clears a task-local file descriptor slot.
-    pub fn clearFd(task: *Task, fd: u32) void {
-        if (fd >= task.fd_table.len) return;
-        task.fd_table[fd] = .{};
     }
 
     /// Sets the initial instruction and stack pointers for entry into user space.

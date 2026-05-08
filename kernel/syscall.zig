@@ -13,6 +13,7 @@ const Syscall = enum(u32) {
     Close = 3,
     Lseek = 8,
     Brk = 12, // change program heap size
+    Pipe = 22,
     Yield = 24,
     GetPid = 39,
     Exit = 60,
@@ -97,12 +98,12 @@ fn sys_unlink(path_ofs: u32, path_len: u32) u32 {
 
 fn sys_read(fd: u32, ofs: u32, count: u32) u32 {
     const dest = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
-    return @intCast(filedesc.readFile(kernel.getFileSystem(), task.getCurrentTask(), fd, dest) catch |err| return mapError(err));
+    return @intCast(filedesc.readFromFd(task.getCurrentTask(), fd, dest) catch |err| return mapError(err));
 }
 
 fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
     const data = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
-    return @intCast(filedesc.writeFile(kernel.getFileSystem(), task.getCurrentTask(), fd, data) catch |err| return mapError(err));
+    return @intCast(filedesc.writeToFd(task.getCurrentTask(), fd, data) catch |err| return mapError(err));
 }
 
 fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {
@@ -138,6 +139,24 @@ fn sys_brk(addr: u32) u32 {
 
     ptask.heap_brk = addr;
     return addr;
+}
+
+fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
+    const fds_slice = try task.getCurrentTask().readUserSlice(u32, fds_slice_va);
+    if (fds_slice.len != 2) return errnoResult(ERRNO_EINVAL);
+
+    const ptask = task.getCurrentTask();
+    // Allocate fds first so failure can't leak an already created pipe later
+    const read_fd, const write_fd = ptask.findFreeFdPair() orelse return error.ProcessFileTableFull;
+
+    const pipe_fds = try filedesc.makePipe(paging.PAGE);
+
+    ptask.setFdSlot(read_fd, pipe_fds.@"0");
+    ptask.setFdSlot(write_fd, pipe_fds.@"1");
+
+    fds_slice[0] = read_fd;
+    fds_slice[1] = write_fd;
+    return 0;
 }
 
 fn sys_spawn(argv_desc_ofs: u32) u32 {
@@ -241,6 +260,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .GetPid => task.getCurrentTask().pid,
         .Lseek => sys_lseek(arg1, arg2, arg3),
         .Brk => sys_brk(arg1),
+        .Pipe => sys_pipe(arg1, arg2) catch |err| mapError(err),
         .Open => sys_open(arg1, arg2, arg3),
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),
