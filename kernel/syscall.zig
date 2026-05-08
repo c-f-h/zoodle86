@@ -63,6 +63,7 @@ fn mapError(err: anyerror) u32 {
         error.DirNotEmpty => ERRNO_ENOTEMPTY,
         error.FileExists => ERRNO_EEXIST,
         error.FileNotFound => ERRNO_ENOENT,
+        error.InvalidArgument => ERRNO_EINVAL,
         error.InvalidFlags => ERRNO_EINVAL,
         error.InvalidLba => ERRNO_EIO,
         error.InvalidName => ERRNO_EINVAL,
@@ -80,52 +81,52 @@ fn mapError(err: anyerror) u32 {
     });
 }
 
-fn sys_open(path_ofs: u32, path_len: u32, flags: u32) u32 {
-    const path = task.getCurrentTask().getUserMem(path_ofs, path_len) catch |err| return mapError(err);
-    return filedesc.openFile(kernel.getFileSystem(), task.getCurrentTask(), path, flags) catch |err| mapError(err);
+fn sys_open(path_ofs: u32, path_len: u32, flags: u32) !u32 {
+    const path = try task.getCurrentTask().getUserMem(path_ofs, path_len);
+    return try filedesc.openFile(kernel.getFileSystem(), task.getCurrentTask(), path, flags);
 }
 
-fn sys_close(fd: u32) u32 {
-    filedesc.closeFile(task.getCurrentTask(), fd) catch |err| return mapError(err);
+fn sys_close(fd: u32) !u32 {
+    try filedesc.closeFile(task.getCurrentTask(), fd);
     return 0;
 }
 
-fn sys_unlink(path_ofs: u32, path_len: u32) u32 {
-    const path = task.getCurrentTask().getUserMem(path_ofs, path_len) catch |err| return mapError(err);
-    filedesc.unlinkFile(kernel.getFileSystem(), path) catch |err| return mapError(err);
+fn sys_unlink(path_ofs: u32, path_len: u32) !u32 {
+    const path = try task.getCurrentTask().getUserMem(path_ofs, path_len);
+    try filedesc.unlinkFile(kernel.getFileSystem(), path);
     return 0;
 }
 
-fn sys_read(fd: u32, ofs: u32, count: u32) u32 {
-    const dest = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
-    return @intCast(filedesc.readFromFd(task.getCurrentTask(), fd, dest) catch |err| return mapError(err));
+fn sys_read(fd: u32, ofs: u32, count: u32) !u32 {
+    const dest = try task.getCurrentTask().getUserMem(ofs, count);
+    return @intCast(try filedesc.readFromFd(task.getCurrentTask(), fd, dest));
 }
 
-fn sys_write(fd: u32, ofs: u32, count: u32) u32 {
-    const data = task.getCurrentTask().getUserMem(ofs, count) catch |err| return mapError(err);
-    return @intCast(filedesc.writeToFd(task.getCurrentTask(), fd, data) catch |err| return mapError(err));
+fn sys_write(fd: u32, ofs: u32, count: u32) !u32 {
+    const data = try task.getCurrentTask().getUserMem(ofs, count);
+    return @intCast(try filedesc.writeToFd(task.getCurrentTask(), fd, data));
 }
 
-fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) u32 {
+fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) !u32 {
     const offset: i32 = @bitCast(offset_bits);
-    return filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence) catch |err| mapError(err);
+    return try filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence);
 }
 
-fn sys_ftruncate(fd: u32, size: u32) u32 {
-    filedesc.truncateFile(kernel.getFileSystem(), task.getCurrentTask(), fd, size) catch |err| return mapError(err);
+fn sys_ftruncate(fd: u32, size: u32) !u32 {
+    try filedesc.truncateFile(kernel.getFileSystem(), task.getCurrentTask(), fd, size);
     return 0;
 }
 
-fn sys_brk(addr: u32) u32 {
+fn sys_brk(addr: u32) !u32 {
     const ptask = task.getCurrentTask();
     if (addr == 0) {
         return ptask.heap_brk;
     }
     if (addr < ptask.heap_start) {
-        return errnoResult(ERRNO_EINVAL);
+        return error.InvalidArgument;
     }
     if (addr > ptask.stack_bottom) {
-        return errnoResult(ERRNO_ENOMEM);
+        return error.OutOfMemory;
     }
 
     const new_total_pages = paging.numPagesBetween(ptask.data_mem.base, addr);
@@ -143,7 +144,7 @@ fn sys_brk(addr: u32) u32 {
 
 fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
     const fds_slice = try task.getCurrentTask().readUserSlice(u32, fds_slice_va);
-    if (fds_slice.len != 2) return errnoResult(ERRNO_EINVAL);
+    if (fds_slice.len != 2) return error.InvalidArgument;
 
     const ptask = task.getCurrentTask();
     // Allocate fds first so failure can't leak an already created pipe later
@@ -159,32 +160,32 @@ fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
     return 0;
 }
 
-fn sys_spawn(argv_desc_ofs: u32) u32 {
+fn sys_spawn(argv_desc_ofs: u32) !u32 {
     const current_task = task.getCurrentTask();
 
     // read argv slice from userspace memory
-    const argv_desc = current_task.getUserPtr(task.AbiSlice, argv_desc_ofs) catch |err| return mapError(err);
+    const argv_desc = try current_task.getUserPtr(task.AbiSlice, argv_desc_ofs);
     const argc: usize = @intCast(argv_desc.len);
     if (argc == 0 or argc > task.MAX_ARGV_COUNT) {
-        return errnoResult(ERRNO_EINVAL);
+        return error.InvalidArgument;
     }
 
-    const arg_slices = current_task.getUserSlice(task.AbiSlice, argv_desc.ptr, argv_desc.len) catch |err| return mapError(err);
+    const arg_slices = try current_task.getUserSlice(task.AbiSlice, argv_desc.ptr, argv_desc.len);
 
     // count total bytes in argument strings for a single allocation
     var string_bytes: usize = 0;
     for (arg_slices, 0..) |arg_desc, i| {
-        if (i == 0 and arg_desc.len == 0) return errnoResult(ERRNO_EINVAL); // command must not be empty
+        if (i == 0 and arg_desc.len == 0) return error.InvalidArgument; // command must not be empty
         string_bytes += arg_desc.len;
     }
 
     // allocate buffers for the string storage and the slice objects
     const allocator = kernel.getAllocator();
 
-    const arg_storage = allocator.alloc(u8, string_bytes) catch |err| return mapError(err);
+    const arg_storage = try allocator.alloc(u8, string_bytes);
     defer allocator.free(arg_storage);
 
-    const argv_buf = allocator.alloc([]const u8, argc) catch |err| return mapError(err);
+    const argv_buf = try allocator.alloc([]const u8, argc);
     defer allocator.free(argv_buf);
 
     // copy argv strings from userspace and store their slices in the argv_buf
@@ -194,7 +195,7 @@ fn sys_spawn(argv_desc_ofs: u32) u32 {
         if (len == 0) {
             argv_buf[i] = arg_storage[cursor..cursor]; // empty slice
         } else {
-            const arg_bytes = current_task.getUserMem(arg_desc.ptr, arg_desc.len) catch |err| return mapError(err);
+            const arg_bytes = try current_task.getUserMem(arg_desc.ptr, arg_desc.len);
             const dest = arg_storage[cursor .. cursor + len];
             @memcpy(dest, arg_bytes);
             argv_buf[i] = dest;
@@ -203,18 +204,18 @@ fn sys_spawn(argv_desc_ofs: u32) u32 {
     }
 
     defer current_task.loadPageDir(); // make sure to return to the correct page directory
-    const child = kernel.loadUserspaceElf(argv_buf[0], argv_buf) catch |err| return mapError(err);
+    const child = try kernel.loadUserspaceElf(argv_buf[0], argv_buf);
     child.parent_pid = current_task.pid;
     child.stdout_console = current_task.stdout_console;
     return child.pid;
 }
 
 /// Blocks the calling task until the child with the given PID exits, then returns its exit status.
-/// Returns FAIL if the PID is not found or the caller is not its parent.
-fn sys_waitpid(pid: u32) u32 {
+/// Returns InvalidArgument when the PID does not exist or is not a child of the caller.
+fn sys_waitpid(pid: u32) !u32 {
     const current = task.getCurrentTask();
-    const child = taskman.findTask(pid) orelse return errnoResult(ERRNO_EINVAL);
-    if (child.parent_pid != current.pid) return errnoResult(ERRNO_EINVAL);
+    const child = taskman.findTask(pid) orelse return error.InvalidArgument;
+    if (child.parent_pid != current.pid) return error.InvalidArgument;
 
     if (child.state == .zombie) {
         // Child already exited; collect status and free slot.
@@ -230,20 +231,20 @@ fn sys_waitpid(pid: u32) u32 {
     kernel.reschedule(); // does not return; exit handler will call setSyscallReturn() and set state=active
 }
 
-fn sys_mkdir(path_slice_va: u32) u32 {
-    const path = task.getCurrentTask().readUserSlice(u8, path_slice_va) catch |err| return mapError(err);
-    return kernel.getFileSystem().createDirectory(path) catch |err| mapError(err);
+fn sys_mkdir(path_slice_va: u32) !u32 {
+    const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
+    return try kernel.getFileSystem().createDirectory(path);
 }
 
-fn sys_rmdir(path_slice_va: u32) u32 {
-    const path = task.getCurrentTask().readUserSlice(u8, path_slice_va) catch |err| return mapError(err);
-    filedesc.removeDirectory(kernel.getFileSystem(), path) catch |err| return mapError(err);
+fn sys_rmdir(path_slice_va: u32) !u32 {
+    const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
+    try filedesc.removeDirectory(kernel.getFileSystem(), path);
     return 0;
 }
 
 /// Marks the current task so that all its children are auto-reaped on exit
 /// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
-fn sys_set_child_reap() u32 {
+fn sys_set_child_reap() !u32 {
     task.getCurrentTask().reap_children = true;
     return 0;
 }
@@ -254,13 +255,13 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
     const arg1 = frame.interrupt.regs.ebx;
     const arg2 = frame.interrupt.regs.ecx;
     const arg3 = frame.interrupt.regs.edx;
-    const retval = switch (nr) {
+    const retval = (switch (nr) {
         .Close => sys_close(arg1),
         .Exit => kernel.exitCurrentTask(arg1),
         .GetPid => task.getCurrentTask().pid,
         .Lseek => sys_lseek(arg1, arg2, arg3),
         .Brk => sys_brk(arg1),
-        .Pipe => sys_pipe(arg1, arg2) catch |err| mapError(err),
+        .Pipe => sys_pipe(arg1, arg2),
         .Open => sys_open(arg1, arg2, arg3),
         .Read => sys_read(arg1, arg2, arg3),
         .Write => sys_write(arg1, arg2, arg3),
@@ -272,7 +273,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .SetChildReap => sys_set_child_reap(),
         .Yield => kernel.reschedule(),
         .Spawn => sys_spawn(arg1),
-        else => errnoResult(ERRNO_EINVAL),
-    };
+        else => error.InvalidArgument,
+    }) catch |err| mapError(err);
     frame.setReturnValue(retval);
 }
