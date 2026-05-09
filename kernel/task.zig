@@ -11,7 +11,8 @@ pub const pid_t = u32;
 
 extern const return_to_userspace: anyopaque;
 
-const KERNEL_STACK_SIZE = 4096;
+/// Size of each task's kernel stack. Must be a power of 2; getCurrentTask() relies on masking.
+pub const KERNEL_STACK_SIZE = 8 * 1024;
 
 /// Maximum number of arguments that can be passed to a process via setArgs.
 const KernelStack = [KERNEL_STACK_SIZE]u8;
@@ -57,7 +58,7 @@ pub inline fn getCurrentTask() *Task {
 var next_pid: u32 = 1;
 
 pub const Task = struct {
-    kernel_stack: KernelStack align(4096) = undefined,
+    kernel_stack: KernelStack align(KERNEL_STACK_SIZE) = undefined,
     page_dir: paging.PageDirectory align(4096) = undefined,
     page_dir_phys_addr: u32 = undefined,
     state: TaskState = .free,
@@ -365,7 +366,7 @@ pub const Task = struct {
 };
 
 comptime {
-    if (KERNEL_STACK_SIZE != paging.PAGE) @compileError("Task layout expects a one-page kernel stack");
+    if ((KERNEL_STACK_SIZE & (KERNEL_STACK_SIZE - 1)) != 0) @compileError("KERNEL_STACK_SIZE must be a power of 2");
     if (@offsetOf(Task, "kernel_stack") != 0) @compileError("Task.kernel_stack must remain the first field");
 }
 

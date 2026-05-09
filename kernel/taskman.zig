@@ -6,12 +6,13 @@ const MAX_TASKS = 8;
 const TASK_POOL_BASE = 0xE800_0000;
 
 const TaskmanEntry = struct {
-    guard_page: [paging.PAGE]u8 align(paging.PAGE) = undefined,
+    /// Guard area placed immediately below the kernel stack.
+    guard_pages: [task.KERNEL_STACK_SIZE]u8 align(task.KERNEL_STACK_SIZE) = undefined,
     task: task.Task = .{},
 };
 
 comptime {
-    if (@offsetOf(TaskmanEntry, "task") != paging.PAGE) @compileError("TaskmanEntry.task must start after the guard page");
+    if (@offsetOf(TaskmanEntry, "task") != task.KERNEL_STACK_SIZE) @compileError("TaskmanEntry.task must start after the guard area");
     if (@sizeOf(TaskmanEntry) % paging.PAGE != 0) @compileError("TaskmanEntry size must be page-aligned");
 }
 
@@ -41,7 +42,7 @@ pub fn init() void {
 
     for (task_entries) |*entry| {
         entry.task = .{};
-        paging.unmapPagesAt(@intFromPtr(&entry.guard_page), 1);
+        paging.unmapPagesAt(@intFromPtr(&entry.guard_pages), entry.guard_pages.len / paging.PAGE);
     }
 }
 
