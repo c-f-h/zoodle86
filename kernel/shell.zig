@@ -27,7 +27,7 @@ var autoexec_finished: bool = false;
 
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
-const Shell = struct {
+pub const Shell = struct {
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
     console: *console.Console,
@@ -63,7 +63,8 @@ const commands = [_]Command{
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
 
-fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
+/// Execute a shell command with the given shell instance.
+pub fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
     if (tryHandleRunCommandLine(shell, cmdline)) {
         return;
     }
