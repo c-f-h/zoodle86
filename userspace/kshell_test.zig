@@ -3,8 +3,7 @@
 
 const sys = @import("sys.zig");
 
-/// Simple test program for the kshell syscall.
-/// Executes a few kernel shell commands from userspace.
+/// Entry point that tests the kshell syscall with several commands.
 pub fn main() void {
     const stdout = sys.STDOUT;
     
