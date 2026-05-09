@@ -95,6 +95,16 @@ pub fn wakeWaiterForPid(child_pid: u32, exit_status: u32) bool {
     return false;
 }
 
+/// Calls `callback` once for every non-free task slot in the pool.
+/// The callback receives a const pointer to the task; it must not modify the task.
+pub fn forEachTask(comptime T: type, ctx: T, callback: fn (T, *const task.Task) void) void {
+    for (task_entries) |*entry| {
+        if (entry.task.state != .free) {
+            callback(ctx, &entry.task);
+        }
+    }
+}
+
 /// Reparents all children of the exiting task (identified by pid) to parent_pid=0.
 /// Zombie children are freed immediately since no one will collect their exit status.
 pub fn orphanChildrenOf(pid: u32) void {

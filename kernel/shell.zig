@@ -14,6 +14,7 @@ const readline = @import("readline.zig");
 const kernel = @import("kernel.zig");
 const serial = @import("serial.zig");
 const task = @import("task.zig");
+const taskman = @import("taskman.zig");
 
 const autoexec_name = "autoexec";
 const executable_search_path = [_][]const u8{
@@ -57,6 +58,7 @@ const commands = [_]Command{
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
     .{ .name = "run", .description = "Run an ELF executable with command-line arguments.", .handler = cmdRun },
     .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
+    .{ .name = "ps", .description = "List all active tasks and their status.", .handler = cmdPs },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
@@ -581,6 +583,37 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     if (tryLoadProgram(shell, fname, resolved, argv_buf[0..argc])) |ptask| {
         kernel.schedule_initial(ptask);
     }
+}
+
+fn printTaskRow(con: *console.Console, t: *const task.Task) void {
+    con.putDecU32(t.pid);
+    con.puts("  ");
+    switch (t.state) {
+        .free => unreachable,
+        .active => con.puts("active          "),
+        .waiting_pid => |wpid| {
+            con.puts("waiting (pid ");
+            con.putDecU32(wpid);
+            con.puts(")  ");
+        },
+        .zombie => con.puts("zombie          "),
+    }
+    if (t.parent_pid != 0) {
+        con.puts("parent=");
+        con.putDecU32(t.parent_pid);
+    } else {
+        con.puts("parent=kernel");
+    }
+    con.newline();
+}
+
+fn cmdPs(shell: *Shell, args: *ArgsIterator) !void {
+    if (args.next() != null) {
+        printUsage(shell, "ps");
+        return;
+    }
+    shell.console.puts("PID  STATE            PARENT\n");
+    taskman.forEachTask(*console.Console, shell.console, printTaskRow);
 }
 
 fn cmdShutdown(shell: *Shell, args: *ArgsIterator) !void {

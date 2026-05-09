@@ -23,6 +23,7 @@ The kernel provides an interactive shell with the following commands:
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
 | **run** | `<executable> [<arg> ...]` | Run an ELF executable with optional command-line arguments. Bare names are resolved through the shell path, currently `/bin`. |
 | **multirun** | `<count> <executable> [<arg> ...]` | Run `count` concurrent copies of one ELF executable, forwarding the same argv to each copy. Bare names are resolved through the shell path, currently `/bin`. |
+| **ps** | (none) | List all active tasks with their PID, state, and parent PID. |
 | **shutdown** | (none) | Power off Bochs/QEMU. |
 | **break** | (none) | Invoke a Bochs magic breakpoint. |
 
