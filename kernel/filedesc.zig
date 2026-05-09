@@ -64,6 +64,32 @@ pub const FileDesc = union(FdKind) {
         self.* = .empty;
     }
 
+    pub fn dupe(self: *FileDesc) FileDesc {
+        switch (self.*) {
+            .empty => return .{.empty},
+            .stdin => return self.*,
+            .stdout => return self.*,
+            .stderr => return self.*,
+            .file => |file_index| {
+                const open_file = getOpenFile(file_index);
+                open_file.in_use += 1;
+                if (open_file.in_use == 0) @panic("file reference count overflow");
+                return .{ .file = file_index };
+            },
+            .pipe => |pipe_info| {
+                const pp = pipe_info.handle;
+                const is_writer = pipe_info.writable;
+                if (is_writer) {
+                    pp.num_writers += 1;
+                    return .{ .pipe = .{ .handle = pp, .writable = true } };
+                } else {
+                    pp.num_readers += 1;
+                    return .{ .pipe = .{ .handle = pp, .writable = false } };
+                }
+            },
+        }
+    }
+
     /// Closes a descriptor if it is open and always leaves the slot empty.
     pub fn closeIfOpen(self: *FileDesc) void {
         self.close() catch {};
@@ -170,7 +196,7 @@ const SeekWhence = enum(u32) {
 };
 
 const OpenFile = struct {
-    in_use: bool = false,
+    in_use: u8 = 0, // Reference counter
     disk_fs: *fs.FileSystem = undefined,
     inode_index: fs.InodeT = 0,
     offset: u32 = 0,
@@ -199,7 +225,7 @@ pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Filed
     }
 
     open_files[open_index] = .{
-        .in_use = true,
+        .in_use = 1,
         .disk_fs = disk_fs,
         .inode_index = inode_index,
         .offset = 0,
@@ -321,27 +347,29 @@ fn validateOpenFlags(flags: u32) FiledescError!u32 {
 
 fn findFreeOpenFileIndex() ?usize {
     for (&open_files, 0..) |open_file, index| {
-        if (!open_file.in_use) return index;
+        if (open_file.in_use == 0) return index;
     }
     return null;
 }
 
 fn getOpenFile(index: u8) *OpenFile {
     if (index >= open_files.len) @panic("invalid open file index");
-    if (!open_files[index].in_use) @panic("open file index not in use");
+    if (open_files[index].in_use == 0) @panic("open file index not in use");
     return &open_files[index];
 }
 
 fn closeOpenFile(index: u8) void {
-    // TODO: should track reference count
     if (index >= open_files.len) @panic("invalid open file index");
-    if (!open_files[index].in_use) @panic("open file index not in use");
-    open_files[index] = .{};
+    if (open_files[index].in_use == 0) @panic("open file index not in use");
+    open_files[index].in_use -= 1;
+    if (open_files[index].in_use == 0) {
+        open_files[index] = .{};
+    }
 }
 
 fn isInodeOpen(inode_index: fs.InodeT) bool {
     for (&open_files) |open_file| {
-        if (open_file.in_use and open_file.inode_index == inode_index) {
+        if (open_file.in_use != 0 and open_file.inode_index == inode_index) {
             return true;
         }
     }
