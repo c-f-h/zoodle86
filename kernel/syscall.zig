@@ -226,8 +226,8 @@ fn sys_waitpid(pid: u32) !u32 {
     }
 
     // Child is still running; block until its exit handler wakes us.
-    current.state = task.TaskState{ .waiting_pid = pid };
-    return kernel.kernel_yield(); // return value is set by wakeWaiterForPid
+    try current.waitInQueue(&child.waiters_for_pid);
+    return kernel.kernel_yield();
 }
 
 fn sys_mkdir(path_slice_va: u32) !u32 {

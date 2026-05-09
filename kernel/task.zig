@@ -4,6 +4,7 @@ const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
 const console = @import("console.zig");
+const waitqueue = @import("waitqueue.zig");
 const std = @import("std");
 
 pub const pid_t = u32;
@@ -29,11 +30,11 @@ pub const UserMemError = error{AccessViolation};
 pub const MAX_FDS = 16;
 
 ///// Lifecycle state of a task slot.
-pub const TaskState = union(enum) {
-    free: void, // slot is available for reuse
-    active: void, // task is runnable or currently executing
-    waiting_pid: pid_t, // task is blocked in waitpid, waiting for the specified child PID to exit
-    zombie: void, // task has exited but exit status not yet collected by parent
+pub const TaskState = enum {
+    free, // slot is available for reuse
+    active, // task is runnable or currently executing
+    waiting, // task is blocked in a WaitQueue
+    zombie, // task has exited but exit status not yet collected by parent
 };
 
 /// Given a pointer which points to within a kernel stack, finds the pointer to the associated *Task.
@@ -59,12 +60,12 @@ pub const Task = struct {
     kernel_stack: KernelStack align(4096) = undefined,
     page_dir: paging.PageDirectory align(4096) = undefined,
     page_dir_phys_addr: u32 = undefined,
-    pid: u32 = undefined,
+    state: TaskState = .free,
 
     /// Kernel stack pointer (KernelFrame) for kernel_yield_trampoline. Allows resuming a sleeping task.
     kernel_esp: usize = 0,
 
-    state: TaskState = .free,
+    pid: u32 = undefined,
     parent_pid: u32 = 0, // PID of spawning task; 0 = created by kernel/shell (auto-reap)
     reap_children: bool = false, // if true, children are auto-reaped instead of becoming zombies
     exit_status: u32 = 0, // exit code written on exit, read by waitpid
@@ -81,6 +82,9 @@ pub const Task = struct {
 
     /// Console to use for stdout/stderr writes; null means use the primary console.
     stdout_console: ?*console.Console = null,
+
+    /// Wait queue for tasks waiting on this task to exit.
+    waiters_for_pid: waitqueue.WaitQueue = undefined,
 
     /// Initializes a fresh task slot and its initial userspace context.
     pub fn init(task: *Task) void {
@@ -119,6 +123,8 @@ pub const Task = struct {
 
         task.state = .active;
         task.initPaging();
+
+        task.waiters_for_pid = waitqueue.WaitQueue.init(kernel.getAllocator());
     }
 
     fn initPaging(task: *Task) void {
@@ -167,19 +173,18 @@ pub const Task = struct {
         t.pid = 0;
     }
 
-    /// Writes a value into the saved EAX position on the kernel stack frame so that
-    /// when the task is woken, kernel_yield() will return that value.
-    /// Only valid while the task is in the .waiting state with a saved kernel_esp.
-    pub fn setKernelYieldReturnValue(t: *Task, val: u32) void {
-        if (t.state != .waiting_pid or t.kernel_esp == 0)
-            @panic("setKernelYieldReturnValue called on task that is not waiting");
-        const frame: *interrupt_frame.KernelFrame = @ptrFromInt(t.kernel_esp);
-        frame.regs.eax = val;
+    /// Adds the task to a wait queue and blocks it until it is woken by wakeOne or wakeAll.
+    pub fn waitInQueue(t: *Task, wq: *waitqueue.WaitQueue) !void {
+        try wq.add(t);
+        t.state = .waiting;
     }
 
     /// Wakes a task from a waiting state and sets its syscall return value.
     pub fn wakeWithReturnValue(t: *Task, val: u32) void {
-        t.setKernelYieldReturnValue(val);
+        if (t.state != .waiting or t.kernel_esp == 0)
+            @panic("setKernelYieldReturnValue called on task that is not waiting");
+        const frame: *interrupt_frame.KernelFrame = @ptrFromInt(t.kernel_esp);
+        frame.regs.eax = val;
         t.state = .active;
     }
 

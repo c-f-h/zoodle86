@@ -6,6 +6,7 @@ pub fn main(argv: []const []const u8) !void {
     if (argv.len > 1) {
         count = try std.fmt.parseInt(u32, argv[1], 10);
     }
+    const total = count;
 
     const child_pid = if (argv.len > 2)
         try sys.spawn(argv[0], &.{argv[2]})
@@ -26,6 +27,7 @@ pub fn main(argv: []const []const u8) !void {
     } else {
         _ = sys.write(sys.STDOUT, "\n");
     }
+    sys.exit(total);
 }
 
 comptime {

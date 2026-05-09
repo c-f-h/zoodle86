@@ -25,6 +25,7 @@ Complete listing of every source file and its role.
 - `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, seeded user/kernel resume frames, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
 - `kernel/interrupt_frame.zig`: stack frame layouts for both normalized user interrupt returns and saved kernel-yield resume points.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
+- `kernel/waitqueue.zig`: intrusive singly-linked WaitQueue; tasks blocked on an event are added as heap-allocated nodes and freed when woken via `wakeOne`/`wakeAll`.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over filesystem files, console streams, and pipe endpoints.
 - `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
 - `kernel/ringbuf.zig`: fixed-capacity byte ring buffer used by the pipe implementation.

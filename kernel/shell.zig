@@ -591,11 +591,7 @@ fn printTaskRow(con: *console.Console, t: *const task.Task) void {
     switch (t.state) {
         .free => unreachable,
         .active => con.puts("active          "),
-        .waiting_pid => |wpid| {
-            con.puts("waiting (pid ");
-            con.putDecU32(wpid);
-            con.puts(")  ");
-        },
+        .waiting => con.puts("waiting         "),
         .zombie => con.puts("zombie          "),
     }
     if (t.parent_pid != 0) {

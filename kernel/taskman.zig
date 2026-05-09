@@ -81,20 +81,6 @@ pub fn findTask(pid: u32) ?*task.Task {
     return null;
 }
 
-/// Wakes a parent task that is blocked in waitpid waiting for the given child PID.
-/// Writes the exit status as the waitpid return value and transitions the task to active.
-/// Returns true if a waiter was found and woken, false otherwise.
-pub fn wakeWaiterForPid(child_pid: u32, exit_status: u32) bool {
-    for (task_entries) |*entry| {
-        const ptask = &entry.task;
-        if (ptask.state == .waiting_pid and ptask.state.waiting_pid == child_pid) {
-            ptask.wakeWithReturnValue(exit_status);
-            return true;
-        }
-    }
-    return false;
-}
-
 /// Calls `callback` once for every non-free task slot in the pool.
 /// The callback receives a const pointer to the task; it must not modify the task.
 pub fn forEachTask(comptime T: type, ctx: T, callback: fn (T, *const task.Task) void) void {
