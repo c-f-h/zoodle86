@@ -143,6 +143,18 @@ pub fn getpid() u32 {
     return syscall(.GetPid, 0, 0, 0);
 }
 
+/// A (dst, src) fd-index pair for remapping parent file descriptors into the child at spawn time.
+/// `child.fd[dst]` will be set to a copy of `parent.fd[src]`.
+pub const FdRemap = extern struct {
+    dst: u32,
+    src: u32,
+};
+
+/// Options for the spawn syscall. Pass a pointer to this struct as the second argument to spawnvOpts/spawnOpts.
+pub const SpawnOpts = extern struct {
+    fd_remaps: AbiSlice,
+};
+
 /// Spawns a userspace executable from a full argv slice where argv[0] names the program.
 pub fn spawnv(argv: []const []const u8) !u32 {
     if (argv.len > MAX_ARGV_COUNT) return error.TooManyArgs;
@@ -176,6 +188,47 @@ pub fn spawn(path: []const u8, args: []const []const u8) !u32 {
         argv_buf[i + 1] = arg;
     }
     return spawnv(argv_buf[0 .. args.len + 1]);
+}
+
+/// Spawns an executable from a full argv slice with optional fd remapping.
+/// `fd_remaps` is a slice of (dst, src) pairs; for each pair, `child.fd[dst]`
+/// is set to a copy of the calling process's `fd[src]`.
+pub fn spawnvOpts(argv: []const []const u8, fd_remaps: []const FdRemap) !u32 {
+    if (argv.len > MAX_ARGV_COUNT) return error.TooManyArgs;
+
+    var argv_abi_storage: [MAX_ARGV_COUNT]AbiSlice = undefined;
+    for (argv, 0..) |arg, i| {
+        argv_abi_storage[i] = .{
+            .ptr = @intFromPtr(arg.ptr),
+            .len = @intCast(arg.len),
+        };
+    }
+
+    const argv_abi = AbiSlice{
+        .ptr = if (argv.len == 0) 0 else @intFromPtr(&argv_abi_storage[0]),
+        .len = @intCast(argv.len),
+    };
+    const opts = SpawnOpts{
+        .fd_remaps = .{
+            .ptr = if (fd_remaps.len == 0) 0 else @intFromPtr(fd_remaps.ptr),
+            .len = @intCast(fd_remaps.len),
+        },
+    };
+    const pid = syscall(.Spawn, @intFromPtr(&argv_abi), @intFromPtr(&opts), 0);
+    if (pid == FAIL) return error.SpawnFailed;
+    return pid;
+}
+
+/// Spawns an executable, prepending the command name as argv[0], with optional fd remapping.
+pub fn spawnOpts(path: []const u8, args: []const []const u8, fd_remaps: []const FdRemap) !u32 {
+    if (args.len + 1 > MAX_ARGV_COUNT) return error.TooManyArgs;
+
+    var argv_buf: [MAX_ARGV_COUNT][]const u8 = undefined;
+    argv_buf[0] = path;
+    for (args, 0..) |arg, i| {
+        argv_buf[i + 1] = arg;
+    }
+    return spawnvOpts(argv_buf[0 .. args.len + 1], fd_remaps);
 }
 
 /// Creates a unidirectional pipe and returns `{ read_fd, write_fd }`.

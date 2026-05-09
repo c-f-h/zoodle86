@@ -66,7 +66,7 @@ pub const FileDesc = union(FdKind) {
 
     pub fn dupe(self: *FileDesc) FileDesc {
         switch (self.*) {
-            .empty => return .{.empty},
+            .empty => return .{ .empty = {} },
             .stdin => return self.*,
             .stdout => return self.*,
             .stderr => return self.*,

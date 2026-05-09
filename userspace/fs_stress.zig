@@ -308,6 +308,39 @@ fn testPipe() !void {
     _ = try expectSyscall(sys.close(read_fd), "testPipe: close read end", @src());
 }
 
+fn testPipeSpawn() !void {
+    // Create two pipes: one for feeding cat's stdin, one for capturing cat's stdout.
+    const stdin_read, const stdin_write = try checkSyscall(sys.pipe(), "testPipeSpawn: create stdin pipe", @src());
+    const stdout_read, const stdout_write = try checkSyscall(sys.pipe(), "testPipeSpawn: create stdout pipe", @src());
+
+    // Remap child's stdin (fd 0) to the read end of the stdin pipe,
+    // and child's stdout (fd 1) to the write end of the stdout pipe.
+    const fd_remaps = [_]sys.FdRemap{
+        .{ .dst = sys.STDIN, .src = stdin_read },
+        .{ .dst = sys.STDOUT, .src = stdout_write },
+    };
+    const pid = try checkSyscall(sys.spawnOpts("/bin/cat", &.{}, &fd_remaps), "testPipeSpawn: spawn cat", @src());
+
+    // Parent no longer needs the child-side ends of the pipes.
+    _ = try expectSyscall(sys.close(stdin_read), "testPipeSpawn: close stdin read in parent", @src());
+    _ = try expectSyscall(sys.close(stdout_write), "testPipeSpawn: close stdout write in parent", @src());
+
+    // Feed known input to cat and signal EOF.
+    const input = "pipe spawn ok\n";
+    try writeAll(stdin_write, input);
+    // Closing cat's stdin should cause it to detect EOF and exit.
+    _ = try expectSyscall(sys.close(stdin_write), "testPipeSpawn: close stdin write in parent", @src());
+
+    // Read cat's output and verify it matches the input.
+    var buf: [64]u8 = undefined;
+    try readExact(stdout_read, buf[0..input.len]);
+    try expectEof(stdout_read);
+    try expectBytes(buf[0..input.len], input);
+    _ = try expectSyscall(sys.close(stdout_read), "testPipeSpawn: close stdout read in parent", @src());
+
+    _ = sys.waitpid(pid);
+}
+
 fn testBrokenPipe() !void {
     const read_fd, const write_fd = try checkSyscall(sys.pipe(), "testBrokenPipe: create pipe", @src());
     _ = try expectSyscall(sys.close(read_fd), "testBrokenPipe: close read end", @src());
@@ -371,6 +404,7 @@ pub fn main(argv: []const []const u8) !void {
     try testRmdir();
     try testPipe();
     try testBrokenPipe();
+    try testPipeSpawn();
 
     _ = try expectSyscall(sys.close(sys.STDIN), "main: close stdin", @src());
     _ = try expectSyscall(sys.close(sys.STDERR), "main: close stderr", @src());

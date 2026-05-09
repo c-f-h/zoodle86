@@ -160,7 +160,20 @@ fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
     return 0;
 }
 
-fn sys_spawn(argv_desc_ofs: u32) !u32 {
+/// A (dst, src) fd-index pair used in SpawnOpts to remap file descriptors into a child process.
+/// `child.fd[dst]` is set to a dupe of `parent.fd[src]` after the child ELF is loaded.
+const FdRemap = extern struct {
+    dst: u32,
+    src: u32,
+};
+
+/// Optional per-spawn options passed as a userspace pointer in arg2 of the spawn syscall.
+/// When opts_ptr is 0, no remapping is performed and the child inherits default stdio.
+const SpawnOpts = extern struct {
+    fd_remaps: task.AbiSlice,
+};
+
+fn sys_spawn(argv_desc_ofs: u32, opts_ptr: u32) !u32 {
     const current_task = task.getCurrentTask();
 
     // read argv slice from userspace memory
@@ -177,6 +190,20 @@ fn sys_spawn(argv_desc_ofs: u32) !u32 {
     for (arg_slices, 0..) |arg_desc, i| {
         if (i == 0 and arg_desc.len == 0) return error.InvalidArgument; // command must not be empty
         string_bytes += arg_desc.len;
+    }
+
+    // Read fd remaps from userspace BEFORE loadUserspaceElf (while the parent page dir is active).
+    // We copy them into a fixed kernel-side buffer so we can apply them after the ELF is loaded.
+    var remap_buf: [filedesc.MAX_OPEN_FILES]FdRemap = undefined;
+    var remap_count: usize = 0;
+    if (opts_ptr != 0) {
+        const opts = try current_task.getUserPtr(SpawnOpts, opts_ptr);
+        if (opts.fd_remaps.len > remap_buf.len) return error.InvalidArgument;
+        remap_count = @intCast(opts.fd_remaps.len);
+        if (remap_count > 0) {
+            const remaps = try current_task.getUserSlice(FdRemap, opts.fd_remaps.ptr, opts.fd_remaps.len);
+            @memcpy(remap_buf[0..remap_count], remaps);
+        }
     }
 
     // allocate buffers for the string storage and the slice objects
@@ -207,6 +234,26 @@ fn sys_spawn(argv_desc_ofs: u32) !u32 {
     const child = try kernel.loadUserspaceElf(argv_buf[0], argv_buf);
     child.parent_pid = current_task.pid;
     child.stdout_console = current_task.stdout_console;
+
+    // Apply fd remaps: dupe each requested parent fd into the child's fd table.
+    // Both fd tables are kernel memory; no page directory switch needed here.
+    for (remap_buf[0..remap_count]) |remap| {
+        const src_slot = current_task.getFdSlot(remap.src) orelse {
+            child.terminate();
+            return error.BadFd;
+        };
+        if (src_slot.* == .empty) {
+            child.terminate();
+            return error.BadFd;
+        }
+        const child_slot = child.getFdSlot(remap.dst) orelse {
+            child.terminate();
+            return error.BadFd;
+        };
+        child_slot.closeIfOpen();
+        child_slot.* = src_slot.dupe();
+    }
+
     return child.pid;
 }
 
@@ -276,7 +323,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Rmdir => sys_rmdir(arg1),
         .SetChildReap => sys_set_child_reap(),
         .Yield => sys_yield(),
-        .Spawn => sys_spawn(arg1),
+        .Spawn => sys_spawn(arg1, arg2),
         else => error.InvalidArgument,
     }) catch |err| mapError(err);
     frame.setReturnValue(retval);
