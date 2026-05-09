@@ -74,6 +74,7 @@ Complete listing of every source file and its role.
 - `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/alloc_stress.zig`: heap allocator stress test covering allocate/free/realloc behavior.
+- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports basic redirection.
 - `userspace/sys.zig`, `userspace.ld`: shared syscall ABI helpers, linker script, and startup entry point `_start` which passes command-line arguments to `main`.
 
 ## Build Configuration
@@ -95,5 +96,6 @@ Complete listing of every source file and its role.
     - `userspace/fib.zig`
     - `userspace/fs_stress.zig`
     - `userspace/alloc_stress.zig`
+    - `userspace/shell.zig`
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.
