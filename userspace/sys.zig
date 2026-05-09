@@ -67,6 +67,7 @@ const Syscall = enum(u32) {
     Ftruncate = 93,
     Spawn = 1001,
     SetChildReap = 1002,
+    KShell = 1003,
 };
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
@@ -270,6 +271,14 @@ pub fn rmdir(path: []const u8) u32 {
 /// instead of becoming zombies. After this call, waitpid on children will fail.
 pub fn setChildReap() void {
     _ = syscall(.SetChildReap, 0, 0, 0);
+}
+
+/// Executes a kernel shell command using the calling task's console.
+/// The command string is passed as a slice and will be interpreted by the kernel shell.
+/// Returns 0 on success, FAIL on error.
+pub fn kshell(cmdline: []const u8) u32 {
+    const cmdline_abi = AbiSlice.fromSlice(u8, cmdline);
+    return syscall(.KShell, @intFromPtr(&cmdline_abi), 0, 0);
 }
 
 /// Terminates the current process with the provided exit code.

@@ -27,7 +27,7 @@ var autoexec_finished: bool = false;
 
 const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
-const Shell = struct {
+pub const Shell = struct {
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
     console: *console.Console,

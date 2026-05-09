@@ -21,3 +21,4 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `ftruncate` | 93 | fd, length | 0 or `FAIL` | Resizes a filesystem-backed fd; zero-fills when extending and requires write access |
 | `spawn` | 1001 | argv_slice_ptr, opts_ptr | child PID or `FAIL` | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable. `opts_ptr` is 0 (no options) or a pointer to a `SpawnOpts` struct whose `fd_remaps` field is an `AbiSlice` of `(dst_u32, src_u32)` pairs; for each pair the child's `fd[dst]` is set to a copy of the parent's `fd[src]` |
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
+| `kshell` | 1003 | cmdline_slice_ptr | 0 or `FAIL` | Executes a kernel shell command string. |

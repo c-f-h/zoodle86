@@ -2,6 +2,7 @@ const filedesc = @import("filedesc.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const kernel = @import("kernel.zig");
 const paging = @import("paging.zig");
+const shell = @import("shell.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
 const std = @import("std");
@@ -24,6 +25,7 @@ const Syscall = enum(u32) {
     Ftruncate = 93,
     Spawn = 1001,
     SetChildReap = 1002,
+    KShell = 1003,
     _,
 };
 
@@ -295,6 +297,28 @@ fn sys_set_child_reap() !u32 {
     return 0;
 }
 
+/// Executes a kernel shell command using the calling task's console.
+/// Accepts a userspace pointer to an AbiSlice describing the command string.
+fn sys_kshell(cmdline_slice_va: u32) !u32 {
+    const current = task.getCurrentTask();
+    const cmdline = try current.readUserSlice(u8, cmdline_slice_va);
+
+    // Get the task's console or use the primary console as fallback
+    const task_console = current.stdout_console orelse &@import("console.zig").primary;
+
+    // Create a shell instance with the task's console
+    var kshell = shell.Shell{
+        .alloc = kernel.getAllocator(),
+        .disk_fs = kernel.getFileSystem(),
+        .console = task_console,
+    };
+
+    // Execute the command
+    try shell.handleCommand(&kshell, cmdline);
+
+    return 0;
+}
+
 fn sys_yield() u32 {
     _ = kernel.kernel_yield();
     return 0;
@@ -324,6 +348,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .SetChildReap => sys_set_child_reap(),
         .Yield => sys_yield(),
         .Spawn => sys_spawn(arg1, arg2),
+        .KShell => sys_kshell(arg1),
         else => error.InvalidArgument,
     }) catch |err| mapError(err);
     frame.setReturnValue(retval);
