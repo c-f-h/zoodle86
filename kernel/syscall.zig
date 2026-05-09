@@ -299,6 +299,11 @@ fn sys_set_child_reap() !u32 {
 
 /// Executes a kernel shell command using the calling task's console.
 /// Accepts a userspace pointer to an AbiSlice describing the command string.
+/// 
+/// Security note: This syscall intentionally allows userspace programs to execute
+/// arbitrary kernel shell commands. In a production system, this would require
+/// privilege checks or a command whitelist, but for this toy OS it provides a
+/// useful debugging and administration interface from userspace.
 fn sys_kshell(cmdline_slice_va: u32) !u32 {
     const current = task.getCurrentTask();
     const cmdline = try current.readUserSlice(u8, cmdline_slice_va);

@@ -1,3 +1,6 @@
+//! Test program for the kshell syscall.
+//! Demonstrates executing kernel shell commands from userspace.
+
 const sys = @import("sys.zig");
 
 /// Simple test program for the kshell syscall.
