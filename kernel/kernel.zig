@@ -570,7 +570,8 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
 
     // compute image extents and locate stack and heap
     const code_start, const code_end, const data_start, const data_end = try ehdr.computeImageExtents(elf_data);
-    ptask.heap_start = paging.roundToNext(data_end, paging.PAGE);
+    const user_data_end = @max(data_end, USER_DATA_START);
+    ptask.heap_start = paging.roundToNext(user_data_end, paging.PAGE);
     ptask.heap_brk = ptask.heap_start;
     if (ptask.heap_start >= USER_STACK_BOTTOM) {
         return error.OutOfMemory;
@@ -579,7 +580,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     // user code and data
     ptask.loadPageDir();
     _ = ptask.code_mem.allocate(0x0040_0000, code_end, true, true);
-    _ = ptask.data_mem.allocate(USER_DATA_START, data_end, true, true);
+    _ = ptask.data_mem.allocate(USER_DATA_START, user_data_end, true, true);
     // Reserve a fixed stack window and map only its top page initially.
     ptask.stack_top = USER_STACK_TOP;
     ptask.stack_bottom = USER_STACK_BOTTOM;
@@ -626,6 +627,13 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     const initial_esp = try ptask.setArgs(args);
     ptask.setEntryPoint(ehdr.e_entry, initial_esp);
     return ptask;
+}
+
+/// Frees a not-yet-scheduled task and restores the kernel page directory afterward.
+pub fn discardTask(ptask: *task.Task) void {
+    ptask.loadPageDir();
+    ptask.terminate();
+    paging.loadPageDir(page_dir_phys);
 }
 
 fn mountFs() !void {

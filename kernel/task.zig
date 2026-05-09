@@ -204,6 +204,13 @@ pub const Task = struct {
         task.fd_table[fd] = fd_desc;
     }
 
+    /// Binds a fd slot to a descriptor value, closing any existing descriptor in that slot.
+    pub fn replaceFdSlot(task: *Task, fd: u32, fd_desc: filedesc.FileDesc) void {
+        const slot = task.getFdSlot(fd) orelse @panic("invalid stdio fd");
+        slot.closeIfOpen();
+        slot.* = fd_desc;
+    }
+
     /// Finds the first two free userspace-visible file descriptor slots.
     pub fn findFreeFdPair(task: *Task) ?struct { u32, u32 } {
         var first: ?u32 = null;

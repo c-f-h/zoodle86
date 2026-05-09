@@ -150,7 +150,7 @@ fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
     // Allocate fds first so failure can't leak an already created pipe later
     const read_fd, const write_fd = ptask.findFreeFdPair() orelse return error.ProcessFileTableFull;
 
-    const pipe_fds = try filedesc.makePipe(paging.PAGE);
+    const pipe_fds = try filedesc.makePipe();
 
     ptask.setFdSlot(read_fd, pipe_fds.@"0");
     ptask.setFdSlot(write_fd, pipe_fds.@"1");

@@ -57,7 +57,7 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `cat`, `write`, `rm`, `mv`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it also executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `write`, `rm`, `mv`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). The `run` command also parses basic `>` stdout redirection and `|` stdout-to-stdin pipelines. At boot it executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 
@@ -69,6 +69,7 @@ Complete listing of every source file and its role.
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
+- `userspace/cat.zig`: stdin-to-stdout copier and simple file-printing utility used both directly and in shell pipelines.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
 - `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
@@ -88,9 +89,11 @@ Complete listing of every source file and its role.
 - `build/stage2.elf`: linked from `kernel/stage2.zig` and `kernel/stage2_video_rm.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
-- `build/hello.elf`: linked from `userspace/hello.zig` and copied into the filesystem image as `bin/hello`.
-- `build/fib.elf`: linked from `userspace/fib.zig` and copied into the filesystem image as `bin/fib`.
-- `build/fs_stress.elf`: linked from `userspace/fs_stress.zig` and copied into the filesystem image as `bin/fs_stress`.
-- `build/alloc_stress.elf`: linked from `userspace/alloc_stress.zig` and copied into the filesystem image as `bin/alloc_stress`.
+- The following userspace programs are compiled and copied into the image as `/bin/<basename>`, which is on the shell path:
+    - `userspace/hello.zig`
+    - `userspace/cat.zig`
+    - `userspace/fib.zig`
+    - `userspace/fs_stress.zig`
+    - `userspace/alloc_stress.zig`
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.

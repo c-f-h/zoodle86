@@ -137,7 +137,7 @@ pub const FileDesc = union(FdKind) {
 };
 
 /// Creates a fresh pipe and returns descriptors for its read and write ends.
-pub fn makePipe(capacity: usize) error{OutOfMemory}!struct { FileDesc, FileDesc } {
+pub fn makePipeWithSize(capacity: usize) error{OutOfMemory}!struct { FileDesc, FileDesc } {
     const pp = try kernel.getAllocator().create(pipe.Pipe);
     errdefer kernel.getAllocator().destroy(pp);
     pp.* = try pipe.Pipe.init(kernel.getAllocator(), capacity);
@@ -147,6 +147,10 @@ pub fn makePipe(capacity: usize) error{OutOfMemory}!struct { FileDesc, FileDesc 
         FileDesc{ .pipe = .{ .handle = pp, .writable = false } },
         FileDesc{ .pipe = .{ .handle = pp, .writable = true } },
     };
+}
+
+pub fn makePipe() error{OutOfMemory}!struct { FileDesc, FileDesc } {
+    return makePipeWithSize(4096);
 }
 
 pub const FiledescError = fs.WriteFileError || error{
@@ -177,10 +181,9 @@ const OpenFile = struct {
 
 var open_files: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
 
-/// Opens or creates a filesystem-backed descriptor for a task.
-pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
+/// Opens or creates a filesystem-backed descriptor, not bound to a particular task.
+pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) FiledescError!FileDesc {
     const access_mode = try validateOpenFlags(flags);
-    const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
 
     const split = fs.splitPath(path);
@@ -204,7 +207,14 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
         .writable = access_mode != O_RDONLY,
         .append = (flags & O_APPEND) != 0,
     };
-    ptask.setFdSlot(fd, FileDesc{ .file = @truncate(open_index) });
+    return FileDesc{ .file = @truncate(open_index) };
+}
+
+/// Opens or creates a filesystem-backed descriptor for a task.
+pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
+    const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
+    const filedesc = try openFileDesc(disk_fs, path, flags);
+    ptask.setFdSlot(fd, filedesc);
     return fd;
 }
 
