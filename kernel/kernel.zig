@@ -500,7 +500,7 @@ pub fn exitCurrentTask(exit_code: u32) noreturn {
     if (auto_reap) {
         current.state = .free;
         current.pid = 0;
-    } else if (taskman.wakeWaiterFor(current.pid, exit_code)) {
+    } else if (taskman.wakeWaiterForPid(current.pid, exit_code)) {
         // Parent was already blocked in waitpid; wake it and free this slot.
         current.state = .free;
         current.pid = 0;

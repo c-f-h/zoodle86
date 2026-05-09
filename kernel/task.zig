@@ -6,6 +6,8 @@ const filedesc = @import("filedesc.zig");
 const console = @import("console.zig");
 const std = @import("std");
 
+pub const pid_t = u32;
+
 const KERNEL_STACK_SIZE = 4096;
 
 /// Maximum number of arguments that can be passed to a process via setArgs.
@@ -24,12 +26,12 @@ pub const UserMemError = error{AccessViolation};
 
 pub const MAX_FDS = 16;
 
-/// Lifecycle state of a task slot.
-pub const TaskState = enum {
-    free, // slot is available for reuse
-    active, // task is runnable or currently executing
-    waiting, // task is blocked in waitpid, kernel_esp is saved for resumption
-    zombie, // task has exited but exit status not yet collected by parent
+///// Lifecycle state of a task slot.
+pub const TaskState = union(enum) {
+    free: void, // slot is available for reuse
+    active: void, // task is runnable or currently executing
+    waiting_pid: pid_t, // task is blocked in waitpid, waiting for the specified child PID to exit
+    zombie: void, // task has exited but exit status not yet collected by parent
 };
 
 /// Given a pointer which points to within a kernel stack, finds the pointer to the associated *Task.
@@ -64,7 +66,6 @@ pub const Task = struct {
     parent_pid: u32 = 0, // PID of spawning task; 0 = created by kernel/shell (auto-reap)
     reap_children: bool = false, // if true, children are auto-reaped instead of becoming zombies
     exit_status: u32 = 0, // exit code written on exit, read by waitpid
-    waiting_for_pid: u32 = 0, // PID this task is blocked waiting on (state == .waiting)
     stack_bottom: u32 = 0, // lower bound for stack growth in virtual memory
     stack_top: u32 = 0, // top of stack in virtual memory
     heap_start: u32 = 0,
@@ -170,10 +171,16 @@ pub const Task = struct {
     /// when the task is resumed via iretd, the value is delivered as the syscall return.
     /// Only valid while the task is in the .waiting state with a saved kernel_esp.
     pub fn setSyscallReturn(t: *Task, val: u32) void {
-        if (t.state != .waiting or t.kernel_esp == 0)
+        if (t.state != .waiting_pid or t.kernel_esp == 0)
             @panic("setSyscallReturn called on task that is not waiting");
         const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(t.kernel_esp);
         frame.setReturnValue(val);
+    }
+
+    /// Wakes a task from a waiting state and sets its syscall return value.
+    pub fn wakeWithReturnValue(t: *Task, val: u32) void {
+        t.setSyscallReturn(val);
+        t.state = .active;
     }
 
     /// Finds the first free userspace-visible file descriptor slot.

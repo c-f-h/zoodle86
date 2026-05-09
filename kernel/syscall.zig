@@ -226,8 +226,7 @@ fn sys_waitpid(pid: u32) !u32 {
     }
 
     // Child is still running; block until its exit handler wakes us.
-    current.waiting_for_pid = pid;
-    current.state = .waiting;
+    current.state = task.TaskState{ .waiting_pid = pid };
     kernel.reschedule(); // does not return; exit handler will call setSyscallReturn() and set state=active
 }
 

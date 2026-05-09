@@ -84,13 +84,11 @@ pub fn findTask(pid: u32) ?*task.Task {
 /// Wakes a parent task that is blocked in waitpid waiting for the given child PID.
 /// Writes the exit status as the waitpid return value and transitions the task to active.
 /// Returns true if a waiter was found and woken, false otherwise.
-pub fn wakeWaiterFor(child_pid: u32, exit_status: u32) bool {
+pub fn wakeWaiterForPid(child_pid: u32, exit_status: u32) bool {
     for (task_entries) |*entry| {
         const ptask = &entry.task;
-        if (ptask.state == .waiting and ptask.waiting_for_pid == child_pid) {
-            ptask.setSyscallReturn(exit_status);
-            ptask.waiting_for_pid = 0;
-            ptask.state = .active;
+        if (ptask.state == .waiting_pid and ptask.state.waiting_pid == child_pid) {
+            ptask.wakeWithReturnValue(exit_status);
             return true;
         }
     }
