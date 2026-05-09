@@ -38,6 +38,7 @@ USERSPACE_SOURCES = [
     ROOT / "userspace" / "fs_stress.zig",
     ROOT / "userspace" / "alloc_stress.zig",
     ROOT / "userspace" / "kshell_test.zig",
+    ROOT / "userspace" / "readline_demo.zig",
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"

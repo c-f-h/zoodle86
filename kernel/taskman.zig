@@ -92,6 +92,26 @@ pub fn forEachTask(comptime T: type, ctx: T, callback: fn (T, *const task.Task) 
     }
 }
 
+/// Returns any task that is currently in the .active state, or null if none is ready to run.
+pub fn getAnyActiveTask() ?*task.Task {
+    for (task_entries) |*entry| {
+        if (entry.task.state == .active) {
+            return &entry.task;
+        }
+    }
+    return null;
+}
+
+/// Returns true if any task slot is currently occupied (non-free state).
+pub fn hasAnyTask() bool {
+    for (task_entries) |*entry| {
+        if (entry.task.state != .free) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Reparents all children of the exiting task (identified by pid) to parent_pid=0.
 /// Zombie children are freed immediately since no one will collect their exit status.
 pub fn orphanChildrenOf(pid: u32) void {

@@ -5,6 +5,7 @@ const paging = @import("paging.zig");
 const shell = @import("shell.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
+const console = @import("console.zig");
 const std = @import("std");
 
 const Syscall = enum(u32) {
@@ -26,6 +27,7 @@ const Syscall = enum(u32) {
     Spawn = 1001,
     SetChildReap = 1002,
     KShell = 1003,
+    GetCursor = 1004,
     _,
 };
 
@@ -319,6 +321,13 @@ fn sys_kshell(cmdline_slice_va: u32) !u32 {
     return 0;
 }
 
+/// Returns the console cursor position of the calling task packed as (row<<16)|col.
+fn sys_getcursor() u32 {
+    const cur = task.getCurrentTask();
+    const con = cur.stdout_console orelse &console.primary;
+    return (con.row << 16) | con.col;
+}
+
 fn sys_yield() u32 {
     _ = kernel.kernel_yield();
     return 0;
@@ -349,6 +358,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Yield => sys_yield(),
         .Spawn => sys_spawn(arg1, arg2),
         .KShell => sys_kshell(arg1),
+        .GetCursor => sys_getcursor(),
         else => error.InvalidArgument,
     }) catch |err| mapError(err);
     frame.setReturnValue(retval);

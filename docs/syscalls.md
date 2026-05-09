@@ -22,3 +22,4 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `spawn` | 1001 | argv_slice_ptr, opts_ptr | child PID or `FAIL` | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable. `opts_ptr` is 0 (no options) or a pointer to a `SpawnOpts` struct whose `fd_remaps` field is an `AbiSlice` of `(dst_u32, src_u32)` pairs; for each pair the child's `fd[dst]` is set to a copy of the parent's `fd[src]` |
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
 | `kshell` | 1003 | cmdline_slice_ptr | 0 or `FAIL` | Executes a kernel shell command string. |
+| `get_cursor` | 1004 | — | `(row << 16) \| col` | Returns the stdout console cursor position (both 0-indexed) packed into a single u32. |

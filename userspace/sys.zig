@@ -68,6 +68,46 @@ const Syscall = enum(u32) {
     Spawn = 1001,
     SetChildReap = 1002,
     KShell = 1003,
+    GetCursor = 1004,
+};
+
+// Virtual key codes delivered in KeyEvent.keycode
+pub const VK_BACKSPACE: u16 = 0x0E;
+pub const VK_TAB: u16 = 0x0F;
+pub const VK_ENTER: u16 = 0x1C;
+pub const VK_LCTRL: u16 = 0x1D;
+pub const VK_LSHIFT: u16 = 0x2A;
+pub const VK_RSHIFT: u16 = 0x36;
+pub const VK_LALT: u16 = 0x38;
+pub const VK_ESC: u16 = 0x01;
+pub const VK_A: u16 = 0x1E;
+pub const VK_B: u16 = 0x30;
+pub const VK_D: u16 = 0x20;
+pub const VK_E: u16 = 0x12;
+pub const VK_F: u16 = 0x21;
+pub const VK_K: u16 = 0x25;
+pub const VK_U: u16 = 0x16;
+// Extended keys (top byte 0xE0)
+pub const VK_EXTENDED: u16 = 0xE000;
+pub const VK_UP: u16 = VK_EXTENDED | 0x48;
+pub const VK_DOWN: u16 = VK_EXTENDED | 0x50;
+pub const VK_LEFT: u16 = VK_EXTENDED | 0x4B;
+pub const VK_RIGHT: u16 = VK_EXTENDED | 0x4D;
+pub const VK_HOME: u16 = VK_EXTENDED | 0x47;
+pub const VK_END: u16 = VK_EXTENDED | 0x4F;
+pub const VK_DELETE: u16 = VK_EXTENDED | 0x53;
+
+// Modifier flags in KeyEvent.modifiers
+pub const MOD_SHIFT: u8 = 0x01;
+pub const MOD_ALT: u8 = 0x02;
+pub const MOD_CTRL: u8 = 0x04;
+
+/// A compact key event delivered by read(STDIN).  Exactly 4 bytes; layout matches
+/// kernel/keyboard.zig StdinKeyEvent.
+pub const KeyEvent = extern struct {
+    keycode: u16,
+    modifiers: u8,
+    ascii: u8,
 };
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
@@ -142,6 +182,19 @@ pub fn unlink(path: []const u8) u32 {
 /// Returns the current process identifier.
 pub fn getpid() u32 {
     return syscall(.GetPid, 0, 0, 0);
+}
+
+/// Returns the stdout console cursor position packed as (row << 16) | col (both 0-indexed).
+pub fn getCursor() struct { row: u32, col: u32 } {
+    const packed_pos = syscall(.GetCursor, 0, 0, 0);
+    return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
+}
+
+/// Reads exactly one KeyEvent (4 bytes) from stdin, blocking until a key is pressed.
+pub fn readKey() KeyEvent {
+    var bytes: [@sizeOf(KeyEvent)]u8 = undefined;
+    _ = read(STDIN, &bytes);
+    return @bitCast(bytes);
 }
 
 /// A (dst, src) fd-index pair for remapping parent file descriptors into the child at spawn time.

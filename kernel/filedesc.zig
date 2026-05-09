@@ -3,6 +3,7 @@ const fs = @import("fs.zig");
 const std = @import("std");
 const task = @import("task.zig");
 const pipe = @import("pipe.zig");
+const keyboard = @import("keyboard.zig");
 const kernel = @import("kernel.zig");
 
 pub const O_RDONLY: u32 = 0;
@@ -99,6 +100,17 @@ pub const FileDesc = union(FdKind) {
     /// Reads bytes from a descriptor into the provided buffer.
     pub fn read(self: *FileDesc, dest: []u8) (fs.FsError || error{ BadFd, AccessDenied, OutOfMemory })!usize {
         switch (self.*) {
+            .stdin => {
+                // Each read delivers exactly one 4-byte StdinKeyEvent; block until one is available.
+                if (dest.len < @sizeOf(keyboard.StdinKeyEvent)) return error.BadFd;
+                var ev: keyboard.StdinKeyEvent = undefined;
+                while (!keyboard.tryPopStdinKeyEvent(&ev)) {
+                    try task.getCurrentTask().waitInQueue(kernel.getStdinWaiters());
+                    _ = kernel.kernel_yield();
+                }
+                @memcpy(dest[0..@sizeOf(keyboard.StdinKeyEvent)], std.mem.asBytes(&ev));
+                return @sizeOf(keyboard.StdinKeyEvent);
+            },
             .file => |file_index| {
                 const open_file = getOpenFile(file_index);
                 if (!open_file.readable) return error.AccessDenied;

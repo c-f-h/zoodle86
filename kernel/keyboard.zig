@@ -82,6 +82,14 @@ pub const KeyEvent = struct {
     ascii: u8,
 };
 
+/// Compact 4-byte key event delivered to userspace via read(STDIN).
+/// Layout must match KeyEvent in userspace/sys.zig.
+pub const StdinKeyEvent = extern struct {
+    keycode: u16,
+    modifiers: u8,
+    ascii: u8,
+};
+
 // Keyboard ring buffer
 var keyboard_scancode_buffer: [16]u8 = undefined;
 var keyboard_scancode_head: u8 = 0;
@@ -281,4 +289,27 @@ pub export fn pollingLoop() void {
 
     // Re-enable interrupts
     asm volatile ("sti");
+}
+
+// Stdin ring buffer for key events delivered to userspace tasks via read(STDIN).
+const STDIN_BUF_LEN: u32 = 32;
+var stdin_key_buf: [STDIN_BUF_LEN]StdinKeyEvent = undefined;
+var stdin_key_head: u32 = 0; // write index
+var stdin_key_tail: u32 = 0; // read index
+
+/// Pushes a key event into the stdin ring buffer; drops the event if the buffer is full.
+pub fn pushStdinKeyEvent(ev: StdinKeyEvent) void {
+    const next_head = (stdin_key_head + 1) % STDIN_BUF_LEN;
+    if (next_head == stdin_key_tail) return; // full; drop
+    stdin_key_buf[stdin_key_head] = ev;
+    stdin_key_head = next_head;
+}
+
+/// Pops the oldest key event from the stdin ring buffer into *out.
+/// Returns true on success, false if the buffer is empty.
+pub fn tryPopStdinKeyEvent(out: *StdinKeyEvent) bool {
+    if (stdin_key_head == stdin_key_tail) return false;
+    out.* = stdin_key_buf[stdin_key_tail];
+    stdin_key_tail = (stdin_key_tail + 1) % STDIN_BUF_LEN;
+    return true;
 }

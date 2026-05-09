@@ -27,6 +27,7 @@ const pit = @import("pit.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const pci = @import("pci.zig");
+const waitqueue = @import("waitqueue.zig");
 
 const std = @import("std");
 
@@ -105,6 +106,8 @@ var alloc: std.mem.Allocator = undefined;
 var disk_fs: fs.FileSystem = undefined;
 var disk_block_device: ide.IdeBlockDevice = undefined;
 
+var stdin_waiters: waitqueue.WaitQueue = undefined;
+
 // VConsole instances and secondary console for the two-panel framebuffer layout.
 var primary_vconsole: vconsole.VConsole = .{};
 var secondary_vconsole: vconsole.VConsole = .{};
@@ -121,10 +124,26 @@ pub fn getFileSystem() *fs.FileSystem {
 }
 
 /// Keyboard event consumer called by the interrupt handler.
+/// When a kernel handler is active (readline, keylog, memmap), events go only to the handler.
+/// Otherwise, key-press events are pushed to the stdin ring buffer for userspace tasks.
 pub fn consumeKeyEvent(event: *const keyboard.KeyEvent) void {
     if (cur_kb_handler) |handler| {
         _ = handler.handler(handler.ctx, event);
+        return;
     }
+    if (event.pressed != 0) {
+        keyboard.pushStdinKeyEvent(.{
+            .keycode = event.keycode,
+            .modifiers = event.modifiers,
+            .ascii = event.ascii,
+        });
+        _ = stdin_waiters.wakeAll(0);
+    }
+}
+
+/// Returns a pointer to the stdin wait queue for use by filedesc.read().
+pub fn getStdinWaiters() *waitqueue.WaitQueue {
+    return &stdin_waiters;
 }
 
 // GDT can be global; should contain one TSS entry per CPU
@@ -350,6 +369,7 @@ fn kernel_enter() !noreturn {
 
     kernel_allocator.init();
     alloc = kernel_allocator.getAllocator();
+    stdin_waiters = waitqueue.WaitQueue.init(alloc);
     kprof.init(alloc);
     taskman.init();
 
@@ -445,11 +465,28 @@ fn kernel_reenter() noreturn {
     // Switch back to the kernel page directory (without userspace mapping)
     paging.loadPageDir(page_dir_phys);
 
+    // If userspace tasks still exist, service their stdin instead of running the shell.
+    if (taskman.hasAnyTask()) {
+        stdinIdleLoop();
+    }
+
     kernel_console.puts("Returned to kernel, esp = ");
     kernel_console.putHexU32(getRegister("esp".*));
     kernel_console.newline();
 
     enterKernelShell();
+}
+
+/// Idle loop entered when all tasks are sleeping on stdin but there is no active task to schedule.
+/// Drives the keyboard ISR via pollingLoop, which pushes events to stdin and wakes waiters.
+/// Returns when a task becomes active (which is then run via schedule_initial).
+fn stdinIdleLoop() noreturn {
+    while (true) {
+        if (taskman.getAnyActiveTask()) |ptask| {
+            schedule_initial(ptask);
+        }
+        keyboard.pollingLoop();
+    }
 }
 
 /// Return the number of scheduler-driven task-to-task switches since boot.
