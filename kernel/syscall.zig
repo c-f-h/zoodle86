@@ -227,7 +227,7 @@ fn sys_waitpid(pid: u32) !u32 {
 
     // Child is still running; block until its exit handler wakes us.
     current.state = task.TaskState{ .waiting_pid = pid };
-    kernel.reschedule(); // does not return; exit handler will call setSyscallReturn() and set state=active
+    return kernel.kernel_yield(); // return value is set by wakeWaiterForPid
 }
 
 fn sys_mkdir(path_slice_va: u32) !u32 {
@@ -245,6 +245,11 @@ fn sys_rmdir(path_slice_va: u32) !u32 {
 /// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
 fn sys_set_child_reap() !u32 {
     task.getCurrentTask().reap_children = true;
+    return 0;
+}
+
+fn sys_yield() u32 {
+    _ = kernel.kernel_yield();
     return 0;
 }
 
@@ -270,7 +275,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
         .SetChildReap => sys_set_child_reap(),
-        .Yield => kernel.reschedule(),
+        .Yield => sys_yield(),
         .Spawn => sys_spawn(arg1),
         else => error.InvalidArgument,
     }) catch |err| mapError(err);

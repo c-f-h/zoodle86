@@ -12,7 +12,7 @@ During `kernel_enter()`, after early paging and allocator setup, `acpi.init()` s
 
 The LAPIC timer is programmed with a hardcoded count (not calibrated) that produces approximately 100 Hz on Bochs and QEMU, giving a nominal 10 ms scheduling tick. The PIT module (`pit.zig`) is present as a busy-wait sleep utility but does not drive preemption. The `VECTOR_TIMER` path in `interrupt_dispatch()` acknowledges timer and keyboard interrupts with a LAPIC EOI before running vector-specific logic.
 
-All entries from ring 3 save the current task's `UserInterruptFrame`, which gives the scheduler a resumable `iretd` frame on the task's kernel stack. The timer path then preempts only if the interrupted frame came from user mode. This makes the current kernel model asymmetric by design: user code is timer-preemptive, but kernel code remains non-preemptive even though timer interrupts are still serviced while the kernel is running.
+All entries from ring 3 carry a normalized `UserInterruptFrame` on the task's kernel stack so `iretd` can restore userspace. The scheduler works on a kernel stack frame, though: `kernel_yield_trampoline` snapshots the current kernel stack position with `pushad`, and `kernel.kernel_reschedule()` records that arbitrary resumable ESP in `Task.kernel_esp`. The timer path preempts only if the interrupted frame came from user mode. This keeps the current kernel model asymmetric by design: user code is timer-preemptive, but kernel code remains non-preemptive even though timer interrupts are still serviced while the kernel is running.
 
 ## Exception Handling
 

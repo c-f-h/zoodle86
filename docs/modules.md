@@ -22,8 +22,8 @@ Complete listing of every source file and its role.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
 - `kernel/pci.zig`: PCI config-space access and bus enumeration, including multi-host-controller root scanning and PCI-to-PCI bridge traversal.
-- `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
-- `kernel/interrupt_frame.zig`: standard stack frame layout used when entering the kernel.
+- `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, seeded user/kernel resume frames, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
+- `kernel/interrupt_frame.zig`: stack frame layouts for both normalized user interrupt returns and saved kernel-yield resume points.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over filesystem files, console streams, and pipe endpoints.
 - `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
@@ -50,7 +50,7 @@ Complete listing of every source file and its role.
 
 - `boot.asm`: boot sector and stage-2 loader.
 - `kernel/stage2_video_rm.asm`: real-mode thunk used by stage 2 to query VBE modes, switch to the best linear-framebuffer mode, and export boot video metadata.
-- `interrupts.asm`: low-level exception/IRQ entry stubs that dispatch through `kernel.interrupt_dispatch()`.
+- `interrupts.asm`: low-level exception/IRQ entry stubs plus the `kernel_yield_trampoline` assembly scheduler bridge that dispatch through `kernel.interrupt_dispatch()` and resume tasks.
 
 ## Shell & Applications
 

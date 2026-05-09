@@ -65,6 +65,8 @@ extern fn keyboard_isr() void;
 extern fn syscall_isr() void;
 extern fn spurious_isr() void;
 
+extern fn kernel_yield_trampoline() u32;
+
 /// Keyboard event handler vtable entry.
 pub const KeyboardHandler = struct {
     handler: *const fn (?*anyopaque, *const keyboard.KeyEvent) u32,
@@ -161,14 +163,12 @@ export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c
         // Acknowledge EOI on LAPIC interrups
         apic.lapic_eoi();
     }
-    if (frame.fromUserMode())
-        task.saveReturnFrame(@ptrCast(frame));
 
     switch (frame.vector) {
         VECTOR_TIMER => {
             timerIrqHandler(frame);
             if (frame.fromUserMode())
-                reschedule();
+                _ = kernel_yield();
         },
         VECTOR_KEYBOARD => keyboard.keyboard_dispatch(frame),
         VECTOR_SYSCALL => syscall.syscall_dispatch(@ptrCast(frame)),
@@ -461,21 +461,52 @@ pub fn getTimerTicks() u32 {
     return timer_ticks;
 }
 
-/// Switch to the next active task, if any, or re-enter the kernel if no other task is runnable.
-pub fn reschedule() noreturn {
+export fn kernel_reschedule(cur_kernel_esp: usize) usize {
     const current_task = task.getCurrentTask();
-    if (taskman.getNextActiveTask(current_task)) |next_task| {
-        if (next_task != current_task) {
-            task_switch_count += 1;
-        }
-        next_task.switchTo(&tss_cpu0);
-    } else if (current_task.state == .active) {
+    if (current_task.kernel_esp != 0)
+        @panic("kernel_reschedule called on already suspended task");
+    current_task.kernel_esp = cur_kernel_esp;
+
+    const next_task = if (taskman.getNextActiveTask(current_task)) |next_task|
+        next_task
+    else if (current_task.state == .active)
         // No other task is runnable; switch back to the current one if it is still active
-        current_task.switchTo(&tss_cpu0);
-    } else {
+        current_task
+    else
         // No more active tasks; return to the kernel shell
         kernel_reenter();
+
+    if (next_task != current_task) {
+        task_switch_count += 1;
+        next_task.makeActive(&tss_cpu0);
     }
+    if (next_task.kernel_esp == 0) {
+        @panic("kernel_reschedule: switching to a task with no saved kernel_esp");
+    }
+    const new_esp = next_task.kernel_esp;
+    next_task.kernel_esp = 0; // mark as running
+    return new_esp;
+}
+
+/// Switch to the next active task, if any, or re-enter the kernel if no other task is runnable.
+pub fn kernel_yield() u32 {
+    return kernel_yield_trampoline();
+}
+
+/// Start running the given task by switching its page directory and restoring its register state.
+/// Should ONLY be called from the kernel shell; usually tasks are entered by the scheduler via kernel_yield.
+/// TODO: This can go away once the kernel shell is just another task.
+pub fn schedule_initial(ptask: *task.Task) noreturn {
+    const kernel_esp = ptask.kernel_esp;
+    ptask.kernel_esp = 0; // mark as running
+    ptask.makeActive(&tss_cpu0);
+
+    asm volatile (
+        \\ jmp _kernel_yield_trampoline_return
+        :
+        : [new_esp] "{eax}" (kernel_esp),
+    );
+    unreachable;
 }
 
 /// Performs a full userspace process exit: orphans children, releases resources,
@@ -510,7 +541,8 @@ pub fn exitCurrentTask(exit_code: u32) noreturn {
         current.state = .zombie;
     }
 
-    reschedule();
+    _ = kernel_yield();
+    unreachable; // will never be scheduled again
 }
 
 /// Loads an ELF file into a fresh task with an isolated user address space.
@@ -593,11 +625,6 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     const initial_esp = try ptask.setArgs(args);
     ptask.setEntryPoint(ehdr.e_entry, initial_esp);
     return ptask;
-}
-
-/// Start running the given task by switching its page directory and restoring its register state.
-pub fn run(ptask: *task.Task) void {
-    ptask.switchTo(&tss_cpu0);
 }
 
 fn mountFs() !void {

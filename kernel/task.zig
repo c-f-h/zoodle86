@@ -8,6 +8,8 @@ const std = @import("std");
 
 pub const pid_t = u32;
 
+extern const return_to_userspace: anyopaque;
+
 const KERNEL_STACK_SIZE = 4096;
 
 /// Maximum number of arguments that can be passed to a process via setArgs.
@@ -35,12 +37,13 @@ pub const TaskState = union(enum) {
 };
 
 /// Given a pointer which points to within a kernel stack, finds the pointer to the associated *Task.
-pub fn getPointerToTaskPtr(sp: usize) **Task {
+fn getPointerToTaskPtr(sp: usize) **Task {
     const kss: usize = @sizeOf(KernelStack);
     comptime {
         if ((kss & (kss - 1)) != 0) @compileError("Kernel stack size must be power of 2");
     }
     const stack_base = sp & (~(kss - 1));
+
     return @as(**Task, @ptrFromInt(stack_base));
 }
 
@@ -58,8 +61,7 @@ pub const Task = struct {
     page_dir_phys_addr: u32 = undefined,
     pid: u32 = undefined,
 
-    /// Should always point to a full UserInterruptFrame on this task's kernel stack. Used to
-    /// resume this task after having been blocked by a syscall or descheduled.
+    /// Kernel stack pointer (KernelFrame) for kernel_yield_trampoline. Allows resuming a sleeping task.
     kernel_esp: usize = 0,
 
     state: TaskState = .free,
@@ -88,20 +90,10 @@ pub const Task = struct {
         next_pid += 1;
         task.initFdTable();
 
-        const frame_addr = @intFromPtr(&task.kernel_stack) + KERNEL_STACK_SIZE - @sizeOf(interrupt_frame.UserInterruptFrame);
-        const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(frame_addr);
+        const frame: *interrupt_frame.UserInterruptFrame = getReturnFrame(task);
         frame.* = .{
             .interrupt = .{
-                .regs = .{
-                    .edi = 0,
-                    .esi = 0,
-                    .ebp = 0,
-                    .esp = 0,
-                    .ebx = 0,
-                    .edx = 0,
-                    .ecx = 0,
-                    .eax = 0,
-                },
+                .regs = .{},
                 .es = kernel.user_data_selector,
                 .ds = kernel.user_data_selector,
                 .vector = 0,
@@ -116,7 +108,15 @@ pub const Task = struct {
             },
         };
 
-        task.kernel_esp = frame_addr;
+        // Set up synthetic KernelFrame for initial entry from kernel_yield_trampoline.
+        const kframe = getInitialKernelFrame(task);
+        kframe.* = .{
+            .regs = .{},
+            .kernel_eip = @intFromPtr(&return_to_userspace),
+        };
+
+        task.kernel_esp = @intFromPtr(kframe);
+
         task.state = .active;
         task.initPaging();
     }
@@ -168,18 +168,18 @@ pub const Task = struct {
     }
 
     /// Writes a value into the saved EAX position on the kernel stack frame so that
-    /// when the task is resumed via iretd, the value is delivered as the syscall return.
+    /// when the task is woken, kernel_yield() will return that value.
     /// Only valid while the task is in the .waiting state with a saved kernel_esp.
-    pub fn setSyscallReturn(t: *Task, val: u32) void {
+    pub fn setKernelYieldReturnValue(t: *Task, val: u32) void {
         if (t.state != .waiting_pid or t.kernel_esp == 0)
-            @panic("setSyscallReturn called on task that is not waiting");
-        const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(t.kernel_esp);
-        frame.setReturnValue(val);
+            @panic("setKernelYieldReturnValue called on task that is not waiting");
+        const frame: *interrupt_frame.KernelFrame = @ptrFromInt(t.kernel_esp);
+        frame.regs.eax = val;
     }
 
     /// Wakes a task from a waiting state and sets its syscall return value.
     pub fn wakeWithReturnValue(t: *Task, val: u32) void {
-        t.setSyscallReturn(val);
+        t.setKernelYieldReturnValue(val);
         t.state = .active;
     }
 
@@ -222,7 +222,7 @@ pub const Task = struct {
 
     /// Sets the initial instruction and stack pointers for entry into user space.
     pub fn setEntryPoint(task: *Task, eip: u32, esp: u32) void {
-        const frame: *interrupt_frame.UserInterruptFrame = @ptrFromInt(task.kernel_esp);
+        const frame = getReturnFrame(task);
         frame.user.user_esp = esp;
         frame.interrupt.eip = eip;
     }
@@ -278,16 +278,10 @@ pub const Task = struct {
         return sp;
     }
 
-    /// Switches execution to this task and resumes userspace from its saved kernel stack.
-    pub inline fn switchTo(task: *Task, tss: *gdt.Tss) noreturn {
+    /// Sets the TSS kernel stack pointer and loads this task's page directory, preparing for entry into this task on the current CPU.
+    pub fn makeActive(task: *Task, tss: *gdt.Tss) void {
         task.updateTss(tss);
         paging.loadPageDir(task.page_dir_phys_addr);
-        asm volatile (
-            \\ jmp return_to_userspace
-            :
-            : [kernel_esp] "{esp}" (task.kernel_esp),
-        );
-        unreachable;
     }
 
     // Checks that the given range lies within the user memory segment.
@@ -363,7 +357,11 @@ comptime {
     if (@offsetOf(Task, "kernel_stack") != 0) @compileError("Task.kernel_stack must remain the first field");
 }
 
-/// Saves the pointer to the UserInterruptFrame for later resumption of the current task.
-pub fn saveReturnFrame(frame: *interrupt_frame.UserInterruptFrame) void {
-    getCurrentTask().kernel_esp = @intFromPtr(frame);
+/// Returns a pointer to the UserInterruptFrame for the current task.
+pub fn getReturnFrame(task: *Task) *interrupt_frame.UserInterruptFrame {
+    return @ptrCast((&task.kernel_stack).ptr + KERNEL_STACK_SIZE - @sizeOf(interrupt_frame.UserInterruptFrame));
+}
+
+fn getInitialKernelFrame(task: *Task) *interrupt_frame.KernelFrame {
+    return @ptrCast((&task.kernel_stack).ptr + KERNEL_STACK_SIZE - @sizeOf(interrupt_frame.UserInterruptFrame) - @sizeOf(interrupt_frame.KernelFrame));
 }

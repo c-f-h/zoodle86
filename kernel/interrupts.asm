@@ -7,6 +7,7 @@
 section .text
 
 extern interrupt_dispatch
+extern kernel_reschedule
 
 global return_to_userspace
 
@@ -15,6 +16,19 @@ VECTOR_KEYBOARD   equ 0xD8
 VECTOR_SYSCALL    equ 0x80
 
 KERNEL_DATA_SELECTOR equ (2 << 3)
+
+global kernel_yield_trampoline
+global _kernel_yield_trampoline_return
+
+kernel_yield_trampoline:
+    pushad          ; save current task's registers
+    push esp        ; pass current kernel esp into reschedule
+    call kernel_reschedule  ; return esp of task to switch to
+_kernel_yield_trampoline_return:
+    mov esp, eax    ; restore other task's kernel esp
+    popad           ; restore other task's registers
+    ret
+
 
 global keyboard_isr
 keyboard_isr:

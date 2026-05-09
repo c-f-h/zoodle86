@@ -549,7 +549,7 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
         }
     }
 
-    kernel.run(first_task.?);
+    kernel.schedule_initial(first_task.?);
 }
 
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
@@ -579,7 +579,7 @@ fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
     }
 
     if (tryLoadProgram(shell, fname, resolved, argv_buf[0..argc])) |ptask| {
-        kernel.run(ptask);
+        kernel.schedule_initial(ptask);
     }
 }
 

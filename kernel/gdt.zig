@@ -92,6 +92,8 @@ pub const Tss = extern struct {
         tss.iomap_base = @sizeOf(Tss);
     }
 
+    /// Sets the kernel stack pointer (SS0:ESP0) in this TSS.
+    /// This is used by the CPU when switching from user mode to kernel mode on interrupts/syscalls.
     pub fn setKernelStack(tss: *Tss, stack_top: usize) void {
         tss.esp0 = stack_top;
     }

@@ -1,13 +1,13 @@
 /// Saved general-purpose register state in the order produced by `pushad`.
 pub const GeneralRegisters = extern struct {
-    edi: u32,
-    esi: u32,
-    ebp: u32,
-    esp: u32,
-    ebx: u32,
-    edx: u32,
-    ecx: u32,
-    eax: u32,
+    edi: u32 = 0,
+    esi: u32 = 0,
+    ebp: u32 = 0,
+    esp: u32 = 0,
+    ebx: u32 = 0,
+    edx: u32 = 0,
+    ecx: u32 = 0,
+    eax: u32 = 0,
 };
 
 /// Normalized interrupt/trap frame prefix built by low-level entry stubs.
@@ -45,4 +45,10 @@ pub const UserInterruptFrame = extern struct {
     pub fn setReturnValue(frame: *UserInterruptFrame, value: u32) void {
         frame.interrupt.regs.eax = value;
     }
+};
+
+/// Frame used to resume a sleeping task in kernel_yield_trampoline. Pointed to by Task.kernel_esp.
+pub const KernelFrame = extern struct {
+    regs: GeneralRegisters,
+    kernel_eip: u32,
 };
