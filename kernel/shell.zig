@@ -31,6 +31,7 @@ const Shell = struct {
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
     console: *console.Console,
+    cur_cmdline: []const u8 = undefined,
 };
 
 const Command = struct {
@@ -63,10 +64,10 @@ const commands = [_]Command{
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
 };
 
-fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
-    if (tryHandleRunCommandLine(shell, cmdline)) {
-        return;
-    }
+/// Execute a shell command with the given shell instance.
+pub fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
+    shell.cur_cmdline = cmdline; // save the full command line for `run`
+    defer shell.cur_cmdline = undefined;
 
     var args = std.mem.tokenizeAny(u8, cmdline, " \t");
     const cmd_name = args.next() orelse return;
@@ -106,19 +107,6 @@ fn findCommand(name: []const u8) ?*const Command {
         }
     }
     return null;
-}
-
-fn tryHandleRunCommandLine(shell: *Shell, cmdline: []const u8) bool {
-    var tokens_buf: [MAX_SHELL_TOKENS][]const u8 = undefined;
-    const tokens = tokenizeShellCommandLine(cmdline, &tokens_buf) orelse {
-        shell.console.puts("Too many arguments.\n");
-        return true;
-    };
-    if (tokens.len == 0) return true;
-    if (!std.mem.eql(u8, tokens[0], "run")) return false;
-
-    handleRunCommandLine(shell, tokens);
-    return true;
 }
 
 fn handleRunCommandLine(shell: *Shell, tokens: []const []const u8) void {
@@ -724,10 +712,16 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
-    // Just a dummy command for `help` and usage printing; the actual "run" command handling is in tryHandleRunCommandLine.
-    _ = shell;
     _ = args;
-    return;
+    var tokens_buf: [MAX_SHELL_TOKENS][]const u8 = undefined;
+    const tokens = tokenizeShellCommandLine(shell.cur_cmdline, &tokens_buf) orelse {
+        shell.console.puts("Too many arguments.\n");
+        return;
+    };
+    if (tokens.len == 0) return;
+    if (!std.mem.eql(u8, tokens[0], "run")) return;
+
+    handleRunCommandLine(shell, tokens);
 }
 
 fn printTaskRow(con: *console.Console, t: *const task.Task) void {
