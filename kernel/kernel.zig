@@ -404,6 +404,7 @@ fn kernel_enter() !noreturn {
         secondary_vconsole.drawFrame();
 
         kernel_console.refresh();
+        secondary_console.refresh();
     }
     enterKernelShell();
 }
