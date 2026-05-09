@@ -174,7 +174,7 @@ pub const Task = struct {
     }
 
     /// Adds the task to a wait queue and blocks it until it is woken by wakeOne or wakeAll.
-    pub fn waitInQueue(t: *Task, wq: *waitqueue.WaitQueue) !void {
+    pub fn waitInQueue(t: *Task, wq: *waitqueue.WaitQueue) error{OutOfMemory}!void {
         try wq.add(t);
         t.state = .waiting;
     }

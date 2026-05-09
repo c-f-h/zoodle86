@@ -71,7 +71,7 @@ pub const FileDesc = union(FdKind) {
     }
 
     /// Reads bytes from a descriptor into the provided buffer.
-    pub fn read(self: *FileDesc, dest: []u8) (fs.FsError || error{ BadFd, AccessDenied })!usize {
+    pub fn read(self: *FileDesc, dest: []u8) (fs.FsError || error{ BadFd, AccessDenied, OutOfMemory })!usize {
         switch (self.*) {
             .file => |file_index| {
                 const open_file = getOpenFile(file_index);
@@ -86,15 +86,15 @@ pub const FileDesc = union(FdKind) {
                 const pp = pipe_info.handle;
                 const is_writer = pipe_info.writable;
                 if (is_writer) return error.AccessDenied;
-                const bytes_read = pp.read(dest);
-                if (bytes_read == 0) {
+                if (pp.empty()) {
                     if (pp.num_writers == 0) {
                         return 0; // EOF
                     } else {
-                        return error.BadFd; // TODO: should block on empty pipe with writers
+                        try task.getCurrentTask().waitInQueue(&pp.read_waiters);
+                        _ = kernel.kernel_yield();
                     }
                 }
-                return bytes_read;
+                return pp.read(dest);
             },
             else => return error.BadFd,
         }
@@ -125,11 +125,11 @@ pub const FileDesc = union(FdKind) {
                 const is_writer = pipe_info.writable;
                 if (!is_writer) return error.AccessDenied;
                 if (pp.num_readers == 0) return error.BrokenPipe;
-                const written = pp.write(src);
-                if (written == 0) {
-                    return error.BadFd; // TODO: should block on full pipe with readers
+                if (pp.full()) {
+                    try task.getCurrentTask().waitInQueue(&pp.write_waiters);
+                    _ = kernel.kernel_yield();
                 }
-                return written;
+                return pp.write(src);
             },
             else => return error.BadFd,
         }
