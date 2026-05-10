@@ -50,6 +50,9 @@ FS_HARD_LINKS = [
     ("bin/busybox", "bin/stat"),
     ("bin/busybox", "bin/mv"),
     ("bin/busybox", "bin/cp"),
+    ("bin/busybox", "bin/mkdir"),
+    ("bin/busybox", "bin/rmdir"),
+    ("bin/busybox", "bin/echo"),
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
