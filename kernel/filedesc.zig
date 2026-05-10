@@ -21,19 +21,8 @@ pub const SEEK_END = abi.SEEK_END;
 
 pub const MAX_OPEN_FILES = 32;
 
-pub const FdKind = enum(u8) {
-    empty,
-    stdout,
-    stderr,
-    file,
-    pipe,
-    tty,
-};
-
-pub const FileDesc = union(FdKind) {
+pub const FileDesc = union(enum) {
     empty: void,
-    stdout: *task.Task,
-    stderr: *task.Task,
     file: u8, // Always refers to a valid index in the global open_files table
     pipe: struct { handle: *pipe.Pipe, writable: bool },
     tty: struct { handle: *tty.Tty, readable: bool, writable: bool },
@@ -41,8 +30,6 @@ pub const FileDesc = union(FdKind) {
     /// Closes a descriptor and releases any backing pipe or open-file state.
     pub fn close(self: *FileDesc) error{BadFd}!void {
         switch (self.*) {
-            .stdout => {},
-            .stderr => {},
             .file => |file_index| {
                 closeOpenFile(file_index);
             },
@@ -70,8 +57,6 @@ pub const FileDesc = union(FdKind) {
     pub fn dupe(self: *FileDesc) FileDesc {
         switch (self.*) {
             .empty => return .{ .empty = {} },
-            .stdout => return self.*,
-            .stderr => return self.*,
             .file => |file_index| {
                 const open_file = getOpenFile(file_index);
                 open_file.in_use += 1;
@@ -100,7 +85,7 @@ pub const FileDesc = union(FdKind) {
     }
 
     /// Reads bytes from a descriptor into the provided buffer.
-    pub fn read(self: *FileDesc, dest: []u8) (fs.FsError || error{ BadFd, AccessDenied, OutOfMemory })!usize {
+    pub fn read(self: *FileDesc, dest: []u8) FiledescError!usize {
         switch (self.*) {
             .file => |file_index| {
                 const open_file = getOpenFile(file_index);
@@ -136,11 +121,6 @@ pub const FileDesc = union(FdKind) {
     /// Writes bytes from the provided buffer to a descriptor.
     pub fn write(self: *FileDesc, src: []const u8) !usize {
         switch (self.*) {
-            .stdout, .stderr => |ptask| {
-                const con = ptask.stdout_console orelse &console.primary;
-                con.puts(src);
-                return src.len;
-            },
             .file => |file_index| {
                 const open_file = getOpenFile(file_index);
                 if (!open_file.writable) return error.AccessDenied;
@@ -170,6 +150,51 @@ pub const FileDesc = union(FdKind) {
             },
             else => return error.BadFd,
         }
+    }
+
+    /// Returns stat-like metadata for the descriptor.
+    pub fn stat(self: *FileDesc) FiledescError!fs.Stat {
+        return switch (self.*) {
+            .file => |file_index| blk: {
+                const open_file = getOpenFile(file_index);
+                var st = try open_file.disk_fs.statInode(open_file.inode_index);
+                st.flags = buildOpenFileStatFlags(open_file);
+                break :blk st;
+            },
+            .pipe => |pipe_info| blk: {
+                const pp = pipe_info.handle;
+                var flags = fs.STAT_FLAG_SYNTHETIC;
+                if (pipe_info.writable) {
+                    flags |= fs.STAT_FLAG_WRITABLE;
+                } else {
+                    flags |= fs.STAT_FLAG_READABLE;
+                }
+                break :blk .{
+                    .inode = 0,
+                    .size = @intCast(pp.buffer.size),
+                    .blocks = 0,
+                    .blksize = @intCast(pp.buffer.buf.len),
+                    .nlink = 1,
+                    .kind = .Pipe,
+                    .flags = flags,
+                };
+            },
+            .tty => |tty_info| blk: {
+                var flags = fs.STAT_FLAG_SYNTHETIC;
+                if (tty_info.readable) flags |= fs.STAT_FLAG_READABLE;
+                if (tty_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
+                break :blk .{
+                    .inode = 0,
+                    .size = 0,
+                    .blocks = 0,
+                    .blksize = @intCast(tty_info.handle.bufferSize()),
+                    .nlink = 1,
+                    .kind = .CharDevice,
+                    .flags = flags,
+                };
+            },
+            else => error.BadFd,
+        };
     }
 };
 
@@ -300,48 +325,7 @@ pub fn statPath(disk_fs: *const fs.FileSystem, path: []const u8) FiledescError!S
 /// Returns stat-like metadata for a task-owned file descriptor.
 pub fn statFd(ptask: *task.Task, fd: u32) FiledescError!Stat {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
-    return switch (slot.*) {
-        .stdout, .stderr => syntheticCharStat(fs.STAT_FLAG_WRITABLE),
-        .file => |file_index| blk: {
-            const open_file = getOpenFile(file_index);
-            var stat = try open_file.disk_fs.statInode(open_file.inode_index);
-            stat.flags = buildOpenFileStatFlags(open_file);
-            break :blk stat;
-        },
-        .pipe => |pipe_info| blk: {
-            const pp = pipe_info.handle;
-            var flags = fs.STAT_FLAG_SYNTHETIC;
-            if (pipe_info.writable) {
-                flags |= fs.STAT_FLAG_WRITABLE;
-            } else {
-                flags |= fs.STAT_FLAG_READABLE;
-            }
-            break :blk .{
-                .inode = 0,
-                .size = @intCast(pp.buffer.size),
-                .blocks = 0,
-                .blksize = @intCast(pp.buffer.buf.len),
-                .nlink = 1,
-                .kind = .Pipe,
-                .flags = flags,
-            };
-        },
-        .tty => |tty_info| blk: {
-            var flags = fs.STAT_FLAG_SYNTHETIC;
-            if (tty_info.readable) flags |= fs.STAT_FLAG_READABLE;
-            if (tty_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
-            break :blk .{
-                .inode = 0,
-                .size = 0,
-                .blocks = 0,
-                .blksize = @intCast(tty_info.handle.bufferSize()),
-                .nlink = 1,
-                .kind = .CharDevice,
-                .flags = flags,
-            };
-        },
-        else => error.BadFd,
-    };
+    return slot.stat();
 }
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.

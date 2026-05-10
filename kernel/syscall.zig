@@ -246,8 +246,6 @@ fn sys_spawn(argv_desc_ofs: u32, opts_ptr: u32) !u32 {
     child.parent_pid = current_task.pid;
     if (current_task.controlling_tty) |controlling| {
         child.bindControllingTty(controlling);
-    } else if (current_task.stdout_console) |task_console| {
-        child.stdout_console = task_console;
     }
 
     // Apply fd remaps: dupe each requested parent fd into the child's fd table.
@@ -338,7 +336,7 @@ fn sys_kshell(cmdline_slice_va: u32) !u32 {
     const cmdline = try current.readUserSlice(u8, cmdline_slice_va);
 
     // Get the task's console or use the primary console as fallback
-    const task_console = current.stdout_console orelse &@import("console.zig").primary;
+    const task_console = current.getConsole() orelse &console.primary;
 
     // Create a shell instance with the task's console
     var kshell = shell.Shell{
@@ -355,8 +353,7 @@ fn sys_kshell(cmdline_slice_va: u32) !u32 {
 
 /// Returns the console cursor position of the calling task packed as (row<<16)|col.
 fn sys_getcursor() u32 {
-    const cur = task.getCurrentTask();
-    const con = cur.stdout_console orelse &console.primary;
+    const con = task.getCurrentTask().getConsole() orelse &console.primary;
     return (con.row << 16) | con.col;
 }
 

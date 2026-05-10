@@ -68,8 +68,8 @@ pub const Task = struct {
     exit_status: u32 = 0, // exit code written on exit, read by waitpid
     stack_bottom: u32 = 0, // lower bound for stack growth in virtual memory
     stack_top: u32 = 0, // top of stack in virtual memory
-    heap_start: u32 = 0,
-    heap_brk: u32 = 0, // current program break for heap
+    heap_start: u32 = 0, // start of heap in virtual memory (page-aligned)
+    heap_brk: u32 = 0, // current program break (end of heap)
 
     code_mem: paging.VMemRange = .{},
     data_mem: paging.VMemRange = .{},
@@ -77,8 +77,6 @@ pub const Task = struct {
 
     fd_table: [MAX_FDS]filedesc.FileDesc = [_]filedesc.FileDesc{.empty} ** MAX_FDS,
 
-    /// Console to use for stdout/stderr writes; null means use the primary console.
-    stdout_console: ?*console.Console = null,
     /// Controlling tty for stdio and interactive input.
     controlling_tty: ?*tty.Tty = null,
 
@@ -148,10 +146,13 @@ pub const Task = struct {
     /// Bind the task's standard descriptors to a controlling tty.
     pub fn bindControllingTty(task: *Task, controlling: *tty.Tty) void {
         task.controlling_tty = controlling;
-        task.stdout_console = controlling.console;
         task.fd_table[0] = .{ .tty = .{ .handle = controlling, .readable = true, .writable = false } };
         task.fd_table[1] = .{ .tty = .{ .handle = controlling, .readable = false, .writable = true } };
         task.fd_table[2] = .{ .tty = .{ .handle = controlling, .readable = false, .writable = true } };
+    }
+
+    pub fn getConsole(task: *Task) ?*console.Console {
+        return if (task.controlling_tty) |ptty| ptty.console else null;
     }
 
     /// Makes this task's page directory active on the current CPU.

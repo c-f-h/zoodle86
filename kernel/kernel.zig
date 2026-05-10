@@ -229,7 +229,7 @@ fn exception_handler(frame: *const interrupt_frame.InterruptFrame) noreturn {
     // The original cs tells us whether the fault happened in userspace (ring 3); in that
     // case we should terminate only the userspace program and continue.
     if (frame.fromUserMode()) {
-        const user_console = task.getCurrentTask().stdout_console orelse &console.primary;
+        const user_console = task.getCurrentTask().getConsole() orelse &console.primary;
         user_console.setAttr(0x0f);
         user_console.puts(&err);
         user_console.setAttr(VGA_ATTR);
@@ -769,7 +769,7 @@ fn page_fault_handler(frame: *const interrupt_frame.InterruptFrame) void {
     kernel_console.setSerialMirrorEnabled(old_mirror_state);
 
     if (frame.fromUserMode()) {
-        const user_console = task.getCurrentTask().stdout_console orelse &console.primary;
+        const user_console = task.getCurrentTask().getConsole() orelse &console.primary;
         user_console.puts("\nTerminating program.\n");
         exitCurrentTask(0xFFFF_FFFF);
     } else {
