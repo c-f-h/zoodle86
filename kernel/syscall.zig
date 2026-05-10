@@ -6,33 +6,10 @@ const shell = @import("shell.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
 const console = @import("console.zig");
+const abi = @import("abi");
 const std = @import("std");
 
-const Syscall = enum(u32) {
-    Read = 0,
-    Write = 1,
-    Open = 2,
-    Close = 3,
-    Stat = 4,
-    Fstat = 5,
-    Lseek = 8,
-    Brk = 12, // change program heap size
-    Pipe = 22,
-    Yield = 24,
-    GetPid = 39,
-    Exit = 60,
-    WaitPid = 61,
-    Mkdir = 83,
-    Rmdir = 84,
-    Link = 86,
-    Unlink = 87,
-    Ftruncate = 93,
-    Spawn = 1001,
-    SetChildReap = 1002,
-    KShell = 1003,
-    GetCursor = 1004,
-    _,
-};
+const Syscall = abi.Syscall;
 
 const ERRNO_E2BIG: u32 = 7;
 const ERRNO_EAGAIN: u32 = 11;
@@ -186,30 +163,20 @@ fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
     return 0;
 }
 
-/// A (dst, src) fd-index pair used in SpawnOpts to remap file descriptors into a child process.
-/// `child.fd[dst]` is set to a dupe of `parent.fd[src]` after the child ELF is loaded.
-const FdRemap = extern struct {
-    dst: u32,
-    src: u32,
-};
-
-/// Optional per-spawn options passed as a userspace pointer in arg2 of the spawn syscall.
-/// When opts_ptr is 0, no remapping is performed and the child inherits default stdio.
-const SpawnOpts = extern struct {
-    fd_remaps: task.AbiSlice,
-};
+const FdRemap = abi.FdRemap;
+const SpawnOpts = abi.SpawnOpts;
 
 fn sys_spawn(argv_desc_ofs: u32, opts_ptr: u32) !u32 {
     const current_task = task.getCurrentTask();
 
     // read argv slice from userspace memory
-    const argv_desc = try current_task.getUserPtr(task.AbiSlice, argv_desc_ofs);
+    const argv_desc = try current_task.getUserPtr(abi.AbiSlice, argv_desc_ofs);
     const argc: usize = @intCast(argv_desc.len);
-    if (argc == 0 or argc > task.MAX_ARGV_COUNT) {
+    if (argc == 0 or argc > abi.MAX_ARGV_COUNT) {
         return error.InvalidArgument;
     }
 
-    const arg_slices = try current_task.getUserSlice(task.AbiSlice, argv_desc.ptr, argv_desc.len);
+    const arg_slices = try current_task.getUserSlice(abi.AbiSlice, argv_desc.ptr, argv_desc.len);
 
     // count total bytes in argument strings for a single allocation
     var string_bytes: usize = 0;

@@ -5,6 +5,7 @@ const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
 const console = @import("console.zig");
 const waitqueue = @import("waitqueue.zig");
+const abi = @import("abi");
 const std = @import("std");
 
 pub const pid_t = u32;
@@ -17,14 +18,8 @@ pub const KERNEL_STACK_SIZE = 8 * 1024;
 /// Maximum number of arguments that can be passed to a process via setArgs.
 const KernelStack = [KERNEL_STACK_SIZE]u8;
 
-/// Stable 32-bit ABI slice representation used for argv passing.
-/// Must match the definition in userspace/sys.zig.
-pub const AbiSlice = extern struct {
-    ptr: u32,
-    len: u32,
-};
-
-pub const MAX_ARGV_COUNT = 128;
+pub const AbiSlice = abi.AbiSlice;
+pub const MAX_ARGV_COUNT = abi.MAX_ARGV_COUNT;
 
 pub const UserMemError = error{AccessViolation};
 

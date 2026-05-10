@@ -5,17 +5,18 @@ const task = @import("task.zig");
 const pipe = @import("pipe.zig");
 const keyboard = @import("keyboard.zig");
 const kernel = @import("kernel.zig");
+const abi = @import("abi");
 
-pub const O_RDONLY: u32 = 0;
-pub const O_WRONLY: u32 = 1;
-pub const O_RDWR: u32 = 2;
-pub const O_ACCMODE: u32 = 3;
-pub const O_CREAT: u32 = 1 << 6;
-pub const O_TRUNC: u32 = 1 << 9;
-pub const O_APPEND: u32 = 1 << 10;
-pub const SEEK_SET: u32 = 0;
-pub const SEEK_CUR: u32 = 1;
-pub const SEEK_END: u32 = 2;
+pub const O_RDONLY = abi.O_RDONLY;
+pub const O_WRONLY = abi.O_WRONLY;
+pub const O_RDWR = abi.O_RDWR;
+pub const O_ACCMODE = abi.O_ACCMODE;
+pub const O_CREAT = abi.O_CREAT;
+pub const O_TRUNC = abi.O_TRUNC;
+pub const O_APPEND = abi.O_APPEND;
+pub const SEEK_SET = abi.SEEK_SET;
+pub const SEEK_CUR = abi.SEEK_CUR;
+pub const SEEK_END = abi.SEEK_END;
 
 pub const MAX_OPEN_FILES = 32;
 
@@ -201,13 +202,8 @@ pub const FiledescError = fs.WriteFileError || error{
     SystemFileTableFull,
 };
 
-pub const Stat = fs.Stat;
-
-const SeekWhence = enum(u32) {
-    Set = SEEK_SET,
-    Cur = SEEK_CUR,
-    End = SEEK_END,
-};
+pub const Stat = abi.Stat;
+const SeekWhence = abi.SeekWhence;
 
 const OpenFile = struct {
     in_use: u8 = 0, // Reference counter

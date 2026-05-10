@@ -1,5 +1,6 @@
 const block_device = @import("block_device.zig");
 const BlockDevice = block_device.BlockDevice;
+const abi = @import("abi");
 const std = @import("std");
 
 pub const FILENAME_MAX_LEN: usize = 16;
@@ -100,28 +101,12 @@ pub const FileInfo = struct {
     is_directory: bool,
 };
 
-pub const StatKind = enum(u32) {
-    Unknown = 0,
-    Regular = 1,
-    Directory = 2,
-    CharDevice = 3,
-    Pipe = 4,
-};
-
-pub const STAT_FLAG_READABLE: u32 = 1 << 0;
-pub const STAT_FLAG_WRITABLE: u32 = 1 << 1;
-pub const STAT_FLAG_APPEND: u32 = 1 << 2;
-pub const STAT_FLAG_SYNTHETIC: u32 = 1 << 3;
-
-pub const Stat = extern struct {
-    inode: u32,
-    size: u32,
-    blocks: u32,
-    blksize: u32,
-    nlink: u32,
-    kind: StatKind,
-    flags: u32,
-};
+pub const StatKind = abi.FileKind;
+pub const STAT_FLAG_READABLE = abi.STAT_FLAG_READABLE;
+pub const STAT_FLAG_WRITABLE = abi.STAT_FLAG_WRITABLE;
+pub const STAT_FLAG_APPEND = abi.STAT_FLAG_APPEND;
+pub const STAT_FLAG_SYNTHETIC = abi.STAT_FLAG_SYNTHETIC;
+pub const Stat = abi.Stat;
 
 /// Returns the number of 512-byte sectors needed to store `len` bytes.
 pub fn sectorsForBytes(len: usize) u32 {

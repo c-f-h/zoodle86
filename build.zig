@@ -38,7 +38,13 @@ pub fn build(b: *std.Build) void {
         .stack_protector = false,
         .strip = false,
     });
+    const abi_module = b.addModule("abi", .{
+        .root_source_file = b.path("common/abi.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     kernel_module.addIncludePath(b.path("."));
+    kernel_module.addImport("abi", abi_module);
     kernel_module.addObjectFile(interrupts_obj);
 
     const kernel_full = b.addExecutable(.{

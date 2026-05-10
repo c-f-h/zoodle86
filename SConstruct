@@ -29,6 +29,7 @@ STAGE2_VIDEO_ASM = ROOT / "kernel" / "stage2_video_rm.asm"
 STAGE2_LINKER_SCRIPT = ROOT / "stage2.ld"
 USERSPACE_LINKER_SCRIPT = ROOT / "userspace.ld"
 KERNEL_LINKER_SCRIPT = ROOT / "kernel.ld"
+COMMON_ABI_SRC = ROOT / "common" / "abi.zig"
 ZIG_STAGE2_SRC = ROOT / "kernel" / "stage2.zig"
 KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 USERSPACE_SOURCES = [
@@ -155,6 +156,13 @@ COMMON_ZIG_OPTS = [
     "-fno-stack-protector",
 ]
 
+def zig_module_args(root_source):
+    return [
+        "--dep", "abi",
+        f"-Mroot={pathlib.Path(root_source).as_posix()}",
+        f"-Mabi={COMMON_ABI_SRC.as_posix()}",
+    ]
+
 def build_stage2(target, source, env):
     """Compile stage2.zig (minimal loader, no NASM) and link it into stage2.elf.
     Using build-exe with a .zig source file causes Zig's LLVM backend to emit local
@@ -196,12 +204,12 @@ def build_userspace_exe(target, source, env):
             str(ZIG_EXE),
             "build-exe",
             *COMMON_ZIG_OPTS,
+            *zig_module_args(source_path),
             "-ofmt=elf",
             "-fentry=_start",
             "-fno-compiler-rt",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
-            str(source_path),
         ]
     )
     if not output_path.exists():
@@ -222,6 +230,7 @@ def build_kernel(target, source, env):
             str(ZIG_EXE),
             "build-exe",
             *COMMON_ZIG_OPTS,
+            *zig_module_args(source_path),
             "-ofmt=elf",
             "-fentry=kernel_init",
             "-fno-compiler-rt",
@@ -229,7 +238,6 @@ def build_kernel(target, source, env):
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
-            str(source_path),
         ]
     )
     if not output_path.exists():

@@ -1,142 +1,69 @@
+const abi = @import("abi");
+
 pub const STDIN: u32 = 0;
 pub const STDOUT: u32 = 1;
 pub const STDERR: u32 = 2;
 pub const FAIL: u32 = 0xFFFF_FFFF;
 
-/// Stable 32-bit ABI slice representation used for receiving argv at process startup.
-/// Must match the definition in kernel/task.zig.
-pub const AbiSlice = extern struct {
-    ptr: u32,
-    len: u32,
-
-    fn toSlice(slice: *const AbiSlice, comptime T: type) []const T {
-        return @as([*]const T, @ptrFromInt(slice.ptr))[0..slice.len];
-    }
-
-    fn fromSlice(comptime T: type, s: []const T) AbiSlice {
-        return .{
-            .ptr = @intFromPtr(s.ptr),
-            .len = @intCast(s.len),
-        };
-    }
-};
-
-/// Maximum number of arguments supported in the argv startup array.
-pub const MAX_ARGV_COUNT = 128;
-
-/// Selects the access mode encoded in userspace open flags.
-pub const FileOpenMode = enum(u2) {
-    ReadOnly = 0,
-    WriteOnly = 1,
-    ReadWrite = 2,
-};
-
-/// Encodes the userspace `open` syscall flags in a typed form.
-pub const FileOpenFlags = packed struct(u32) {
-    open_mode: FileOpenMode = .ReadOnly, // 0-1
-    reserved0: u4 = 0, // 2-5
-    create: bool = false, // 6
-    reserved1: u2 = 0, // 7-8
-    truncate: bool = false, // 9
-    append: bool = false, // 10
-    reserved2: u21 = 0, // 11-31
-};
-
-/// Selects the reference point used by the `lseek` syscall.
-pub const SeekWhence = enum(u32) {
-    Set = 0, // offset from beginning of file
-    Cur = 1, // offset from current position
-    End = 2, // offset from end of file
-};
-
-/// Categorizes the underlying object described by `Stat`.
-pub const FileKind = enum(u32) {
-    Unknown = 0,
-    Regular = 1,
-    Directory = 2,
-    CharDevice = 3,
-    Pipe = 4,
-};
-
-pub const STAT_FLAG_READABLE: u32 = 1 << 0;
-pub const STAT_FLAG_WRITABLE: u32 = 1 << 1;
-pub const STAT_FLAG_APPEND: u32 = 1 << 2;
-pub const STAT_FLAG_SYNTHETIC: u32 = 1 << 3;
-
-/// Stable stat-like file metadata returned by `stat` and `fstat`.
-pub const Stat = extern struct {
-    inode: u32,
-    size: u32,
-    blocks: u32,
-    blksize: u32,
-    nlink: u32,
-    kind: FileKind,
-    flags: u32,
-};
-
-const Syscall = enum(u32) {
-    Read = 0,
-    Write = 1,
-    Open = 2,
-    Close = 3,
-    Stat = 4,
-    Fstat = 5,
-    Seek = 8,
-    Brk = 12, // change program heap size
-    Pipe = 22,
-    Yield = 24,
-    GetPid = 39,
-    Exit = 60,
-    WaitPid = 61,
-    Mkdir = 83,
-    Rmdir = 84,
-    Link = 86,
-    Unlink = 87,
-    Ftruncate = 93,
-    Spawn = 1001,
-    SetChildReap = 1002,
-    KShell = 1003,
-    GetCursor = 1004,
-};
-
-// Virtual key codes delivered in KeyEvent.keycode
-pub const VK_BACKSPACE: u16 = 0x0E;
-pub const VK_TAB: u16 = 0x0F;
-pub const VK_ENTER: u16 = 0x1C;
-pub const VK_LCTRL: u16 = 0x1D;
-pub const VK_LSHIFT: u16 = 0x2A;
-pub const VK_RSHIFT: u16 = 0x36;
-pub const VK_LALT: u16 = 0x38;
-pub const VK_ESC: u16 = 0x01;
-pub const VK_A: u16 = 0x1E;
-pub const VK_B: u16 = 0x30;
-pub const VK_D: u16 = 0x20;
-pub const VK_E: u16 = 0x12;
-pub const VK_F: u16 = 0x21;
-pub const VK_K: u16 = 0x25;
-pub const VK_U: u16 = 0x16;
-// Extended keys (top byte 0xE0)
-pub const VK_EXTENDED: u16 = 0xE000;
-pub const VK_UP: u16 = VK_EXTENDED | 0x48;
-pub const VK_DOWN: u16 = VK_EXTENDED | 0x50;
-pub const VK_LEFT: u16 = VK_EXTENDED | 0x4B;
-pub const VK_RIGHT: u16 = VK_EXTENDED | 0x4D;
-pub const VK_HOME: u16 = VK_EXTENDED | 0x47;
-pub const VK_END: u16 = VK_EXTENDED | 0x4F;
-pub const VK_DELETE: u16 = VK_EXTENDED | 0x53;
-
-// Modifier flags in KeyEvent.modifiers
-pub const MOD_SHIFT: u8 = 0x01;
-pub const MOD_ALT: u8 = 0x02;
-pub const MOD_CTRL: u8 = 0x04;
-
-/// A compact key event delivered by read(STDIN).  Exactly 4 bytes; layout matches
-/// kernel/keyboard.zig StdinKeyEvent.
-pub const KeyEvent = extern struct {
-    keycode: u16,
-    modifiers: u8,
-    ascii: u8,
-};
+pub const AbiSlice = abi.AbiSlice;
+pub const MAX_ARGV_COUNT = abi.MAX_ARGV_COUNT;
+pub const FileOpenMode = abi.FileOpenMode;
+pub const FileOpenFlags = abi.FileOpenFlags;
+pub const SeekWhence = abi.SeekWhence;
+pub const FileKind = abi.FileKind;
+pub const STAT_FLAG_READABLE = abi.STAT_FLAG_READABLE;
+pub const STAT_FLAG_WRITABLE = abi.STAT_FLAG_WRITABLE;
+pub const STAT_FLAG_APPEND = abi.STAT_FLAG_APPEND;
+pub const STAT_FLAG_SYNTHETIC = abi.STAT_FLAG_SYNTHETIC;
+pub const Stat = abi.Stat;
+const Syscall = abi.Syscall;
+pub const VK_BACKSPACE = abi.VK_BACKSPACE;
+pub const VK_TAB = abi.VK_TAB;
+pub const VK_ENTER = abi.VK_ENTER;
+pub const VK_LCTRL = abi.VK_LCTRL;
+pub const VK_LSHIFT = abi.VK_LSHIFT;
+pub const VK_RSHIFT = abi.VK_RSHIFT;
+pub const VK_LALT = abi.VK_LALT;
+pub const VK_ESC = abi.VK_ESC;
+pub const VK_SPACE = abi.VK_SPACE;
+pub const VK_A = abi.VK_A;
+pub const VK_B = abi.VK_B;
+pub const VK_C = abi.VK_C;
+pub const VK_D = abi.VK_D;
+pub const VK_E = abi.VK_E;
+pub const VK_F = abi.VK_F;
+pub const VK_G = abi.VK_G;
+pub const VK_H = abi.VK_H;
+pub const VK_I = abi.VK_I;
+pub const VK_J = abi.VK_J;
+pub const VK_K = abi.VK_K;
+pub const VK_L = abi.VK_L;
+pub const VK_M = abi.VK_M;
+pub const VK_N = abi.VK_N;
+pub const VK_O = abi.VK_O;
+pub const VK_P = abi.VK_P;
+pub const VK_Q = abi.VK_Q;
+pub const VK_R = abi.VK_R;
+pub const VK_S = abi.VK_S;
+pub const VK_T = abi.VK_T;
+pub const VK_U = abi.VK_U;
+pub const VK_V = abi.VK_V;
+pub const VK_W = abi.VK_W;
+pub const VK_X = abi.VK_X;
+pub const VK_Y = abi.VK_Y;
+pub const VK_Z = abi.VK_Z;
+pub const VK_EXTENDED = abi.VK_EXTENDED;
+pub const VK_UP = abi.VK_UP;
+pub const VK_DOWN = abi.VK_DOWN;
+pub const VK_LEFT = abi.VK_LEFT;
+pub const VK_RIGHT = abi.VK_RIGHT;
+pub const VK_HOME = abi.VK_HOME;
+pub const VK_END = abi.VK_END;
+pub const VK_DELETE = abi.VK_DELETE;
+pub const MOD_SHIFT = abi.MOD_SHIFT;
+pub const MOD_ALT = abi.MOD_ALT;
+pub const MOD_CTRL = abi.MOD_CTRL;
+pub const KeyEvent = abi.KeyEvent;
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
 pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
@@ -216,7 +143,7 @@ pub fn fstat(fd: u32, out: *Stat) u32 {
 
 /// Repositions a userspace-visible file descriptor and returns the new offset.
 pub fn lseek(fd: u32, offset: i32, whence: SeekWhence) u32 {
-    return syscall(.Seek, fd, @bitCast(offset), @intFromEnum(whence));
+    return syscall(.Lseek, fd, @bitCast(offset), @intFromEnum(whence));
 }
 
 /// Resizes a filesystem-backed file descriptor to the requested byte length.
@@ -247,17 +174,8 @@ pub fn readKey() KeyEvent {
     return @bitCast(bytes);
 }
 
-/// A (dst, src) fd-index pair for remapping parent file descriptors into the child at spawn time.
-/// `child.fd[dst]` will be set to a copy of `parent.fd[src]`.
-pub const FdRemap = extern struct {
-    dst: u32,
-    src: u32,
-};
-
-/// Options for the spawn syscall. Pass a pointer to this struct as the second argument to spawnvOpts/spawnOpts.
-pub const SpawnOpts = extern struct {
-    fd_remaps: AbiSlice,
-};
+pub const FdRemap = abi.FdRemap;
+pub const SpawnOpts = abi.SpawnOpts;
 
 /// Spawns a userspace executable from a full argv slice where argv[0] names the program.
 pub fn spawnv(argv: []const []const u8) !u32 {

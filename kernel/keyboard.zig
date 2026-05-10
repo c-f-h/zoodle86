@@ -1,66 +1,67 @@
 const interrupt_frame = @import("interrupt_frame.zig");
 const kernel = @import("kernel.zig");
 const io = @import("io.zig");
+const abi = @import("abi");
 
 // Modifier flags
-pub const MOD_SHIFT: u8 = 0x01;
-pub const MOD_ALT: u8 = 0x02;
-pub const MOD_CTRL: u8 = 0x04;
+pub const MOD_SHIFT = abi.MOD_SHIFT;
+pub const MOD_ALT = abi.MOD_ALT;
+pub const MOD_CTRL = abi.MOD_CTRL;
 
 // Virtual keycode prefix for extended keys
-pub const VK_EXTENDED = 0xE000;
+pub const VK_EXTENDED = abi.VK_EXTENDED;
 
 // Regular virtual keycodes (non-extended scancode equivalents)
-pub const VK_ENTER = 0x1C;
-pub const VK_BACKSPACE = 0x0E;
-pub const VK_TAB = 0x0F;
-pub const VK_ESC = 0x01;
-pub const VK_LCTRL = 0x1D;
-pub const VK_LSHIFT = 0x2A;
-pub const VK_RSHIFT = 0x36;
-pub const VK_LALT = 0x38;
-pub const VK_SPACE = 0x39;
+pub const VK_ENTER = abi.VK_ENTER;
+pub const VK_BACKSPACE = abi.VK_BACKSPACE;
+pub const VK_TAB = abi.VK_TAB;
+pub const VK_ESC = abi.VK_ESC;
+pub const VK_LCTRL = abi.VK_LCTRL;
+pub const VK_LSHIFT = abi.VK_LSHIFT;
+pub const VK_RSHIFT = abi.VK_RSHIFT;
+pub const VK_LALT = abi.VK_LALT;
+pub const VK_SPACE = abi.VK_SPACE;
 
 // Letter keycodes
-pub const VK_A = 0x1E;
-pub const VK_B = 0x30;
-pub const VK_C = 0x2E;
-pub const VK_D = 0x20;
-pub const VK_E = 0x12;
-pub const VK_F = 0x21;
-pub const VK_G = 0x22;
-pub const VK_H = 0x23;
-pub const VK_I = 0x17;
-pub const VK_J = 0x24;
-pub const VK_K = 0x25;
-pub const VK_L = 0x26;
-pub const VK_M = 0x32;
-pub const VK_N = 0x31;
-pub const VK_O = 0x18;
-pub const VK_P = 0x19;
-pub const VK_Q = 0x10;
-pub const VK_R = 0x13;
-pub const VK_S = 0x1F;
-pub const VK_T = 0x14;
-pub const VK_U = 0x16;
-pub const VK_V = 0x2F;
-pub const VK_W = 0x11;
-pub const VK_X = 0x2D;
-pub const VK_Y = 0x15;
-pub const VK_Z = 0x2C;
+pub const VK_A = abi.VK_A;
+pub const VK_B = abi.VK_B;
+pub const VK_C = abi.VK_C;
+pub const VK_D = abi.VK_D;
+pub const VK_E = abi.VK_E;
+pub const VK_F = abi.VK_F;
+pub const VK_G = abi.VK_G;
+pub const VK_H = abi.VK_H;
+pub const VK_I = abi.VK_I;
+pub const VK_J = abi.VK_J;
+pub const VK_K = abi.VK_K;
+pub const VK_L = abi.VK_L;
+pub const VK_M = abi.VK_M;
+pub const VK_N = abi.VK_N;
+pub const VK_O = abi.VK_O;
+pub const VK_P = abi.VK_P;
+pub const VK_Q = abi.VK_Q;
+pub const VK_R = abi.VK_R;
+pub const VK_S = abi.VK_S;
+pub const VK_T = abi.VK_T;
+pub const VK_U = abi.VK_U;
+pub const VK_V = abi.VK_V;
+pub const VK_W = abi.VK_W;
+pub const VK_X = abi.VK_X;
+pub const VK_Y = abi.VK_Y;
+pub const VK_Z = abi.VK_Z;
 
 // Extended virtual keycodes
-pub const VK_KEYPAD_ENTER = VK_EXTENDED | 0x1C;
-pub const VK_RCTRL = VK_EXTENDED | 0x1D;
-pub const VK_KEYPAD_SLASH = VK_EXTENDED | 0x35;
-pub const VK_RALT = VK_EXTENDED | 0x38;
-pub const VK_UP = VK_EXTENDED | 0x48;
-pub const VK_LEFT = VK_EXTENDED | 0x4B;
-pub const VK_RIGHT = VK_EXTENDED | 0x4D;
-pub const VK_DOWN = VK_EXTENDED | 0x50;
-pub const VK_HOME = VK_EXTENDED | 0x47;
-pub const VK_END = VK_EXTENDED | 0x4F;
-pub const VK_DELETE = VK_EXTENDED | 0x53;
+pub const VK_KEYPAD_ENTER = abi.VK_KEYPAD_ENTER;
+pub const VK_RCTRL = abi.VK_RCTRL;
+pub const VK_KEYPAD_SLASH = abi.VK_KEYPAD_SLASH;
+pub const VK_RALT = abi.VK_RALT;
+pub const VK_UP = abi.VK_UP;
+pub const VK_LEFT = abi.VK_LEFT;
+pub const VK_RIGHT = abi.VK_RIGHT;
+pub const VK_DOWN = abi.VK_DOWN;
+pub const VK_HOME = abi.VK_HOME;
+pub const VK_END = abi.VK_END;
+pub const VK_DELETE = abi.VK_DELETE;
 
 // Legacy names for compatibility (will be removed)
 pub const SC_ENTER = VK_ENTER;
@@ -83,12 +84,7 @@ pub const KeyEvent = struct {
 };
 
 /// Compact 4-byte key event delivered to userspace via read(STDIN).
-/// Layout must match KeyEvent in userspace/sys.zig.
-pub const StdinKeyEvent = extern struct {
-    keycode: u16,
-    modifiers: u8,
-    ascii: u8,
-};
+pub const StdinKeyEvent = abi.KeyEvent;
 
 // Keyboard ring buffer
 var keyboard_scancode_buffer: [16]u8 = undefined;
