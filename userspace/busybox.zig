@@ -353,10 +353,74 @@ fn cpMain(argv: []const []const u8) noreturn {
 }
 
 // ---------------------------------------------------------------------------
+// mkdir
+// ---------------------------------------------------------------------------
+
+/// Creates one or more directories.
+fn mkdirMain(argv: []const []const u8) noreturn {
+    if (argv.len < 2) {
+        _ = sys.writeAll(sys.STDERR, "Usage: mkdir <path> ...\n");
+        sys.exit(1);
+    }
+
+    var ok = true;
+    for (argv[1..]) |path| {
+        sys.mkdir(path) catch {
+            var buf: [192]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "mkdir: failed to create directory {s}\n", .{path}) catch
+                "mkdir: failed to create directory\n";
+            _ = sys.writeAll(sys.STDERR, msg);
+            ok = false;
+        };
+    }
+
+    sys.exit(if (ok) 0 else 1);
+}
+
+// ---------------------------------------------------------------------------
+// rmdir
+// ---------------------------------------------------------------------------
+
+/// Removes one or more empty directories.
+fn rmdirMain(argv: []const []const u8) noreturn {
+    if (argv.len < 2) {
+        _ = sys.writeAll(sys.STDERR, "Usage: rmdir <path> ...\n");
+        sys.exit(1);
+    }
+
+    var ok = true;
+    for (argv[1..]) |path| {
+        if (sys.rmdir(path) == sys.FAIL) {
+            var buf: [192]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "rmdir: failed to remove directory {s}\n", .{path}) catch
+                "rmdir: failed to remove directory\n";
+            _ = sys.writeAll(sys.STDERR, msg);
+            ok = false;
+        }
+    }
+
+    sys.exit(if (ok) 0 else 1);
+}
+
+// ---------------------------------------------------------------------------
+// echo
+// ---------------------------------------------------------------------------
+
+/// Prints arguments separated by spaces, followed by a newline.
+fn echoMain(argv: []const []const u8) noreturn {
+    for (argv[1..], 0..) |arg, i| {
+        if (i > 0 and !sys.writeAll(sys.STDOUT, " ")) sys.exit(1);
+        if (!sys.writeAll(sys.STDOUT, arg)) sys.exit(1);
+    }
+    if (!sys.writeAll(sys.STDOUT, "\n")) sys.exit(1);
+    sys.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // busybox dispatch
 // ---------------------------------------------------------------------------
 
-/// Multi-call binary: dispatches to cat, ls, ln, rm, stat, mv, or cp based on argv[0] basename.
+/// Multi-call binary: dispatches to cat, ls, ln, rm, stat, mv, cp, mkdir, rmdir, or echo based on argv[0] basename.
 pub fn main(argv: []const []const u8) noreturn {
     const name = if (argv.len > 0) baseName(argv[0]) else "";
 
@@ -367,10 +431,13 @@ pub fn main(argv: []const []const u8) noreturn {
     if (std.mem.eql(u8, name, "stat")) statMain(argv);
     if (std.mem.eql(u8, name, "mv")) mvMain(argv);
     if (std.mem.eql(u8, name, "cp")) cpMain(argv);
+    if (std.mem.eql(u8, name, "mkdir")) mkdirMain(argv);
+    if (std.mem.eql(u8, name, "rmdir")) rmdirMain(argv);
+    if (std.mem.eql(u8, name, "echo")) echoMain(argv);
 
     _ = sys.writeAll(
         sys.STDERR,
-        "busybox: available tools: cat, ls, ln, rm, stat, mv, cp\n" ++
+        "busybox: available tools: cat, ls, ln, rm, stat, mv, cp, mkdir, rmdir, echo\n" ++
             "Invoke via a named link.\n",
     );
     sys.exit(1);
