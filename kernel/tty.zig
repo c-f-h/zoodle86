@@ -16,12 +16,19 @@ const CursorPos = struct {
 
 /// A simple canonical-mode tty bound to one console.
 pub const Tty = struct {
-    console: *console.Console,
-    cooked: ringbuf.RingBuf = undefined,
-    read_waiters: waitqueue.WaitQueue = undefined,
+    // Whether this tty is initialized and can be used
     available: bool = false,
+    // The console this tty instance is bound to
+    console: *console.Console,
+    // Processed data waiting for a reader
+    cooked: ringbuf.RingBuf = undefined,
+    // Tasks waiting for data to become available
+    read_waiters: waitqueue.WaitQueue = undefined,
+    // Whether the next read should return EOF with length 0
     eof_pending: bool = false,
+    // Buffer for the line currently being edited, before it's committed to `cooked`
     line_buf: [CANON_LINE_MAX]u8 = undefined,
+    // Length of the current line in `line_buf`
     line_len: usize = 0,
     // Stores the screen position directly after typing each individual character in line_buf
     echo_positions: [CANON_LINE_MAX + 1]CursorPos = undefined,
