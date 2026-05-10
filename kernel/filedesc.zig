@@ -203,6 +203,7 @@ pub const FiledescError = fs.WriteFileError || error{
 };
 
 pub const Stat = abi.Stat;
+const DirEntry = abi.DirEntry;
 const SeekWhence = abi.SeekWhence;
 
 const OpenFile = struct {
@@ -221,13 +222,19 @@ var open_files: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
 pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) FiledescError!FileDesc {
     const access_mode = try validateOpenFlags(flags);
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
+    const inode_index = if (path.len == 0 or std.mem.eql(u8, path, "/"))
+        fs.ROOT_INODE_INDEX
+    else blk: {
+        break :blk disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, path) catch |err| switch (err) {
+            error.FileNotFound => blk2: {
+                if ((flags & O_CREAT) == 0) return error.FileNotFound;
 
-    const split = fs.splitPath(path);
-    const parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
-
-    const inode_index = try disk_fs.findFileInodeIndex(parent_inode, split.name) orelse blk: {
-        if ((flags & O_CREAT) == 0) return error.FileNotFound;
-        break :blk try disk_fs.createFile(parent_inode, split.name);
+                const split = fs.splitPath(path);
+                const parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
+                break :blk2 try disk_fs.createFile(parent_inode, split.name);
+            },
+            else => return err,
+        };
     };
 
     if ((flags & O_TRUNC) != 0) {
@@ -323,6 +330,43 @@ pub fn readFromFd(ptask: *task.Task, fd: u32, dest: []u8) FiledescError!usize {
 
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return slot.read(dest);
+}
+
+/// Enumerates directory entries from a task-owned directory descriptor into a fixed-size ABI buffer.
+pub fn readDirEntries(ptask: *task.Task, fd: u32, dest: []DirEntry) FiledescError!usize {
+    if (dest.len == 0) return 0;
+
+    const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
+    return switch (slot.*) {
+        .file => |file_index| blk: {
+            const open_file = getOpenFile(file_index);
+            const dir_stat = try open_file.disk_fs.statInode(open_file.inode_index);
+            if (dir_stat.kind != .Directory) return error.NotADirectory;
+
+            const raw_entry_size = @sizeOf(fs.DirectoryEntry);
+            if (open_file.offset % raw_entry_size != 0) return error.InvalidSeek;
+
+            var dir_index: usize = @intCast(open_file.offset / raw_entry_size);
+            var out_count: usize = 0;
+
+            while (dir_index < fs.DIRECTORY_ENTRY_COUNT and out_count < dest.len) : (dir_index += 1) {
+                open_file.offset = @intCast((dir_index + 1) * raw_entry_size);
+                const raw_entry = (try open_file.disk_fs.getDirectoryEntry(open_file.inode_index, dir_index)) orelse continue;
+                const inode_stat = try open_file.disk_fs.statInode(raw_entry.inode_index);
+                dest[out_count] = .{
+                    .inode = raw_entry.inode_index,
+                    .size = inode_stat.size,
+                    .kind = inode_stat.kind,
+                    .name_len = raw_entry.name_len,
+                    .name = raw_entry.name,
+                };
+                out_count += 1;
+            }
+
+            break :blk out_count;
+        },
+        else => error.NotADirectory,
+    };
 }
 
 const WriteError = FiledescError || error{BrokenPipe};

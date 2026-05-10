@@ -50,7 +50,7 @@ This is currently limited to one operator per `run` command line. Chaining and a
 The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. Unlike the kernel shell's `run` command, every non-empty line is treated as a program invocation directly:
 
 - `hello 4` runs `/bin/hello 4`.
-- `hello 4 > hello.txt` redirects stdout to a file using spawn-time fd remapping.
+- `ls /bin > list.txt` redirects stdout to a file using spawn-time fd remapping.
 - `hello 4 | cat` connects one program's stdout to another program's stdin with a single pipe.
 
 Like the kernel `run` support, this is limited to one redirection operator per line.

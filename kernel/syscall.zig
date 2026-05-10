@@ -23,6 +23,7 @@ const ERRNO_ENFILE: u32 = 23;
 const ERRNO_EMFILE: u32 = 24;
 const ERRNO_EBADF: u32 = 9;
 const ERRNO_EBUSY: u32 = 16;
+const ERRNO_ENOTDIR: u32 = 20;
 const ERRNO_EINVAL: u32 = 22;
 const ERRNO_ENOSPC: u32 = 28;
 const ERRNO_ENOTEMPTY: u32 = 39;
@@ -53,7 +54,7 @@ fn mapError(err: anyerror) u32 {
         error.InvalidName => ERRNO_EINVAL,
         error.InvalidSeek => ERRNO_EINVAL,
         error.InvalidSuperblock => ERRNO_EIO,
-        error.NotADirectory => ERRNO_EINVAL,
+        error.NotADirectory => ERRNO_ENOTDIR,
         error.NotARegularFile => ERRNO_EINVAL,
         error.NoDevice => ERRNO_EIO,
         error.NoTaskSlots => ERRNO_EAGAIN,
@@ -270,6 +271,11 @@ fn sys_waitpid(pid: u32) !u32 {
     return kernel.kernel_yield();
 }
 
+fn sys_getdents(fd: u32, entries_slice_va: u32) !u32 {
+    const entries = try task.getCurrentTask().readUserSlice(abi.DirEntry, entries_slice_va);
+    return @intCast(try filedesc.readDirEntries(task.getCurrentTask(), fd, entries));
+}
+
 fn sys_mkdir(path_slice_va: u32) !u32 {
     const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
     return try kernel.getFileSystem().createDirectory(path);
@@ -351,6 +357,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Unlink => sys_unlink(arg1, arg2),
         .Ftruncate => sys_ftruncate(arg1, arg2),
         .WaitPid => sys_waitpid(arg1),
+        .GetDents => sys_getdents(arg1, arg2),
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
         .Link => sys_link(arg1, arg2),

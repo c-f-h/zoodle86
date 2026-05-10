@@ -4,7 +4,7 @@ Complete listing of every source file and its role.
 
 ## Core Kernel Modules
 
-- `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, spawn fd-remap structs, and the compact stdin key-event layout.
+- `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, and the compact stdin key-event layout.
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and exposes low-level pixel, fill, and text helpers for graphics-mode rendering.
@@ -73,9 +73,10 @@ Complete listing of every source file and its role.
 - `userspace/cat.zig`: stdin-to-stdout copier and simple file-printing utility used both directly and in shell pipelines.
 - `userspace/ln.zig`: small hard-link utility that calls the `link` syscall for `ln <existing> <new>`.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
-- `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, and pipe semantics.
+- `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/alloc_stress.zig`: heap allocator stress test covering allocate/free/realloc behavior.
+- `userspace/ls.zig`: userspace directory lister built on the fixed-size `getdents`/`readdir` syscall wrapper.
 - `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports basic redirection.
 - `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`.
 
@@ -99,6 +100,7 @@ Complete listing of every source file and its role.
     - `userspace/fib.zig`
     - `userspace/fs_stress.zig`
     - `userspace/alloc_stress.zig`
+    - `userspace/ls.zig`
     - `userspace/shell.zig`
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.

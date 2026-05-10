@@ -55,6 +55,9 @@ const link_alias_file = tmpdir ++ "/link_alias.txt";
 const stat_file = tmpdir ++ "/stat.txt";
 const stat_link = tmpdir ++ "/stat_link.txt";
 const stat_dir = tmpdir ++ "/stat_dir";
+const dirent_dir = tmpdir ++ "/dirents";
+const dirent_file = dirent_dir ++ "/entry.txt";
+const dirent_subdir = dirent_dir ++ "/nested";
 const nonexistent_file = "nonexistent.txt";
 const sector_size = 512;
 const pipe_capacity = 4096;
@@ -99,6 +102,10 @@ fn expectKind(actual: sys.FileKind, expected: sys.FileKind) !void {
 
 fn expectFlags(actual: u32, expected_mask: u32) !void {
     if ((actual & expected_mask) != expected_mask) return error.MissingFlags;
+}
+
+fn expectDirEntryName(actual: *const sys.DirEntry, expected: []const u8) !void {
+    if (!std.mem.eql(u8, actual.name[0..actual.name_len], expected)) return error.DataMismatch;
 }
 
 fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
@@ -459,6 +466,70 @@ fn testStat() !void {
     try syscallShouldFail(sys.fstat(99, &path_stat), "testStat: fstat bad fd", @src());
 }
 
+fn testGetDents() !void {
+    _ = sys.unlink(dirent_file);
+    _ = sys.rmdir(dirent_subdir);
+    _ = sys.rmdir(dirent_dir);
+    _ = sys.mkdir(dirent_dir) catch {};
+    _ = sys.mkdir(dirent_subdir) catch {};
+
+    const fd = try expectSyscall(sys.open(dirent_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testGetDents: create directory file", @src());
+    _ = try expectSyscall(sys.write(fd, "dirent payload"), "testGetDents: write directory file", @src());
+    _ = try expectSyscall(sys.close(fd), "testGetDents: close directory file", @src());
+
+    const dir_fd = try expectSyscall(sys.open(dirent_dir, .{}), "testGetDents: open directory", @src());
+    errdefer _ = sys.close(dir_fd);
+
+    var batch: [2]sys.DirEntry = undefined;
+    const first_batch = try expectSyscall(sys.getdents(dir_fd, &batch), "testGetDents: first batch", @src());
+    try expectOffset(first_batch, 2);
+
+    var saw_file = false;
+    var saw_dir = false;
+    for (batch[0..first_batch]) |*entry| {
+        if (std.mem.eql(u8, entry.name[0..entry.name_len], "entry.txt")) {
+            saw_file = true;
+            try expectKind(entry.kind, .Regular);
+            try expectOffset(entry.size, 14);
+        } else if (std.mem.eql(u8, entry.name[0..entry.name_len], "nested")) {
+            saw_dir = true;
+            try expectKind(entry.kind, .Directory);
+        } else {
+            return error.UnexpectedDirectoryEntry;
+        }
+    }
+    if (!saw_file or !saw_dir) return error.UnexpectedDirectoryEntry;
+
+    const second_batch = try expectSyscall(sys.getdents(dir_fd, &batch), "testGetDents: second batch eof", @src());
+    try expectOffset(second_batch, 0);
+
+    try expectOffset(try expectSyscall(sys.lseek(dir_fd, 0, .Set), "testGetDents: rewind directory", @src()), 0);
+    var single: sys.DirEntry = undefined;
+    const has_entry = try checkSyscall(sys.readdir(dir_fd, &single), "testGetDents: readdir entry", @src());
+    if (!has_entry) return error.ExpectedDirectoryEntry;
+    if (single.kind == .Regular) {
+        try expectDirEntryName(&single, "entry.txt");
+    } else if (single.kind == .Directory) {
+        try expectDirEntryName(&single, "nested");
+    } else {
+        return error.UnexpectedKind;
+    }
+
+    _ = try expectSyscall(sys.close(dir_fd), "testGetDents: close directory", @src());
+
+    const file_fd = try expectSyscall(sys.open(dirent_file, .{}), "testGetDents: reopen regular file", @src());
+    try syscallShouldFail(sys.getdents(file_fd, &batch), "testGetDents: getdents on regular file", @src());
+    _ = try expectSyscall(sys.close(file_fd), "testGetDents: close regular file", @src());
+
+    _ = try expectSyscall(sys.unlink(dirent_file), "testGetDents: unlink file", @src());
+    _ = try expectSyscall(sys.rmdir(dirent_subdir), "testGetDents: rmdir subdir", @src());
+    _ = try expectSyscall(sys.rmdir(dirent_dir), "testGetDents: rmdir dir", @src());
+}
+
 fn testPipeSpawn() !void {
     // Create two pipes: one for feeding cat's stdin, one for capturing cat's stdout.
     const stdin_read, const stdin_write = try checkSyscall(sys.pipe(), "testPipeSpawn: create stdin pipe", @src());
@@ -554,6 +625,7 @@ pub fn main(argv: []const []const u8) !void {
     try testUnlink();
     try testLink();
     try testStat();
+    try testGetDents();
     try testRmdir();
     try testPipe();
     try testBrokenPipe();

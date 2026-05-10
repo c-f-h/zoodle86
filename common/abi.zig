@@ -21,6 +21,7 @@ pub const AbiSlice = extern struct {
 
 /// Maximum number of arguments supported in the argv startup array.
 pub const MAX_ARGV_COUNT = 128;
+pub const DIRENT_NAME_MAX: usize = 16;
 
 /// Userspace-visible syscall numbers dispatched through int 0x80.
 pub const Syscall = enum(u32) {
@@ -37,6 +38,7 @@ pub const Syscall = enum(u32) {
     GetPid = 39,
     Exit = 60,
     WaitPid = 61,
+    GetDents = 78,
     Mkdir = 83,
     Rmdir = 84,
     Link = 86,
@@ -111,6 +113,16 @@ pub const Stat = extern struct {
     flags: u32,
 };
 
+/// Fixed-size directory entry record returned by the getdents syscall.
+pub const DirEntry = extern struct {
+    inode: u32,
+    size: u32,
+    kind: FileKind,
+    name_len: u8,
+    reserved: [3]u8 = @splat(0),
+    name: [DIRENT_NAME_MAX]u8 = @splat(0),
+};
+
 /// A compact key event delivered by read(STDIN). Exactly 4 bytes.
 pub const KeyEvent = extern struct {
     keycode: u16,
@@ -177,6 +189,7 @@ pub const MOD_CTRL: u8 = 0x04;
 
 comptime {
     std.debug.assert(@sizeOf(KeyEvent) == 4);
+    std.debug.assert(@sizeOf(DirEntry) == 32);
 }
 
 /// A (dst, src) fd-index pair used to remap descriptors during spawn.

@@ -11,11 +11,13 @@ pub const FileOpenMode = abi.FileOpenMode;
 pub const FileOpenFlags = abi.FileOpenFlags;
 pub const SeekWhence = abi.SeekWhence;
 pub const FileKind = abi.FileKind;
+pub const DirEntry = abi.DirEntry;
 pub const STAT_FLAG_READABLE = abi.STAT_FLAG_READABLE;
 pub const STAT_FLAG_WRITABLE = abi.STAT_FLAG_WRITABLE;
 pub const STAT_FLAG_APPEND = abi.STAT_FLAG_APPEND;
 pub const STAT_FLAG_SYNTHETIC = abi.STAT_FLAG_SYNTHETIC;
 pub const Stat = abi.Stat;
+pub const DIRENT_NAME_MAX = abi.DIRENT_NAME_MAX;
 const Syscall = abi.Syscall;
 pub const VK_BACKSPACE = abi.VK_BACKSPACE;
 pub const VK_TAB = abi.VK_TAB;
@@ -149,6 +151,23 @@ pub fn lseek(fd: u32, offset: i32, whence: SeekWhence) u32 {
 /// Resizes a filesystem-backed file descriptor to the requested byte length.
 pub fn ftruncate(fd: u32, length: u32) u32 {
     return syscall(.Ftruncate, fd, length, 0);
+}
+
+/// Reads a batch of fixed-size directory entries from an open directory descriptor.
+pub fn getdents(fd: u32, entries: []DirEntry) u32 {
+    const entry_slice = AbiSlice.fromSlice(DirEntry, entries);
+    return syscall(.GetDents, fd, @intFromPtr(&entry_slice), 0);
+}
+
+/// Reads the next directory entry from an open directory descriptor.
+/// Returns false on end-of-directory and an error when the syscall fails.
+pub fn readdir(fd: u32, out: *DirEntry) !bool {
+    var entry_buf: [1]DirEntry = undefined;
+    const count = getdents(fd, &entry_buf);
+    if (count == FAIL) return error.SyscallFailed;
+    if (count == 0) return false;
+    out.* = entry_buf[0];
+    return true;
 }
 
 /// Unlinks a filesystem path by name.
