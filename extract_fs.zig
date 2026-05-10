@@ -8,11 +8,6 @@ const ExtractCounts = struct {
     directories: usize = 0,
 };
 
-fn appendPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8, sep: u8) ![]u8 {
-    if (prefix.len == 0) return allocator.dupe(u8, name);
-    return std.fmt.allocPrint(allocator, "{s}{c}{s}", .{ prefix, sep, name });
-}
-
 fn extractDirectory(
     init: std.process.Init,
     stdout: anytype,
@@ -26,9 +21,9 @@ fn extractDirectory(
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
         const entry = (try disk_fs.getDirectoryEntry(dir_inode_index, index)) orelse continue;
         const name = entry.name[0..@as(usize, entry.name_len)];
-        const child_output_path = try appendPath(init.gpa, output_dir_path, name, '\\');
+        const child_output_path = try std.fs.path.join(init.gpa, &.{ output_dir_path, name });
         defer init.gpa.free(child_output_path);
-        const child_relative_path = try appendPath(init.gpa, relative_path, name, '/');
+        const child_relative_path = try std.fs.path.join(init.gpa, &.{ relative_path, name });
         defer init.gpa.free(child_relative_path);
 
         switch (entry.kind) {

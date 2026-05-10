@@ -15,11 +15,6 @@ const ImportCounts = struct {
     links: usize = 0,
 };
 
-fn appendPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8, sep: u8) ![]u8 {
-    if (prefix.len == 0) return allocator.dupe(u8, name);
-    return std.fmt.allocPrint(allocator, "{s}{c}{s}", .{ prefix, sep, name });
-}
-
 fn importDirectory(
     init: std.process.Init,
     stdout: anytype,
@@ -41,9 +36,9 @@ fn importDirectory(
                     return CompileError.InvalidPathName;
                 }
 
-                const child_host_path = try appendPath(init.gpa, host_dir_path, entry.name, '\\');
+                const child_host_path = try std.fs.path.join(init.gpa, &.{ host_dir_path, entry.name });
                 defer init.gpa.free(child_host_path);
-                const child_relative_path = try appendPath(init.gpa, relative_path, entry.name, '/');
+                const child_relative_path = try std.fs.path.join(init.gpa, &.{ relative_path, entry.name });
                 defer init.gpa.free(child_relative_path);
 
                 try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
@@ -58,9 +53,9 @@ fn importDirectory(
                     return CompileError.InvalidPathName;
                 }
 
-                const child_host_path = try appendPath(init.gpa, host_dir_path, entry.name, '\\');
+                const child_host_path = try std.fs.path.join(init.gpa, &.{ host_dir_path, entry.name });
                 defer init.gpa.free(child_host_path);
-                const child_relative_path = try appendPath(init.gpa, relative_path, entry.name, '/');
+                const child_relative_path = try std.fs.path.join(init.gpa, &.{ relative_path, entry.name });
                 defer init.gpa.free(child_relative_path);
 
                 try stdout.print("  Writing file: {s}\n", .{child_relative_path});
@@ -93,7 +88,7 @@ fn processLinksManifest(
     root_host_dir_path: []const u8,
     counts: *ImportCounts,
 ) !void {
-    const manifest_host_path = try appendPath(init.gpa, root_host_dir_path, "_links", '\\');
+    const manifest_host_path = try std.fs.path.join(init.gpa, &.{ root_host_dir_path, "_links" });
     defer init.gpa.free(manifest_host_path);
 
     const manifest_file = std.Io.Dir.cwd().openFile(init.io, manifest_host_path, .{}) catch return;
