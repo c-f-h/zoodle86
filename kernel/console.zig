@@ -24,8 +24,6 @@ inline fn makeCell(ch: u8, attr: u8) u16 {
     return (@as(u16, attr) << 8) | ch;
 }
 
-const EscState = enum { normal, esc, csi };
-
 /// An independent text console that can render to VGA memory, a RAM buffer, or a VConsole window.
 pub const Console = struct {
     width: u32 = VGA_TEXT_WIDTH,
@@ -40,13 +38,6 @@ pub const Console = struct {
     cells: [*]u16 = undefined, // points to VGA memory or a cell buffer depending on backend
     cell_buffer: []Cell = &.{}, // allocated when switching to framebuf backend
     vconsole_instance: ?*vconsole.VConsole = null,
-
-    // ANSI escape sequence parser state
-    esc_state: EscState = .normal,
-    csi_private: bool = false,
-    csi_params: [4]u32 = .{ 0, 0, 0, 0 },
-    csi_param_count: u8 = 0,
-    csi_cur: u32 = 0,
 
     inline fn cellIndex(self: *const Console, row: u32, col: u32) usize {
         return row * self.width + col;
@@ -75,7 +66,7 @@ pub const Console = struct {
             .buffered => {},
             .framebuf => {
                 if (self.vconsole_instance) |vc| {
-                    vc.setCursor(self.cells, self.row, self.col, self.cursor_visible);
+                    vc.updateCursor(self.cells, self.row, self.col, self.cursor_visible);
                 }
             },
         }
@@ -86,7 +77,7 @@ pub const Console = struct {
 
         if (self.backend == .framebuf and self.cursor_visible) {
             if (self.vconsole_instance) |vc| {
-                vc.setCursor(self.cells, self.row, self.col, false);
+                vc.updateCursor(self.cells, self.row, self.col, false);
             }
         }
 
@@ -309,11 +300,6 @@ pub const Console = struct {
     }
 
     fn putchInternal(self: *Console, ch: u8, sync_cursor: bool) void {
-        // Route ANSI escape bytes through the state machine before normal processing.
-        if (self.esc_state != .normal or ch == 0x1B) {
-            self.processEscapeByte(ch, sync_cursor);
-            return;
-        }
         switch (ch) {
             '\n' => {
                 self.newlineInternal(sync_cursor);
@@ -341,92 +327,12 @@ pub const Console = struct {
         if (sync_cursor) self.syncCursor();
     }
 
-    /// Processes one byte of an ANSI/VT100 escape sequence, updating parser state.
-    /// Mirror every escape byte to serial so a host terminal sees the full sequence.
-    fn processEscapeByte(self: *Console, ch: u8, sync_cursor: bool) void {
-        if (self.serial_mirror_enabled and serial.isInitialized()) {
-            serial.putch(ch);
-        }
-        switch (self.esc_state) {
-            .normal => {
-                // ch == 0x1B (ESC) guaranteed by caller
-                self.esc_state = .esc;
-            },
-            .esc => {
-                if (ch == '[') {
-                    self.esc_state = .csi;
-                    self.csi_private = false;
-                    self.csi_params = .{ 0, 0, 0, 0 };
-                    self.csi_param_count = 0;
-                    self.csi_cur = 0;
-                } else {
-                    self.esc_state = .normal; // unknown sequence; reset
-                }
-            },
-            .csi => {
-                if (ch >= '0' and ch <= '9') {
-                    self.csi_cur = self.csi_cur * 10 + (ch - '0');
-                } else if (ch == ';') {
-                    if (self.csi_param_count < self.csi_params.len) {
-                        self.csi_params[self.csi_param_count] = self.csi_cur;
-                        self.csi_param_count += 1;
-                    }
-                    self.csi_cur = 0;
-                } else if (ch == '?') {
-                    self.csi_private = true;
-                } else {
-                    // Final byte: dispatch and reset
-                    self.dispatchCsi(ch, sync_cursor);
-                    self.esc_state = .normal;
-                    self.csi_private = false;
-                }
-            },
-        }
-    }
-
-    /// Handles the final byte of a CSI sequence (e.g. 'H', 'l', 'h').
-    fn dispatchCsi(self: *Console, ch: u8, sync_cursor: bool) void {
-        // Save the last accumulated parameter
-        if (self.csi_param_count < self.csi_params.len) {
-            self.csi_params[self.csi_param_count] = self.csi_cur;
-        }
-        const p0 = self.csi_params[0];
-        const p1 = self.csi_params[1];
-        const nparams: u32 = self.csi_param_count + 1;
-
-        switch (ch) {
-            'H', 'f' => {
-                // CUP / HVP: ESC[row;colH — 1-indexed, 0 treated as 1
-                const r: u32 = if (p0 > 0) p0 - 1 else 0;
-                const c: u32 = if (nparams >= 2 and p1 > 0) p1 - 1 else 0;
-                self.row = if (r < self.height) r else self.height - 1;
-                self.col = if (c < self.width) c else self.width - 1;
-                if (sync_cursor) self.syncCursor();
-            },
-            'l' => {
-                // DEC private mode reset: ESC[?25l → hide cursor
-                if (self.csi_private and p0 == 25) {
-                    self.cursor_visible = false;
-                    self.syncCursor();
-                }
-            },
-            'h' => {
-                // DEC private mode set: ESC[?25h → show cursor
-                if (self.csi_private and p0 == 25) {
-                    self.cursor_visible = true;
-                    self.syncCursor();
-                }
-            },
-            else => {},
-        }
-    }
-
     pub fn putch(self: *Console, ch: u8) void {
         self.putchInternal(ch, true);
     }
 
     pub fn puts(self: *Console, s: []const u8) void {
-        if (self.backend == .framebuf and self.cursor_visible and s.len > 1 and std.mem.indexOfScalar(u8, s, 0x1B) == null) {
+        if (self.backend == .framebuf and self.cursor_visible and s.len > 1) {
             self.cursor_visible = false;
             self.syncCursor();
             defer {

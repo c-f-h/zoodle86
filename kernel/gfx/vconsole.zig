@@ -283,21 +283,21 @@ pub const VConsole = struct {
     }
 
     /// Update the highlighted cursor cell in the framebuffer-backed virtual console.
-    pub fn setCursor(self: *VConsole, cells: [*]const u16, row: u32, col: u32, visible: bool) void {
+    pub fn updateCursor(self: *VConsole, cells: [*]const u16, row: u32, col: u32, visible: bool) void {
         if (!self.win.isReady()) return;
 
         if (self.cursor_visible) {
+            // Redraw the previously highlighted cell to remove highlight
             self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, false);
             self.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
         }
 
-        const text_rows = self.rows;
-        const text_cols = self.cols;
-        self.cursor_row = if (row < text_rows) row else text_rows - 1;
-        self.cursor_col = if (col < text_cols) col else text_cols - 1;
+        self.cursor_row = if (row < self.rows) row else self.rows - 1;
+        self.cursor_col = if (col < self.cols) col else self.cols - 1;
         self.cursor_visible = visible;
 
         if (self.cursor_visible) {
+            // Draw the newly highlighted cell
             self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, true);
             self.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
         }
