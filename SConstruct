@@ -88,7 +88,7 @@ def reset_dir(path):
 
 
 def get_autoexec_script():
-    script = ARGUMENTS.get("AUTOEXEC", "")
+    script = ARGUMENTS.get("AUTOEXEC", "run shell\\nshutdown")
     return script.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
 
 

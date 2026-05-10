@@ -31,6 +31,8 @@ At boot, the shell executes an optional `autoexec` file from the filesystem befo
 scons run AUTOEXEC="serial on\nrun hello\nshutdown"
 ```
 
+The default value for `AUTOEXEC` is `run shell\nshutdown`.
+
 End scripts with `shutdown` for a clean exit.
 
 ## Userspace Shell
