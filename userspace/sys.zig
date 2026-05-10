@@ -63,6 +63,7 @@ const Syscall = enum(u32) {
     WaitPid = 61,
     Mkdir = 83,
     Rmdir = 84,
+    Link = 86,
     Unlink = 87,
     Ftruncate = 93,
     Spawn = 1001,
@@ -147,6 +148,18 @@ pub inline fn bochsDebugBreak() void {
 /// Writes a byte slice to a userspace-visible file descriptor.
 pub fn write(fd: u32, buf: []const u8) u32 {
     return syscall(.Write, fd, @intFromPtr(buf.ptr), @intCast(buf.len));
+}
+
+/// Writes the full slice to a userspace-visible file descriptor.
+/// Returns false if the syscall fails or makes no forward progress.
+pub fn writeAll(fd: u32, data: []const u8) bool {
+    var written: usize = 0;
+    while (written < data.len) {
+        const chunk = write(fd, data[written..]);
+        if (chunk == FAIL or chunk == 0) return false;
+        written += @intCast(chunk);
+    }
+    return true;
 }
 
 /// Reads bytes from a userspace-visible file descriptor into a buffer.
@@ -318,6 +331,13 @@ pub fn mkdir(path: []const u8) !void {
 pub fn rmdir(path: []const u8) u32 {
     const path_abi = AbiSlice.fromSlice(u8, path);
     return syscall(.Rmdir, @intFromPtr(&path_abi), 0, 0);
+}
+
+/// Creates a new hard link from `new_path` to the existing regular file at `old_path`.
+pub fn link(old_path: []const u8, new_path: []const u8) u32 {
+    const old_path_abi = AbiSlice.fromSlice(u8, old_path);
+    const new_path_abi = AbiSlice.fromSlice(u8, new_path);
+    return syscall(.Link, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
 }
 
 /// Marks the calling process so all its children are auto-reaped on exit

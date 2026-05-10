@@ -50,6 +50,8 @@ const seek_file = tmpdir ++ "/seek.txt";
 const sparse_seek_file = tmpdir ++ "/sparse_seek.txt";
 const truncate_file = tmpdir ++ "/truncate.txt";
 const unlink_file = tmpdir ++ "/unlink.txt";
+const link_source_file = tmpdir ++ "/link_src.txt";
+const link_alias_file = tmpdir ++ "/link_alias.txt";
 const nonexistent_file = "nonexistent.txt";
 const sector_size = 512;
 const chunk_size = 640;
@@ -230,6 +232,51 @@ fn testUnlink() !void {
     _ = try syscallShouldFail(sys.unlink(unlink_file), "testUnlink: unlink missing file", @src());
 }
 
+fn testLink() !void {
+    const fd = try expectSyscall(sys.open(link_source_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testLink: create source file", @src());
+    errdefer _ = sys.close(fd);
+
+    try writeAll(fd, "hard");
+    _ = try expectSyscall(sys.close(fd), "testLink: close source file", @src());
+
+    _ = try expectSyscall(sys.link(link_source_file, link_alias_file), "testLink: create hard link", @src());
+    _ = try syscallShouldFail(sys.link(link_source_file, link_alias_file), "testLink: duplicate hard link path", @src());
+    _ = try syscallShouldFail(sys.link(nonexistent_file, link_alias_file ++ "2"), "testLink: missing source path", @src());
+    _ = try syscallShouldFail(sys.link(tmpdir, link_alias_file ++ "3"), "testLink: directory source path", @src());
+
+    const append_fd = try expectSyscall(sys.open(link_alias_file, .{
+        .open_mode = .ReadWrite,
+    }), "testLink: open hard link", @src());
+    errdefer _ = sys.close(append_fd);
+    try expectOffset(try expectSyscall(sys.lseek(append_fd, 0, .End), "testLink: seek hard link end", @src()), 4);
+    try writeAll(append_fd, " link");
+    _ = try expectSyscall(sys.close(append_fd), "testLink: close hard link", @src());
+
+    const source_verify_fd = try expectSyscall(sys.open(link_source_file, .{}), "testLink: reopen source file", @src());
+    var shared_contents: ["hard link".len]u8 = undefined;
+    try readExact(source_verify_fd, &shared_contents);
+    try expectEof(source_verify_fd);
+    try expectBytes(&shared_contents, "hard link");
+    _ = try expectSyscall(sys.close(source_verify_fd), "testLink: close source verify fd", @src());
+
+    _ = try expectSyscall(sys.unlink(link_source_file), "testLink: unlink source path", @src());
+    _ = try syscallShouldFail(sys.open(link_source_file, .{}), "testLink: source path removed", @src());
+
+    const alias_verify_fd = try expectSyscall(sys.open(link_alias_file, .{}), "testLink: reopen remaining link", @src());
+    var alias_contents: ["hard link".len]u8 = undefined;
+    try readExact(alias_verify_fd, &alias_contents);
+    try expectEof(alias_verify_fd);
+    try expectBytes(&alias_contents, "hard link");
+    _ = try expectSyscall(sys.close(alias_verify_fd), "testLink: close alias verify fd", @src());
+
+    _ = try expectSyscall(sys.unlink(link_alias_file), "testLink: unlink remaining link", @src());
+    _ = try syscallShouldFail(sys.open(link_alias_file, .{}), "testLink: alias path removed", @src());
+}
+
 fn testTruncate() !void {
     const fd = try expectSyscall(sys.open(truncate_file, .{
         .open_mode = .ReadWrite,
@@ -401,6 +448,7 @@ pub fn main(argv: []const []const u8) !void {
     try testSparseSeek();
     try testTruncate();
     try testUnlink();
+    try testLink();
     try testRmdir();
     try testPipe();
     try testBrokenPipe();

@@ -51,6 +51,17 @@ pub const DirectoryEntry = extern struct {
     name_len: u8 = 0,
     name: [FILENAME_MAX_LEN]u8 = @splat(0),
     reserved: [12]u8 = @splat(0),
+
+    /// Create a DirectoryEntry. Assume the name has already been validated and fits within FILENAME_MAX_LEN.
+    fn init(name: []const u8, inode_index: InodeT, kind: InodeKind) DirectoryEntry {
+        var entry: DirectoryEntry = .{
+            .inode_index = inode_index,
+            .kind = kind,
+            .name_len = @intCast(name.len),
+        };
+        @memcpy(entry.name[0..name.len], name);
+        return entry;
+    }
 };
 
 const Superblock = extern struct {
@@ -380,12 +391,11 @@ pub const FileSystem = struct {
             }
         }
 
-        var entry: DirectoryEntry = .{};
-        entry.inode_index = inode_index;
-        entry.kind = kind;
-        entry.name_len = @intCast(name.len);
-        @memcpy(entry.name[0..name.len], name);
-        try self.writeDirEntry(dir_inode_index, entry_index, &entry);
+        try self.writeDirEntry(dir_inode_index, entry_index, &DirectoryEntry.init(
+            name,
+            inode_index,
+            kind,
+        ));
 
         self.superblock.file_count += 1;
         try self.writeSuperblock();
@@ -395,6 +405,24 @@ pub const FileSystem = struct {
     /// Creates a new empty regular file in the given directory and returns its inode index.
     pub fn createFile(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
         return self.createFileInternal(dir_inode_index, name, InodeKind.File, 0);
+    }
+
+    /// Creates a new hard link to an existing regular-file inode in the given directory.
+    pub fn createLink(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, target_inode_index: InodeT) FsError!void {
+        if (!validateName(name)) return error.InvalidName;
+        if ((try self.findDirEntry(dir_inode_index, name)) != null) return error.FileExists;
+
+        const entry_index = try self.findReusableEntryIndex(dir_inode_index);
+        try self.linkInode(target_inode_index);
+        errdefer self.unlinkInode(target_inode_index) catch unreachable;
+        try self.writeDirEntry(dir_inode_index, entry_index, &DirectoryEntry.init(
+            name,
+            target_inode_index,
+            InodeKind.File,
+        ));
+
+        self.superblock.file_count += 1;
+        try self.writeSuperblock();
     }
 
     /// Creates a new directory with the given full path and returns its inode index.
@@ -553,18 +581,46 @@ pub const FileSystem = struct {
         return true;
     }
 
+    /// Increments the link count of an inode.
+    fn linkInode(self: *FileSystem, inode_index: InodeT) FsError!void {
+        var inode = try self.readInode(inode_index);
+        if (inode.link_count == 0) return error.Corrupt;
+        // Currently only links to regular files are supported
+        if (inode.kind != .File) return error.NotARegularFile;
+        if (inode.link_count == std.math.maxInt(u16)) return error.Corrupt;
+
+        inode.link_count += 1;
+        try self.writeInode(inode_index, &inode);
+    }
+
+    /// Decrements the link count of an inode, destroying it if the count reached zero.
+    fn unlinkInode(self: *FileSystem, inode_index: InodeT) FsError!void {
+        var inode = try self.readInode(inode_index);
+
+        if (inode.link_count == 0)
+            return error.Corrupt;
+        if (self.superblock.file_count == 0) return error.Corrupt;
+        if (inode.link_count == 1) {
+            try self.destroyInode(inode_index);
+        } else {
+            inode.link_count -= 1;
+            try self.writeInode(inode_index, &inode);
+        }
+
+        self.superblock.file_count -= 1;
+        try self.writeSuperblock();
+    }
+
     /// Deletes a regular file from the given directory and frees its inode and blocks.
     pub fn deleteFile(self: *FileSystem, dir_inode_index: InodeT, index: u32) FsError!void {
         const entry = try self.readDirectoryEntry(dir_inode_index, index);
 
         if (entry.kind != .File) return error.NotARegularFile;
 
-        try self.destroyInode(entry.inode_index);
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(dir_inode_index, index, &cleared);
 
-        self.superblock.file_count -= 1;
-        try self.writeSuperblock();
+        try unlinkInode(self, entry.inode_index);
     }
 
     /// Deletes an empty directory from the given directory and frees its inode and blocks.
@@ -575,12 +631,10 @@ pub const FileSystem = struct {
 
         if (!try self.isDirectoryEmpty(entry.inode_index)) return error.DirNotEmpty;
 
-        try self.destroyInode(entry.inode_index);
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(dir_inode_index, index, &cleared);
 
-        self.superblock.file_count -= 1;
-        try self.writeSuperblock();
+        try unlinkInode(self, entry.inode_index);
     }
 
     fn isDirectoryEmpty(self: *const FileSystem, inode_index: InodeT) FsError!bool {

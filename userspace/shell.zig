@@ -260,21 +260,11 @@ fn writeUsage() void {
 fn writeError(prefix: []const u8, desc: []const u8) void {
     var buf: [256]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, "{s}{s}\n", .{ prefix, desc }) catch return;
-    _ = writeAll(sys.STDERR, msg);
+    _ = sys.writeAll(sys.STDERR, msg);
 }
 
 fn writeLine(msg: []const u8) void {
-    _ = writeAll(sys.STDOUT, msg);
-}
-
-fn writeAll(fd: u32, data: []const u8) bool {
-    var written: usize = 0;
-    while (written < data.len) {
-        const chunk = sys.write(fd, data[written..]);
-        if (chunk == sys.FAIL or chunk == 0) return false;
-        written += @intCast(chunk);
-    }
-    return true;
+    _ = sys.writeAll(sys.STDOUT, msg);
 }
 
 comptime {

@@ -22,6 +22,7 @@ const Syscall = enum(u32) {
     WaitPid = 61,
     Mkdir = 83,
     Rmdir = 84,
+    Link = 86,
     Unlink = 87,
     Ftruncate = 93,
     Spawn = 1001,
@@ -73,6 +74,8 @@ fn mapError(err: anyerror) u32 {
         error.InvalidName => ERRNO_EINVAL,
         error.InvalidSeek => ERRNO_EINVAL,
         error.InvalidSuperblock => ERRNO_EIO,
+        error.NotADirectory => ERRNO_EINVAL,
+        error.NotARegularFile => ERRNO_EINVAL,
         error.NoDevice => ERRNO_EIO,
         error.NoTaskSlots => ERRNO_EAGAIN,
         error.NoSpace => ERRNO_ENOSPC,
@@ -292,6 +295,14 @@ fn sys_rmdir(path_slice_va: u32) !u32 {
     return 0;
 }
 
+fn sys_link(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
+    const new_path = try current_task.readUserSlice(u8, new_path_slice_va);
+    try filedesc.linkFile(kernel.getFileSystem(), old_path, new_path);
+    return 0;
+}
+
 /// Marks the current task so that all its children are auto-reaped on exit
 /// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
 fn sys_set_child_reap() !u32 {
@@ -354,6 +365,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .WaitPid => sys_waitpid(arg1),
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
+        .Link => sys_link(arg1, arg2),
         .SetChildReap => sys_set_child_reap(),
         .Yield => sys_yield(),
         .Spawn => sys_spawn(arg1, arg2),

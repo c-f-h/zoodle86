@@ -264,6 +264,14 @@ pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void 
     try disk_fs.deleteFile(parent_inode, index);
 }
 
+/// Creates a new hard link to an existing regular file.
+pub fn linkFile(disk_fs: *fs.FileSystem, old_path: []const u8, new_path: []const u8) FiledescError!void {
+    const target_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, old_path);
+    const split = fs.splitPath(new_path);
+    const parent_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
+    try disk_fs.createLink(parent_inode_index, split.name, target_inode_index);
+}
+
 /// Removes a directory unless it is still referenced by an open descriptor or is not empty.
 pub fn removeDirectory(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
     const parent_inode, const index, const entry = try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, path);

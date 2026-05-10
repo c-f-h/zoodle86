@@ -70,6 +70,7 @@ Complete listing of every source file and its role.
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
 - `userspace/cat.zig`: stdin-to-stdout copier and simple file-printing utility used both directly and in shell pipelines.
+- `userspace/ln.zig`: small hard-link utility that calls the `link` syscall for `ln <existing> <new>`.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
 - `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
@@ -93,6 +94,7 @@ Complete listing of every source file and its role.
 - The following userspace programs are compiled and copied into the image as `/bin/<basename>`, which is on the shell path:
     - `userspace/hello.zig`
     - `userspace/cat.zig`
+    - `userspace/ln.zig`
     - `userspace/fib.zig`
     - `userspace/fs_stress.zig`
     - `userspace/alloc_stress.zig`
