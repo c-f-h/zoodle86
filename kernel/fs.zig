@@ -671,23 +671,6 @@ pub const FileSystem = struct {
         return true;
     }
 
-    /// Renames a regular file within the root directory.
-    pub fn renameFile(self: *FileSystem, old_name: []const u8, new_name: []const u8) FsError!void {
-        if (!validateName(new_name)) return error.InvalidName;
-
-        const index = (try self.findFileIndex(ROOT_INODE_INDEX, old_name)) orelse return error.FileNotFound;
-        if ((try self.findFileIndex(ROOT_INODE_INDEX, new_name)) != null) return error.FileExists;
-
-        var entry = try self.readDirectoryEntry(ROOT_INODE_INDEX, index);
-
-        if (entry.kind != .File) return error.NotARegularFile;
-
-        entry.name_len = @intCast(new_name.len);
-        entry.name = [_]u8{0} ** FILENAME_MAX_LEN;
-        @memcpy(entry.name[0..new_name.len], new_name);
-        try self.writeDirEntry(ROOT_INODE_INDEX, index, &entry);
-    }
-
     fn readSuperblock(self: *FileSystem) FsError!void {
         var sector = [_]u8{0} ** BLOCK_SIZE;
         try self.block_dev.readBlock(FS_START_LBA, &sector);

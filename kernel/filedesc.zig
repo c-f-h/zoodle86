@@ -316,6 +316,41 @@ pub fn linkFile(disk_fs: *fs.FileSystem, old_path: []const u8, new_path: []const
     try disk_fs.createLink(parent_inode_index, split.name, target_inode_index);
 }
 
+/// Moves (renames) old_path to new_path, atomically replacing any existing regular file at
+/// new_path. Directories cannot be moved. If new_path names an existing regular file it is
+/// replaced, but only when no task has it open.
+pub fn moveFile(disk_fs: *fs.FileSystem, old_path: []const u8, new_path: []const u8) FiledescError!void {
+    if (std.mem.eql(u8, old_path, new_path)) return;
+
+    // Resolve source; it must be a regular file.
+    const src_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, old_path);
+    const src_stat = try disk_fs.statInode(src_inode_index);
+    if (src_stat.kind != .Regular) return error.NotARegularFile;
+
+    // Resolve destination parent directory (must exist).
+    const new_split = fs.splitPath(new_path);
+    const dst_parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, new_split.dir);
+
+    // If destination already exists remove it, provided it is a non-open regular file.
+    if (disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, new_path)) |dst_inode_index| {
+        const dst_stat = try disk_fs.statInode(dst_inode_index);
+        if (dst_stat.kind != .Regular) return error.NotARegularFile;
+        const dst_par, const dst_idx, const dst_entry =
+            try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, new_path);
+        if (isInodeOpen(dst_entry.inode_index)) return error.FileInUse;
+        try disk_fs.deleteFile(dst_par, dst_idx);
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
+    // Add the new directory entry, then remove the old one.
+    try disk_fs.createLink(dst_parent_inode, new_split.name, src_inode_index);
+    const src_par, const src_idx, _ =
+        try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, old_path);
+    try disk_fs.deleteFile(src_par, src_idx);
+}
+
 /// Removes a directory unless it is still referenced by an open descriptor or is not empty.
 pub fn removeDirectory(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
     const parent_inode, const index, const entry = try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, path);

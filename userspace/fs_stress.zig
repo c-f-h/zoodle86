@@ -52,6 +52,8 @@ const truncate_file = tmpdir ++ "/truncate.txt";
 const unlink_file = tmpdir ++ "/unlink.txt";
 const link_source_file = tmpdir ++ "/link_src.txt";
 const link_alias_file = tmpdir ++ "/link_alias.txt";
+const rename_src = tmpdir ++ "/rename_src.txt";
+const rename_dst = tmpdir ++ "/rename_dst.txt";
 const stat_file = tmpdir ++ "/stat.txt";
 const stat_link = tmpdir ++ "/stat_link.txt";
 const stat_dir = tmpdir ++ "/stat_dir";
@@ -295,6 +297,103 @@ fn testLink() !void {
 
     _ = try expectSyscall(sys.unlink(link_alias_file), "testLink: unlink remaining link", @src());
     _ = try syscallShouldFail(sys.open(link_alias_file, .{}), "testLink: alias path removed", @src());
+}
+
+fn testRename() !void {
+    _ = sys.unlink(rename_src);
+    _ = sys.unlink(rename_dst);
+
+    // 1. Basic rename: old path disappears, new path holds the content, inode is preserved.
+    const fd = try expectSyscall(sys.open(rename_src, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testRename: create src", @src());
+    try writeAll(fd, "rename me");
+    var src_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(fd, &src_stat), "testRename: fstat src", @src());
+    _ = try expectSyscall(sys.close(fd), "testRename: close src", @src());
+
+    _ = try expectSyscall(sys.rename(rename_src, rename_dst), "testRename: basic rename", @src());
+    _ = try syscallShouldFail(sys.open(rename_src, .{}), "testRename: src gone", @src());
+
+    const verify_fd = try expectSyscall(sys.open(rename_dst, .{}), "testRename: open dst", @src());
+    var dst_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(verify_fd, &dst_stat), "testRename: fstat dst", @src());
+    if (dst_stat.inode != src_stat.inode) return error.InodeMismatch;
+    _ = sys.write(sys.STDOUT, ".");
+    var content: ["rename me".len]u8 = undefined;
+    try readExact(verify_fd, &content);
+    try expectEof(verify_fd);
+    try expectBytes(&content, "rename me");
+    _ = try expectSyscall(sys.close(verify_fd), "testRename: close dst", @src());
+
+    // 2. Rename onto an existing file replaces it; new file's data must be visible.
+    const src2_fd = try expectSyscall(sys.open(rename_src, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testRename: create src for overwrite", @src());
+    try writeAll(src2_fd, "winner");
+    _ = try expectSyscall(sys.close(src2_fd), "testRename: close src for overwrite", @src());
+
+    _ = try expectSyscall(sys.rename(rename_src, rename_dst), "testRename: overwrite rename", @src());
+    _ = try syscallShouldFail(sys.open(rename_src, .{}), "testRename: src gone after overwrite", @src());
+
+    const overwrite_fd = try expectSyscall(sys.open(rename_dst, .{}), "testRename: open overwritten dst", @src());
+    var winner: ["winner".len]u8 = undefined;
+    try readExact(overwrite_fd, &winner);
+    try expectEof(overwrite_fd);
+    try expectBytes(&winner, "winner");
+    _ = try expectSyscall(sys.close(overwrite_fd), "testRename: close overwrite verify", @src());
+    _ = try expectSyscall(sys.unlink(rename_dst), "testRename: unlink dst", @src());
+
+    // 3. Rename to itself is a no-op; file must still exist.
+    const self_fd = try expectSyscall(sys.open(rename_src, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testRename: create self-rename file", @src());
+    try writeAll(self_fd, "self");
+    _ = try expectSyscall(sys.close(self_fd), "testRename: close self-rename file", @src());
+    _ = try expectSyscall(sys.rename(rename_src, rename_src), "testRename: self-rename", @src());
+    _ = try expectSyscall(sys.unlink(rename_src), "testRename: cleanup self-rename", @src());
+
+    // 4. Rename fails when source does not exist.
+    _ = try syscallShouldFail(sys.rename(rename_src, rename_dst), "testRename: nonexistent src", @src());
+
+    // 5. Rename fails when source is a directory.
+    _ = try syscallShouldFail(sys.rename(tmpdir, rename_dst), "testRename: directory src", @src());
+
+    // 6. Rename fails when the destination parent directory does not exist.
+    const src3_fd = try expectSyscall(sys.open(rename_src, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testRename: create src for bad-parent test", @src());
+    _ = try expectSyscall(sys.close(src3_fd), "testRename: close src for bad-parent test", @src());
+    _ = try syscallShouldFail(sys.rename(rename_src, "/no_such_dir/file.txt"), "testRename: bad dst parent", @src());
+    _ = try expectSyscall(sys.unlink(rename_src), "testRename: cleanup src (bad-parent)", @src());
+
+    // 7. Rename fails when the destination file is currently open.
+    const src4_fd = try expectSyscall(sys.open(rename_src, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testRename: create src for open-dst test", @src());
+    try writeAll(src4_fd, "data");
+    _ = try expectSyscall(sys.close(src4_fd), "testRename: close src for open-dst test", @src());
+
+    const open_dst_fd = try expectSyscall(sys.open(rename_dst, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testRename: create open dst", @src());
+    try writeAll(open_dst_fd, "open");
+    _ = try syscallShouldFail(sys.rename(rename_src, rename_dst), "testRename: rename onto open dst", @src());
+    _ = try expectSyscall(sys.close(open_dst_fd), "testRename: close open dst", @src());
+    _ = try expectSyscall(sys.unlink(rename_src), "testRename: cleanup src (open-dst)", @src());
+    _ = try expectSyscall(sys.unlink(rename_dst), "testRename: cleanup open dst", @src());
 }
 
 fn testTruncate() !void {
@@ -624,6 +723,7 @@ pub fn main(argv: []const []const u8) !void {
     try testTruncate();
     try testUnlink();
     try testLink();
+    try testRename();
     try testStat();
     try testGetDents();
     try testRmdir();

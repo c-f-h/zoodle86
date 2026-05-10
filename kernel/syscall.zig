@@ -287,6 +287,14 @@ fn sys_rmdir(path_slice_va: u32) !u32 {
     return 0;
 }
 
+fn sys_rename(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
+    const new_path = try current_task.readUserSlice(u8, new_path_slice_va);
+    try filedesc.moveFile(kernel.getFileSystem(), old_path, new_path);
+    return 0;
+}
+
 fn sys_link(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
     const current_task = task.getCurrentTask();
     const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
@@ -361,6 +369,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
         .Link => sys_link(arg1, arg2),
+        .Rename => sys_rename(arg1, arg2),
         .SetChildReap => sys_set_child_reap(),
         .Yield => sys_yield(),
         .Spawn => sys_spawn(arg1, arg2),

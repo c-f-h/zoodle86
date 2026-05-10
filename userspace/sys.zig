@@ -307,6 +307,13 @@ pub fn rmdir(path: []const u8) u32 {
     return syscall(.Rmdir, @intFromPtr(&path_abi), 0, 0);
 }
 
+/// Renames or moves a file from old_path to new_path, replacing any existing regular file there.
+pub fn rename(old_path: []const u8, new_path: []const u8) u32 {
+    const old_path_abi = AbiSlice.fromSlice(u8, old_path);
+    const new_path_abi = AbiSlice.fromSlice(u8, new_path);
+    return syscall(.Rename, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
+}
+
 /// Creates a new hard link from `new_path` to the existing regular file at `old_path`.
 pub fn link(old_path: []const u8, new_path: []const u8) u32 {
     const old_path_abi = AbiSlice.fromSlice(u8, old_path);

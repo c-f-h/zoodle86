@@ -251,10 +251,112 @@ fn statMain(argv: []const []const u8) noreturn {
 }
 
 // ---------------------------------------------------------------------------
+// mv
+// ---------------------------------------------------------------------------
+
+/// Moves (renames) src to dst, placing src inside dst when dst is a directory.
+fn mvMain(argv: []const []const u8) noreturn {
+    if (argv.len != 3) {
+        _ = sys.writeAll(sys.STDERR, "Usage: mv <src> <dst>\n");
+        sys.exit(1);
+    }
+
+    const src = argv[1];
+    var dst_buf: [256]u8 = undefined;
+    var dst: []const u8 = argv[2];
+
+    // If dst is a directory, append the basename of src to form the full destination path.
+    var dst_stat: sys.Stat = undefined;
+    if (sys.stat(dst, &dst_stat) != sys.FAIL and dst_stat.kind == .Directory) {
+        dst = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{
+            std.mem.trimEnd(u8, dst, "/"),
+            baseName(src),
+        }) catch {
+            _ = sys.writeAll(sys.STDERR, "mv: path too long\n");
+            sys.exit(1);
+        };
+    }
+
+    if (sys.rename(src, dst) == sys.FAIL) {
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "mv: failed to move {s} to {s}\n", .{ src, dst }) catch
+            "mv: failed\n";
+        _ = sys.writeAll(sys.STDERR, msg);
+        sys.exit(1);
+    }
+
+    sys.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// cp
+// ---------------------------------------------------------------------------
+
+/// Copies src to dst, placing the copy inside dst when dst is a directory.
+fn cpMain(argv: []const []const u8) noreturn {
+    if (argv.len != 3) {
+        _ = sys.writeAll(sys.STDERR, "Usage: cp <src> <dst>\n");
+        sys.exit(1);
+    }
+
+    const src = argv[1];
+    var dst_buf: [256]u8 = undefined;
+    var dst: []const u8 = argv[2];
+
+    // If dst is a directory, append the basename of src to form the full destination path.
+    var dst_stat: sys.Stat = undefined;
+    if (sys.stat(dst, &dst_stat) != sys.FAIL and dst_stat.kind == .Directory) {
+        dst = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{
+            std.mem.trimEnd(u8, dst, "/"),
+            baseName(src),
+        }) catch {
+            _ = sys.writeAll(sys.STDERR, "cp: path too long\n");
+            sys.exit(1);
+        };
+    }
+
+    const src_fd = sys.open(src, .{});
+    if (src_fd == sys.FAIL) {
+        var buf: [192]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "cp: cannot open {s}\n", .{src}) catch
+            "cp: cannot open source\n";
+        _ = sys.writeAll(sys.STDERR, msg);
+        sys.exit(1);
+    }
+    defer _ = sys.close(src_fd);
+
+    const dst_fd = sys.open(dst, .{ .open_mode = .WriteOnly, .create = true, .truncate = true });
+    if (dst_fd == sys.FAIL) {
+        var buf: [192]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "cp: cannot create {s}\n", .{dst}) catch
+            "cp: cannot create destination\n";
+        _ = sys.writeAll(sys.STDERR, msg);
+        sys.exit(1);
+    }
+    defer _ = sys.close(dst_fd);
+
+    var buf: [512]u8 = undefined;
+    while (true) {
+        const n = sys.read(src_fd, &buf);
+        if (n == sys.FAIL) {
+            _ = sys.writeAll(sys.STDERR, "cp: read error\n");
+            sys.exit(1);
+        }
+        if (n == 0) break;
+        if (!sys.writeAll(dst_fd, buf[0..@intCast(n)])) {
+            _ = sys.writeAll(sys.STDERR, "cp: write error\n");
+            sys.exit(1);
+        }
+    }
+
+    sys.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // busybox dispatch
 // ---------------------------------------------------------------------------
 
-/// Multi-call binary: dispatches to cat, ls, ln, rm, or stat based on argv[0] basename.
+/// Multi-call binary: dispatches to cat, ls, ln, rm, stat, mv, or cp based on argv[0] basename.
 pub fn main(argv: []const []const u8) noreturn {
     const name = if (argv.len > 0) baseName(argv[0]) else "";
 
@@ -263,10 +365,12 @@ pub fn main(argv: []const []const u8) noreturn {
     if (std.mem.eql(u8, name, "ln")) lnMain(argv);
     if (std.mem.eql(u8, name, "rm")) rmMain(argv);
     if (std.mem.eql(u8, name, "stat")) statMain(argv);
+    if (std.mem.eql(u8, name, "mv")) mvMain(argv);
+    if (std.mem.eql(u8, name, "cp")) cpMain(argv);
 
     _ = sys.writeAll(
         sys.STDERR,
-        "busybox: available tools: cat, ls, ln, rm, stat\n" ++
+        "busybox: available tools: cat, ls, ln, rm, stat, mv, cp\n" ++
             "Invoke via a named link.\n",
     );
     sys.exit(1);

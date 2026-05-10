@@ -43,6 +43,7 @@ pub const Syscall = enum(u32) {
     Rmdir = 84,
     Link = 86,
     Unlink = 87,
+    Rename = 82,
     Ftruncate = 93,
     Spawn = 1001,
     SetChildReap = 1002,

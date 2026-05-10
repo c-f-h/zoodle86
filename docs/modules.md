@@ -27,7 +27,7 @@ Complete listing of every source file and its role.
 - `kernel/interrupt_frame.zig`: stack frame layouts for both normalized user interrupt returns and saved kernel-yield resume points.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/waitqueue.zig`: intrusive singly-linked WaitQueue; tasks blocked on an event are added as heap-allocated nodes and freed when woken via `wakeOne`/`wakeAll`.
-- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek` descriptor semantics layered over filesystem files, console streams, and pipe endpoints.
+- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek`/`moveFile` descriptor semantics layered over filesystem files, console streams, and pipe endpoints.
 - `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
 - `kernel/ringbuf.zig`: fixed-capacity byte ring buffer used by the pipe implementation.
 - `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode.
@@ -58,7 +58,7 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `ls`, `write`, `rm`, `mv`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). The `run` command also parses basic `>` stdout redirection and `|` stdout-to-stdin pipelines. At boot it executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). The `run` command also parses basic `>` stdout redirection and `|` stdout-to-stdin pipelines. At boot it executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 
@@ -70,7 +70,7 @@ Complete listing of every source file and its role.
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
-- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `ls`, `ln`, `rm`, or `stat` based on the basename of `argv[0]`. Installed as `/bin/busybox` and hard-linked to respective tool names.
+- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `ls`, `ln`, `rm`, `stat`, `mv`, or `cp` based on the basename of `argv[0]`. Installed as `/bin/busybox` and hard-linked to respective tool names.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
 - `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
@@ -93,7 +93,7 @@ Complete listing of every source file and its role.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - The following userspace programs are compiled and copied into the image as `/bin/<basename>`, which is on the shell path:
     - `userspace/hello.zig`
-    - `userspace/busybox.zig` → `/bin/busybox` plus hard links `/bin/cat`, `/bin/ls`, `/bin/ln`, `/bin/rm`, `/bin/stat`
+    - `userspace/busybox.zig` → `/bin/busybox` plus hard links `/bin/cat`, `/bin/ls`, `/bin/ln`, `/bin/rm`, `/bin/stat`, `/bin/mv`, `/bin/cp`
     - `userspace/fib.zig`
     - `userspace/fs_stress.zig`
     - `userspace/alloc_stress.zig`

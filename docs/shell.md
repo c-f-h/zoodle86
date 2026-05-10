@@ -6,10 +6,7 @@ The kernel provides an interactive shell with the following commands:
 |---------|-----------|-------------|
 | **help** | (none) | List available commands. |
 | **keylog** | (none) | Run the key event logger. |
-| **ls** | `[<dir>]` | List files in the root or any other directory. |
 | **write** | `<name>` | Write a file from console input. (Single `.` line saves.) |
-| **rm** | `<name>` | Delete a file. |
-| **mv** | `<old> <new>` | Rename a file. |
 | **cpuid** | `[<leaf> [<subleaf>]]` | Show vendor/clock-related CPUID leaves, or dump a specific raw leaf/subleaf. |
 | **mkfs** | (none) | Reformat the filesystem. |
 | **dumpmem** | `<hex-address>` | Dump memory at a hex address. |

@@ -21,6 +21,7 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `mkdir` | 83 | path_slice | 0 or `FAIL` | Creates a directory; path_slice is a userspace address pointing to an `AbiSlice` describing the path |
 | `rmdir` | 84 | path_offset, path_len | 0 or `FAIL` | Removes a directory; fails if not empty or in use |
 | `link` | 86 | old_path_slice, new_path_slice | 0 or `FAIL` | Creates a hard link from `new_path` to the existing regular file at `old_path` |
+| `rename` | 82 | old_path_slice, new_path_slice | 0 or `FAIL` | Atomically moves `old_path` to `new_path`; replaces any existing regular file at `new_path`. |
 | `unlink` | 87 | path_offset, path_len | 0 or `FAIL` | Removes a filesystem entry; fails if the file is still open by any task |
 | `ftruncate` | 93 | fd, length | 0 or `FAIL` | Resizes a filesystem-backed fd; zero-fills when extending and requires write access |
 | `spawn` | 1001 | argv_slice_ptr, opts_ptr | child PID or `FAIL` | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable. `opts_ptr` is 0 (no options) or a pointer to a `SpawnOpts` struct whose `fd_remaps` field is an `AbiSlice` of `(dst_u32, src_u32)` pairs; for each pair the child's `fd[dst]` is set to a copy of the parent's `fd[src]` |

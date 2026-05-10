@@ -43,10 +43,7 @@ const Command = struct {
 const commands = [_]Command{
     .{ .name = "help", .description = "List available commands.", .handler = cmdHelp },
     .{ .name = "keylog", .description = "Run the key event logger.", .handler = cmdKeylog },
-    .{ .name = "ls", .description = "List files in a directory.", .handler = cmdLs },
     .{ .name = "write", .description = "Write a file from console input.", .handler = cmdWrite },
-    .{ .name = "rm", .description = "Delete a file.", .handler = cmdRm },
-    .{ .name = "mv", .description = "Rename a file.", .handler = cmdMv },
     .{ .name = "cpuid", .description = "Show CPUID clock leaves or query a raw leaf/subleaf.", .handler = cmdCpuid },
     .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
@@ -308,37 +305,12 @@ fn cmdHelp(shell: *Shell, args: *ArgsIterator) !void {
     }
 }
 
-fn cmdLs(shell: *Shell, args: *ArgsIterator) !void {
-    const path = args.next() orelse &.{};
-    try listFiles(shell, shell.disk_fs, path);
-}
-
 fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
         try writeFileFromConsole(shell, shell.alloc, shell.disk_fs, name);
     } else {
         printUsage(shell, "write");
     }
-}
-
-fn cmdRm(shell: *Shell, args: *ArgsIterator) !void {
-    if (args.next()) |name| {
-        try deleteFile(shell, shell.disk_fs, name);
-    } else {
-        printUsage(shell, "rm");
-    }
-}
-
-fn cmdMv(shell: *Shell, args: *ArgsIterator) !void {
-    const old_name = args.next() orelse {
-        printUsage(shell, "mv");
-        return;
-    };
-    const new_name = args.next() orelse {
-        printUsage(shell, "mv");
-        return;
-    };
-    try renameFile(shell, shell.disk_fs, old_name, new_name);
 }
 
 fn cmdCpuid(shell: *Shell, args: *ArgsIterator) !void {
@@ -783,10 +755,6 @@ fn printUsage(shell: *Shell, name: []const u8) void {
         shell.console.puts(command.name);
         if (std.mem.eql(u8, command.name, "write")) {
             shell.console.puts(" <name>");
-        } else if (std.mem.eql(u8, command.name, "rm")) {
-            shell.console.puts(" <name>");
-        } else if (std.mem.eql(u8, command.name, "mv")) {
-            shell.console.puts(" <old> <new>");
         } else if (std.mem.eql(u8, command.name, "cpuid")) {
             shell.console.puts(" [<leaf> [<subleaf>]]");
         } else if (std.mem.eql(u8, command.name, "dumpmem")) {
@@ -832,30 +800,6 @@ fn readLineInto(shell: *Shell, buf: []u8) ![]u8 {
     return buf[0..copy_len];
 }
 
-fn listFiles(shell: *Shell, disk_fs: *fs.FileSystem, path: []const u8) !void {
-    var found_any = false;
-    var index: usize = 0;
-    var buf: [128]u8 = undefined;
-
-    const dir_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, path);
-
-    while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        if (try disk_fs.getFileInfo(dir_inode, index)) |info| {
-            found_any = true;
-            const str = try std.fmt.bufPrint(&buf, " {s:<16} {s:5} {d:>7}\n", .{
-                info.name[0..info.name_len],
-                if (info.is_directory) "(DIR)" else ".....",
-                info.size_bytes,
-            });
-            shell.console.puts(str);
-        }
-    }
-
-    if (!found_any) {
-        shell.console.puts("(empty)\n");
-    }
-}
-
 fn writeFileFromConsole(
     shell: *Shell,
     alloc: std.mem.Allocator,
@@ -879,24 +823,6 @@ fn writeFileFromConsole(
 
     shell.console.puts("Wrote ");
     shell.console.puts(path);
-    shell.console.puts(".\n");
-}
-
-fn deleteFile(shell: *Shell, disk_fs: *fs.FileSystem, name: []const u8) !void {
-    try filedesc.unlinkFile(disk_fs, name);
-
-    shell.console.puts("Deleted ");
-    shell.console.puts(name);
-    shell.console.puts(".\n");
-}
-
-fn renameFile(shell: *Shell, disk_fs: *fs.FileSystem, old_name: []const u8, new_name: []const u8) !void {
-    try disk_fs.renameFile(old_name, new_name);
-
-    shell.console.puts("Renamed ");
-    shell.console.puts(old_name);
-    shell.console.puts(" to ");
-    shell.console.puts(new_name);
     shell.console.puts(".\n");
 }
 
