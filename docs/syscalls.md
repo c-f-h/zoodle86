@@ -4,12 +4,12 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 
 | Syscall | Number | Arguments | Returns | Notes |
 |---------|--------|-----------|---------|-------|
-| `read` | 0 | fd, buf_offset, count | bytes read or `FAIL` | Reads from filesystem-backed or pipe fds |
-| `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to stdout/stderr, filesystem-backed, or pipe fds |
+| `read` | 0 | fd, buf_offset, count | bytes read or `FAIL` | Reads from filesystem-backed, pipe, or tty fds |
+| `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to tty-backed stdio, filesystem-backed, pipe, or tty fds |
 | `open` | 2 | path_offset, path_len, flags | fd or `FAIL` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
 | `close` | 3 | fd | 0 or `FAIL` | Closes stdio, pipe, or filesystem-backed fds |
 | `stat` | 4 | path_offset, path_len, stat_out_offset | 0 or `FAIL` | Fills a writable userspace `Stat` buffer for an inode-backed path |
-| `fstat` | 5 | fd, stat_out_offset | 0 or `FAIL` | Fills a writable userspace `Stat` buffer for an open fd; supports files, directories, stdio, and pipes |
+| `fstat` | 5 | fd, stat_out_offset | 0 or `FAIL` | Fills a writable userspace `Stat` buffer for an open fd; supports files, directories, stdio, pipes, and tty devices |
 | `lseek` | 8 | fd, signed_offset, whence | new offset or `FAIL` | Supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`; may seek past EOF |
 | `brk` | 12 | addr | new break or `FAIL` | Gets heap break if addr=0; sets break to addr if valid; validates bounds and grows/shrinks data memory |
 | `pipe` | 22 | fds_slice_ptr | 0 or `FAIL` | Expects an `AbiSlice` describing a writable 2-element `u32` buffer and fills it with `{ read_fd, write_fd }` |

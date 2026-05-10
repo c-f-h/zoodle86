@@ -1,9 +1,9 @@
 /// Userspace readline: interactive line editor using ANSI escape sequences for output
-/// and binary KeyEvent structs from read(STDIN) for input.
+/// and binary KeyEvent structs from /dev/keyboard for input.
 ///
 /// Usage:
 ///   var rl = readline.Readline{};
-///   rl.init(prompt, buf[0..]);
+///   rl.init(prompt);
 ///   const line = rl.readLine();  // blocks; returns committed slice or null on Ctrl-D empty
 const sys = @import("sys.zig");
 
@@ -18,6 +18,7 @@ pub const Readline = struct {
     prompt: []const u8 = "",
     row: u32 = 0, // console row where editing takes place
     col: u32 = 0, // console column right after the prompt
+    key_event_fd: u32 = sys.FAIL,
 
     /// Prepare the readline state, print the prompt, and record the cursor anchor.
     pub fn init(self: *Readline, prompt: []const u8) void {
@@ -32,15 +33,41 @@ pub const Readline = struct {
         self.redraw();
     }
 
+    /// Close the internal keyboard event descriptor if it is open.
+    fn closeKeyEventFd(self: *Readline) void {
+        if (self.key_event_fd != sys.FAIL) {
+            _ = sys.close(self.key_event_fd);
+            self.key_event_fd = sys.FAIL;
+        }
+    }
+
     /// Block until the user commits a line (Enter) and return the committed slice.
     /// Returns null when the user presses Ctrl-D on an empty line (EOF signal).
     pub fn readLine(self: *Readline) error{EOF}![]const u8 {
+        // Workaround for tty and keyboard events not being synchronized: close the event stream
+        // after every call to tell the kernel that we are no longer listening on it.
+        self.key_event_fd = sys.open("/dev/keyboard", .{ .open_mode = .ReadOnly });
+        if (self.key_event_fd == sys.FAIL) {
+            return error.EOF;
+        }
+        defer self.closeKeyEventFd();
+
         while (true) {
-            const ev = sys.readKey();
+            const ev = try self.readKey();
             if (try self.handleKey(ev)) |done| {
                 return done;
             }
         }
+    }
+
+    fn readKey(self: *Readline) error{EOF}!sys.KeyEvent {
+        if (self.key_event_fd == sys.FAIL) return error.EOF;
+
+        var bytes: [@sizeOf(sys.KeyEvent)]u8 = undefined;
+        const count = sys.read(self.key_event_fd, &bytes);
+        if (count == sys.FAIL or count == 0) return error.EOF;
+        if (count != bytes.len) return error.EOF;
+        return @bitCast(bytes);
     }
 
     // Processes a single key event, returns non-null when a line is committed.
@@ -261,30 +288,29 @@ fn appendShowCursor(buf: []u8, pos: u32, show: bool) u32 {
     return pos + seq.len;
 }
 
-/// Writes the decimal representation of n into buf[pos..] and returns the new position.
-fn appendDecU32(buf: []u8, pos: u32, n: u32) u32 {
+fn appendDecU32(buf: []u8, pos: u32, value: u32) u32 {
     var tmp: [10]u8 = undefined;
-    var len: u32 = 0;
-    var v = n;
-    if (v == 0) {
-        buf[pos] = '0';
-        return pos + 1;
-    }
-    while (v > 0) {
-        tmp[len] = @intCast('0' + (v % 10));
-        len += 1;
+    var v = value;
+    var digits: u32 = 0;
+    while (true) {
+        tmp[digits] = @truncate('0' + (v % 10));
+        digits += 1;
         v /= 10;
+        if (v == 0) break;
     }
-    // tmp holds digits in reverse order
-    var i: u32 = 0;
-    while (i < len) : (i += 1) {
-        buf[pos + i] = tmp[len - 1 - i];
+    // tmp holds digits in reverse order - copy in reverse order to output
+    var p = pos;
+    var i = digits;
+    while (i > 0) {
+        i -= 1;
+        buf[p] = tmp[i];
+        p += 1;
     }
-    return pos + len;
+    return p;
 }
 
 pub fn showCursor(show: bool) void {
-    var out: [16]u8 = undefined;
+    var out: [6]u8 = undefined;
     const n = appendShowCursor(&out, 0, show);
     _ = sys.write(sys.STDOUT, out[0..n]);
 }

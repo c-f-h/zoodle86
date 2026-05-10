@@ -186,13 +186,6 @@ pub fn getCursor() struct { row: u32, col: u32 } {
     return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
 }
 
-/// Reads exactly one KeyEvent (4 bytes) from stdin, blocking until a key is pressed.
-pub fn readKey() KeyEvent {
-    var bytes: [@sizeOf(KeyEvent)]u8 = undefined;
-    _ = read(STDIN, &bytes);
-    return @bitCast(bytes);
-}
-
 pub const FdRemap = abi.FdRemap;
 pub const SpawnOpts = abi.SpawnOpts;
 

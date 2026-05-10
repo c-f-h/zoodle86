@@ -4,6 +4,7 @@ const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
 const filedesc = @import("filedesc.zig");
 const console = @import("console.zig");
+const tty = @import("tty.zig");
 const waitqueue = @import("waitqueue.zig");
 const abi = @import("abi");
 const std = @import("std");
@@ -78,6 +79,8 @@ pub const Task = struct {
 
     /// Console to use for stdout/stderr writes; null means use the primary console.
     stdout_console: ?*console.Console = null,
+    /// Controlling tty for stdio and interactive input.
+    controlling_tty: ?*tty.Tty = null,
 
     /// Wait queue for tasks waiting on this task to exit.
     waiters_for_pid: waitqueue.WaitQueue = undefined,
@@ -140,9 +143,15 @@ pub const Task = struct {
         for (&task.fd_table) |*slot| {
             slot.* = filedesc.FileDesc{ .empty = {} };
         }
-        task.fd_table[0] = filedesc.FileDesc{ .stdin = {} };
-        task.fd_table[1] = filedesc.FileDesc{ .stdout = task };
-        task.fd_table[2] = filedesc.FileDesc{ .stderr = task };
+    }
+
+    /// Bind the task's standard descriptors to a controlling tty.
+    pub fn bindControllingTty(task: *Task, controlling: *tty.Tty) void {
+        task.controlling_tty = controlling;
+        task.stdout_console = controlling.console;
+        task.fd_table[0] = .{ .tty = .{ .handle = controlling, .readable = true, .writable = false } };
+        task.fd_table[1] = .{ .tty = .{ .handle = controlling, .readable = false, .writable = true } };
+        task.fd_table[2] = .{ .tty = .{ .handle = controlling, .readable = false, .writable = true } };
     }
 
     /// Makes this task's page directory active on the current CPU.

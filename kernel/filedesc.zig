@@ -5,6 +5,7 @@ const task = @import("task.zig");
 const pipe = @import("pipe.zig");
 const keyboard = @import("keyboard.zig");
 const kernel = @import("kernel.zig");
+const tty = @import("tty.zig");
 const abi = @import("abi");
 
 pub const O_RDONLY = abi.O_RDONLY;
@@ -22,25 +23,24 @@ pub const MAX_OPEN_FILES = 32;
 
 pub const FdKind = enum(u8) {
     empty,
-    stdin,
     stdout,
     stderr,
     file,
     pipe,
+    tty,
 };
 
 pub const FileDesc = union(FdKind) {
     empty: void,
-    stdin: void,
     stdout: *task.Task,
     stderr: *task.Task,
     file: u8, // Always refers to a valid index in the global open_files table
     pipe: struct { handle: *pipe.Pipe, writable: bool },
+    tty: struct { handle: *tty.Tty, readable: bool, writable: bool },
 
     /// Closes a descriptor and releases any backing pipe or open-file state.
     pub fn close(self: *FileDesc) error{BadFd}!void {
         switch (self.*) {
-            .stdin => {},
             .stdout => {},
             .stderr => {},
             .file => |file_index| {
@@ -61,6 +61,7 @@ pub const FileDesc = union(FdKind) {
                     kernel.getAllocator().destroy(pp);
                 }
             },
+            .tty => {},
             else => return error.BadFd,
         }
         self.* = .empty;
@@ -69,7 +70,6 @@ pub const FileDesc = union(FdKind) {
     pub fn dupe(self: *FileDesc) FileDesc {
         switch (self.*) {
             .empty => return .{ .empty = {} },
-            .stdin => return self.*,
             .stdout => return self.*,
             .stderr => return self.*,
             .file => |file_index| {
@@ -89,6 +89,7 @@ pub const FileDesc = union(FdKind) {
                     return .{ .pipe = .{ .handle = pp, .writable = false } };
                 }
             },
+            .tty => return self.*,
         }
     }
 
@@ -124,6 +125,10 @@ pub const FileDesc = union(FdKind) {
                 }
                 return pp.read(dest);
             },
+            .tty => |tty_info| {
+                if (!tty_info.readable) return error.AccessDenied;
+                return tty_info.handle.read(dest);
+            },
             else => return error.BadFd,
         }
     }
@@ -158,6 +163,10 @@ pub const FileDesc = union(FdKind) {
                     _ = kernel.kernel_yield();
                 }
                 return pp.write(src);
+            },
+            .tty => |tty_info| {
+                if (!tty_info.writable) return error.AccessDenied;
+                return tty_info.handle.write(src);
             },
             else => return error.BadFd,
         }
@@ -249,9 +258,25 @@ pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Filed
     return FileDesc{ .file = @truncate(open_index) };
 }
 
-fn tryOpenSpecialFile(path: []const u8) !?FileDesc {
+fn openTty(index: u8, access_mode: u32) ?FileDesc {
+    if (kernel.getTty(index)) |ptty| {
+        return .{ .tty = .{
+            .handle = ptty,
+            .readable = access_mode != O_WRONLY,
+            .writable = access_mode != O_RDONLY,
+        } };
+    }
+    return null;
+}
+
+fn tryOpenSpecialFile(path: []const u8, flags: u32) !?FileDesc {
+    const access_mode = try validateOpenFlags(flags);
     if (std.mem.eql(u8, path, "/dev/keyboard")) {
         return try keyboard.getKeyEventPipe();
+    } else if (std.mem.eql(u8, path, "/dev/tty0")) {
+        return openTty(0, access_mode);
+    } else if (std.mem.eql(u8, path, "/dev/tty1")) {
+        return openTty(1, access_mode);
     } else {
         return null;
     }
@@ -261,7 +286,7 @@ fn tryOpenSpecialFile(path: []const u8) !?FileDesc {
 pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const filedesc =
-        try tryOpenSpecialFile(path) orelse
+        try tryOpenSpecialFile(path, flags) orelse
         try openFileDesc(disk_fs, path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
@@ -276,7 +301,6 @@ pub fn statPath(disk_fs: *const fs.FileSystem, path: []const u8) FiledescError!S
 pub fn statFd(ptask: *task.Task, fd: u32) FiledescError!Stat {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return switch (slot.*) {
-        .stdin => syntheticCharStat(fs.STAT_FLAG_READABLE),
         .stdout, .stderr => syntheticCharStat(fs.STAT_FLAG_WRITABLE),
         .file => |file_index| blk: {
             const open_file = getOpenFile(file_index);
@@ -299,6 +323,20 @@ pub fn statFd(ptask: *task.Task, fd: u32) FiledescError!Stat {
                 .blksize = @intCast(pp.buffer.buf.len),
                 .nlink = 1,
                 .kind = .Pipe,
+                .flags = flags,
+            };
+        },
+        .tty => |tty_info| blk: {
+            var flags = fs.STAT_FLAG_SYNTHETIC;
+            if (tty_info.readable) flags |= fs.STAT_FLAG_READABLE;
+            if (tty_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
+            break :blk .{
+                .inode = 0,
+                .size = 0,
+                .blocks = 0,
+                .blksize = @intCast(tty_info.handle.bufferSize()),
+                .nlink = 1,
+                .kind = .CharDevice,
                 .flags = flags,
             };
         },

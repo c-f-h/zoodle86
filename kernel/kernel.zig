@@ -24,6 +24,7 @@ const pageallocator = @import("pageallocator.zig");
 const serial = @import("serial.zig");
 const syscall = @import("syscall.zig");
 const pit = @import("pit.zig");
+const tty = @import("tty.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const pci = @import("pci.zig");
@@ -78,6 +79,9 @@ var cur_kb_handler: ?KeyboardHandler = null;
 var task_switch_count: u32 = 0;
 
 var timer_ticks: u32 = 0;
+var primary_tty: tty.Tty = undefined;
+var secondary_tty: tty.Tty = undefined;
+var foreground_tty: ?*tty.Tty = null;
 
 fn timerIrqHandler(frame: *const interrupt_frame.InterruptFrame) void {
     timer_ticks += 1;
@@ -121,6 +125,20 @@ pub fn getFileSystem() *fs.FileSystem {
     return &disk_fs;
 }
 
+/// Return the tty for the given console index, if available.
+pub fn getTty(index: u8) ?*tty.Tty {
+    return switch (index) {
+        0 => if (primary_tty.available) &primary_tty else null,
+        1 => if (secondary_tty.available) &secondary_tty else null,
+        else => null,
+    };
+}
+
+/// Switch keyboard input to the given tty.
+pub fn setForegroundTty(target: *tty.Tty) void {
+    foreground_tty = target;
+}
+
 /// Keyboard event consumer called by the interrupt handler.
 /// When a kernel handler is active (readline, keylog, memmap), events go only to the handler.
 /// Otherwise, key-press events are pushed to the key event pipe for userspace tasks.
@@ -130,7 +148,15 @@ pub fn consumeKeyEvent(event: *const keyboard.KeyEvent) void {
         return;
     }
     if (event.pressed != 0) {
-        keyboard.pushRawKeyEventToPipe(event.*);
+        // If someone is listening on the keyboard event pipe, it takes
+        // precedence over the foreground TTY. This is for readline compatibility
+        // until TTY is rich enough to support all its features.
+        if (keyboard.pushRawKeyEventToPipe(event.*))
+            return;
+        if (foreground_tty) |focused| {
+            focused.handleKeyEvent(event);
+            return;
+        }
     }
 }
 
@@ -382,6 +408,8 @@ fn kernel_enter() !noreturn {
     asm volatile ("sti");
 
     try mountFs();
+    try primary_tty.init(alloc, &console.primary);
+    foreground_tty = &primary_tty;
 
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
@@ -404,6 +432,8 @@ fn kernel_enter() !noreturn {
         try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "userspace programs");
         try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows);
         secondary_console.vconsole_instance = &secondary_vconsole;
+        try secondary_tty.init(alloc, &secondary_console);
+        foreground_tty = &secondary_tty;
 
         // Fill desktop background once, then draw each window frame on top.
         window.drawBackground();
@@ -581,6 +611,9 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     defer paging.loadPageDir(page_dir_phys);
 
     const ptask = try taskman.newTask();
+    if (foreground_tty) |focused| {
+        ptask.bindControllingTty(focused);
+    }
     errdefer {
         ptask.loadPageDir();
         ptask.terminate();

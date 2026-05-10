@@ -244,7 +244,11 @@ fn sys_spawn(argv_desc_ofs: u32, opts_ptr: u32) !u32 {
     defer current_task.loadPageDir(); // make sure to return to the correct page directory
     const child = try kernel.loadUserspaceElf(argv_buf[0], argv_buf);
     child.parent_pid = current_task.pid;
-    child.stdout_console = current_task.stdout_console;
+    if (current_task.controlling_tty) |controlling| {
+        child.bindControllingTty(controlling);
+    } else if (current_task.stdout_console) |task_console| {
+        child.stdout_console = task_console;
+    }
 
     // Apply fd remaps: dupe each requested parent fd into the child's fd table.
     // Both fd tables are kernel memory; no page directory switch needed here.

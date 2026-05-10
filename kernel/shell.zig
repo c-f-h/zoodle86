@@ -460,7 +460,7 @@ fn tryLoadProgram(shell: *Shell, display_name: []const u8, fname: []const u8, ar
         return null;
     };
     if (kernel.secondary_console.vconsole_instance != null) {
-        ptask.stdout_console = &kernel.secondary_console;
+        ptask.bindControllingTty(kernel.getTty(1).?);
     }
     return ptask;
 }

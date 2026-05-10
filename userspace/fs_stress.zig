@@ -529,7 +529,7 @@ fn testStat() !void {
     _ = try expectSyscall(sys.fstat(sys.STDOUT, &stdout_stat), "testStat: fstat stdout", @src());
     try expectKind(stdout_stat.kind, .CharDevice);
     try expectOffset(stdout_stat.inode, 0);
-    try expectOffset(stdout_stat.blksize, 1);
+    try expectOffset(stdout_stat.blksize, 4096); // size of tty buffer
     try expectOffset(stdout_stat.nlink, 1);
     try expectFlags(stdout_stat.flags, sys.STAT_FLAG_WRITABLE | sys.STAT_FLAG_SYNTHETIC);
 

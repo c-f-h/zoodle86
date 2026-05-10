@@ -304,10 +304,10 @@ pub fn getKeyEventPipe() error{ OutOfMemory, BadFd }!filedesc.FileDesc {
 }
 
 /// Pushes a key event into the event pipe; drops the event if the buffer is full or there are no readers.
-pub fn pushRawKeyEventToPipe(ev: KeyEvent) void {
-    if (!pipe_initialized) return;
-    if (pipe_writer_fd.pipe.handle.num_readers == 0) return; // no readers, drop event
-    if (pipe_writer_fd.pipe.handle.bytesFree() < @sizeOf(abi.KeyEvent)) return; // not enough space, drop event
+pub fn pushRawKeyEventToPipe(ev: KeyEvent) bool {
+    if (!pipe_initialized) return false;
+    if (pipe_writer_fd.pipe.handle.num_readers == 0) return false; // no readers, drop event
+    if (pipe_writer_fd.pipe.handle.bytesFree() < @sizeOf(abi.KeyEvent)) return false; // not enough space, drop event
 
     const write_ev = abi.KeyEvent{
         .keycode = ev.keycode,
@@ -320,4 +320,5 @@ pub fn pushRawKeyEventToPipe(ev: KeyEvent) void {
         // Shouldn't happen due to check; possible race condition once kernel is reentrant
         @panic("partial write to keyevent pipe");
     }
+    return true;
 }
