@@ -34,14 +34,20 @@ ZIG_STAGE2_SRC = ROOT / "kernel" / "stage2.zig"
 KERNEL_SRC = ROOT / "kernel" / "kernel.zig"
 USERSPACE_SOURCES = [
     ROOT / "userspace" / "hello.zig",
-    ROOT / "userspace" / "cat.zig",
-    ROOT / "userspace" / "ln.zig",
+    ROOT / "userspace" / "busybox.zig",
     ROOT / "userspace" / "fib.zig",
     ROOT / "userspace" / "fs_stress.zig",
     ROOT / "userspace" / "alloc_stress.zig",
     ROOT / "userspace" / "kshell_test.zig",
-    ROOT / "userspace" / "ls.zig",
     ROOT / "userspace" / "shell.zig",
+]
+# Hard links to create in the filesystem image: (source_path, link_path) relative to fs root.
+FS_HARD_LINKS = [
+    ("bin/busybox", "bin/cat"),
+    ("bin/busybox", "bin/ls"),
+    ("bin/busybox", "bin/ln"),
+    ("bin/busybox", "bin/rm"),
+    ("bin/busybox", "bin/stat"),
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
@@ -347,6 +353,11 @@ def build_fs_image(target, source, env):
     for userspace_exe in source[0:len(USERSPACE_EXES)]:
         userspace_path = pathlib.Path(str(userspace_exe))
         shutil.copy2(userspace_path, bin_dir / userspace_path.stem)
+
+    # Write the hard-links manifest consumed by compile_fs.
+    if FS_HARD_LINKS:
+        links_text = "".join(f"{src} {dst}\n" for src, dst in FS_HARD_LINKS)
+        (FS_IMAGE_DIR / "_links").write_text(links_text, encoding="utf-8")
 
     # Inject the kernel module as "kernel".
     kernel_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))

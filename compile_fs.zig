@@ -6,11 +6,13 @@ const std = @import("std");
 const CompileError = error{
     InvalidArgs,
     InvalidPathName,
+    InvalidLinkEntry,
 };
 
 const ImportCounts = struct {
     files: usize = 0,
     directories: usize = 0,
+    links: usize = 0,
 };
 
 fn appendPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8, sep: u8) ![]u8 {
@@ -50,6 +52,7 @@ fn importDirectory(
                 try importDirectory(init, stdout, disk_fs, child_host_path, child_inode, child_relative_path, counts);
             },
             .file => {
+                if (std.mem.eql(u8, entry.name, "_links")) continue; // manifest, not a real file
                 if (!fs.validateName(entry.name)) {
                     try stdout.print("Error: invalid path component: {s}\n", .{entry.name});
                     return CompileError.InvalidPathName;
@@ -75,6 +78,59 @@ fn importDirectory(
             },
             else => {},
         }
+    }
+}
+
+/// Reads the optional `_links` manifest from the root input directory and creates
+/// hard links in the filesystem image.  Each non-blank, non-comment line must
+/// contain exactly two whitespace-separated filesystem paths:
+///   <existing-path> <new-link-path>
+/// Both paths are relative to the filesystem root and use '/' as the separator.
+fn processLinksManifest(
+    init: std.process.Init,
+    stdout: anytype,
+    disk_fs: *fs.FileSystem,
+    root_host_dir_path: []const u8,
+    counts: *ImportCounts,
+) !void {
+    const manifest_host_path = try appendPath(init.gpa, root_host_dir_path, "_links", '\\');
+    defer init.gpa.free(manifest_host_path);
+
+    const manifest_file = std.Io.Dir.cwd().openFile(init.io, manifest_host_path, .{}) catch return;
+    defer manifest_file.close(init.io);
+
+    const file_size = try manifest_file.length(init.io);
+    const content = try init.gpa.alloc(u8, file_size);
+    defer init.gpa.free(content);
+    _ = try manifest_file.readPositionalAll(init.io, content, 0);
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+
+        var parts = std.mem.splitScalar(u8, line, ' ');
+        const source_path = parts.next() orelse continue;
+        const target_path = std.mem.trim(u8, parts.rest(), " \t");
+        if (target_path.len == 0) {
+            try stdout.print("  Error: malformed link entry: {s}\n", .{line});
+            return CompileError.InvalidLinkEntry;
+        }
+
+        const source_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, source_path) catch |err| {
+            try stdout.print("  Error: link source not found: {s} ({s})\n", .{ source_path, @errorName(err) });
+            return err;
+        };
+
+        const split = fs.splitPath(target_path);
+        const dir_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir) catch |err| {
+            try stdout.print("  Error: link target directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
+            return err;
+        };
+
+        try stdout.print("  Creating link: {s} -> {s}\n", .{ target_path, source_path });
+        try disk_fs.createLink(dir_inode, split.name, source_inode);
+        counts.links += 1;
     }
 }
 
@@ -124,9 +180,10 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("Writing filesystem contents...\n", .{});
     var counts: ImportCounts = .{};
     try importDirectory(init, stdout, &disk_fs, input_dir_path, fs.ROOT_INODE_INDEX, "", &counts);
+    try processLinksManifest(init, stdout, &disk_fs, input_dir_path, &counts);
 
     try stdout.print(
-        "\nDone. Wrote {d} files and {d} directories to {s}\n",
-        .{ counts.files, counts.directories, output_path },
+        "\nDone. Wrote {d} files, {d} directories, and {d} hard links to {s}\n",
+        .{ counts.files, counts.directories, counts.links, output_path },
     );
 }

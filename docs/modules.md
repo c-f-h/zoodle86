@@ -70,13 +70,11 @@ Complete listing of every source file and its role.
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
-- `userspace/cat.zig`: stdin-to-stdout copier and simple file-printing utility used both directly and in shell pipelines.
-- `userspace/ln.zig`: small hard-link utility that calls the `link` syscall for `ln <existing> <new>`.
+- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `ls`, `ln`, `rm`, or `stat` based on the basename of `argv[0]`. Installed as `/bin/busybox` and hard-linked to respective tool names.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
 - `userspace/fs_stress.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/alloc_stress.zig`: heap allocator stress test covering allocate/free/realloc behavior.
-- `userspace/ls.zig`: userspace directory lister built on the fixed-size `getdents`/`readdir` syscall wrapper.
 - `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports basic redirection.
 - `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`.
 
@@ -95,12 +93,10 @@ Complete listing of every source file and its role.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - The following userspace programs are compiled and copied into the image as `/bin/<basename>`, which is on the shell path:
     - `userspace/hello.zig`
-    - `userspace/cat.zig`
-    - `userspace/ln.zig`
+    - `userspace/busybox.zig` → `/bin/busybox` plus hard links `/bin/cat`, `/bin/ls`, `/bin/ln`, `/bin/rm`, `/bin/stat`
     - `userspace/fib.zig`
     - `userspace/fs_stress.zig`
     - `userspace/alloc_stress.zig`
-    - `userspace/ls.zig`
     - `userspace/shell.zig`
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.
