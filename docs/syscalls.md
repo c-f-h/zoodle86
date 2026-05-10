@@ -8,6 +8,8 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `write` | 1 | fd, buf_offset, count | bytes written or `FAIL` | Writes to stdout/stderr, filesystem-backed, or pipe fds |
 | `open` | 2 | path_offset, path_len, flags | fd or `FAIL` | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND` |
 | `close` | 3 | fd | 0 or `FAIL` | Closes stdio, pipe, or filesystem-backed fds |
+| `stat` | 4 | path_offset, path_len, stat_out_offset | 0 or `FAIL` | Fills a writable userspace `Stat` buffer for an inode-backed path |
+| `fstat` | 5 | fd, stat_out_offset | 0 or `FAIL` | Fills a writable userspace `Stat` buffer for an open fd; supports files, directories, stdio, and pipes |
 | `lseek` | 8 | fd, signed_offset, whence | new offset or `FAIL` | Supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`; may seek past EOF |
 | `brk` | 12 | addr | new break or `FAIL` | Gets heap break if addr=0; sets break to addr if valid; validates bounds and grows/shrinks data memory |
 | `pipe` | 22 | fds_slice_ptr | 0 or `FAIL` | Expects an `AbiSlice` describing a writable 2-element `u32` buffer and fills it with `{ read_fd, write_fd }` |
@@ -24,3 +26,25 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
 | `kshell` | 1003 | cmdline_slice_ptr | 0 or `FAIL` | Executes a kernel shell command string. |
 | `get_cursor` | 1004 | — | `(row << 16) \| col` | Returns the stdout console cursor position (both 0-indexed) packed into a single u32. |
+
+`Stat` is a compact 32-bit metadata struct shared between kernel and userspace:
+
+```zig
+pub const FileKind = enum(u32) {
+    Unknown = 0,
+    Regular = 1,
+    Directory = 2,
+    CharDevice = 3,
+    Pipe = 4,
+};
+
+pub const Stat = extern struct {
+    inode: u32,   // inode number for filesystem objects, 0 for synthetic fds
+    size: u32,    // byte length; pipes report buffered bytes
+    blocks: u32,  // occupied filesystem blocks for inode-backed objects
+    blksize: u32, // preferred I/O size (512 for filesystem objects)
+    nlink: u32,   // hard-link count for inode-backed objects
+    kind: FileKind,
+    flags: u32,   // STAT_FLAG_* bits such as readable/writable/append/synthetic
+};
+```

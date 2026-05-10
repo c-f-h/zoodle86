@@ -201,6 +201,8 @@ pub const FiledescError = fs.WriteFileError || error{
     SystemFileTableFull,
 };
 
+pub const Stat = fs.Stat;
+
 const SeekWhence = enum(u32) {
     Set = SEEK_SET,
     Cur = SEEK_CUR,
@@ -254,6 +256,45 @@ pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, fl
     const filedesc = try openFileDesc(disk_fs, path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
+}
+
+/// Returns stat-like metadata for a filesystem path.
+pub fn statPath(disk_fs: *const fs.FileSystem, path: []const u8) FiledescError!Stat {
+    return try disk_fs.statPath(path);
+}
+
+/// Returns stat-like metadata for a task-owned file descriptor.
+pub fn statFd(ptask: *task.Task, fd: u32) FiledescError!Stat {
+    const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
+    return switch (slot.*) {
+        .stdin => syntheticCharStat(fs.STAT_FLAG_READABLE),
+        .stdout, .stderr => syntheticCharStat(fs.STAT_FLAG_WRITABLE),
+        .file => |file_index| blk: {
+            const open_file = getOpenFile(file_index);
+            var stat = try open_file.disk_fs.statInode(open_file.inode_index);
+            stat.flags = buildOpenFileStatFlags(open_file);
+            break :blk stat;
+        },
+        .pipe => |pipe_info| blk: {
+            const pp = pipe_info.handle;
+            var flags = fs.STAT_FLAG_SYNTHETIC;
+            if (pipe_info.writable) {
+                flags |= fs.STAT_FLAG_WRITABLE;
+            } else {
+                flags |= fs.STAT_FLAG_READABLE;
+            }
+            break :blk .{
+                .inode = 0,
+                .size = @intCast(pp.buffer.size),
+                .blocks = 0,
+                .blksize = @intCast(pp.buffer.buf.len),
+                .nlink = 1,
+                .kind = .Pipe,
+                .flags = flags,
+            };
+        },
+        else => error.BadFd,
+    };
 }
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
@@ -385,6 +426,26 @@ fn closeOpenFile(index: u8) void {
     if (open_files[index].in_use == 0) {
         open_files[index] = .{};
     }
+}
+
+fn syntheticCharStat(access_flags: u32) Stat {
+    return .{
+        .inode = 0,
+        .size = 0,
+        .blocks = 0,
+        .blksize = 1,
+        .nlink = 1,
+        .kind = .CharDevice,
+        .flags = access_flags | fs.STAT_FLAG_SYNTHETIC,
+    };
+}
+
+fn buildOpenFileStatFlags(open_file: *const OpenFile) u32 {
+    var flags: u32 = 0;
+    if (open_file.readable) flags |= fs.STAT_FLAG_READABLE;
+    if (open_file.writable) flags |= fs.STAT_FLAG_WRITABLE;
+    if (open_file.append) flags |= fs.STAT_FLAG_APPEND;
+    return flags;
 }
 
 fn isInodeOpen(inode_index: fs.InodeT) bool {

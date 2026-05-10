@@ -52,13 +52,18 @@ const truncate_file = tmpdir ++ "/truncate.txt";
 const unlink_file = tmpdir ++ "/unlink.txt";
 const link_source_file = tmpdir ++ "/link_src.txt";
 const link_alias_file = tmpdir ++ "/link_alias.txt";
+const stat_file = tmpdir ++ "/stat.txt";
+const stat_link = tmpdir ++ "/stat_link.txt";
+const stat_dir = tmpdir ++ "/stat_dir";
 const nonexistent_file = "nonexistent.txt";
 const sector_size = 512;
+const pipe_capacity = 4096;
 const chunk_size = 640;
 const chunk_count = 6;
 const total_bytes = chunk_size * chunk_count;
 const seek_expected = "01234AB789XY\x00\x00Z";
 const truncate_expected = "ABCD\x00\x00\x00\x00\x00\x00";
+const stat_payload = "stat payload";
 
 fn writeAll(fd: u32, buf: []const u8) !void {
     const written = try expectSyscall(sys.write(fd, buf), "writeAll: write", @src());
@@ -86,6 +91,14 @@ fn expectOffset(actual: u32, expected: u32) !void {
 
 fn expectBytes(actual: []const u8, expected: []const u8) !void {
     if (!std.mem.eql(u8, actual, expected)) return error.DataMismatch;
+}
+
+fn expectKind(actual: sys.FileKind, expected: sys.FileKind) !void {
+    if (actual != expected) return error.UnexpectedKind;
+}
+
+fn expectFlags(actual: u32, expected_mask: u32) !void {
+    if ((actual & expected_mask) != expected_mask) return error.MissingFlags;
 }
 
 fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
@@ -355,6 +368,97 @@ fn testPipe() !void {
     _ = try expectSyscall(sys.close(read_fd), "testPipe: close read end", @src());
 }
 
+fn testStat() !void {
+    _ = sys.unlink(stat_link);
+    _ = sys.unlink(stat_file);
+    _ = sys.rmdir(stat_dir);
+    _ = sys.mkdir(stat_dir) catch {};
+
+    const fd = try expectSyscall(sys.open(stat_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testStat: open stat file", @src());
+    errdefer _ = sys.close(fd);
+
+    try writeAll(fd, stat_payload);
+
+    var fd_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(fd, &fd_stat), "testStat: fstat regular file", @src());
+    try expectKind(fd_stat.kind, .Regular);
+    try expectOffset(fd_stat.size, stat_payload.len);
+    try expectOffset(fd_stat.blocks, 1);
+    try expectOffset(fd_stat.blksize, sector_size);
+    try expectOffset(fd_stat.nlink, 1);
+    try expectFlags(fd_stat.flags, sys.STAT_FLAG_READABLE | sys.STAT_FLAG_WRITABLE);
+
+    var path_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(stat_file, &path_stat), "testStat: stat regular file", @src());
+    try expectKind(path_stat.kind, .Regular);
+    try expectOffset(path_stat.size, stat_payload.len);
+    try expectOffset(path_stat.blocks, 1);
+    try expectOffset(path_stat.blksize, sector_size);
+    try expectOffset(path_stat.nlink, 1);
+    if (path_stat.inode != fd_stat.inode) return error.StatMismatch;
+    if (path_stat.flags != 0) return error.UnexpectedFlags;
+
+    _ = try expectSyscall(sys.link(stat_file, stat_link), "testStat: create hard link", @src());
+
+    var link_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(stat_link, &link_stat), "testStat: stat hard link", @src());
+    if (link_stat.inode != fd_stat.inode) return error.StatMismatch;
+    try expectOffset(link_stat.nlink, 2);
+
+    _ = try expectSyscall(sys.fstat(fd, &fd_stat), "testStat: fstat linked file", @src());
+    try expectOffset(fd_stat.nlink, 2);
+
+    var dir_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(stat_dir, &dir_stat), "testStat: stat directory", @src());
+    try expectKind(dir_stat.kind, .Directory);
+    if (dir_stat.size == 0) return error.StatMismatch;
+    try expectOffset(dir_stat.blksize, sector_size);
+    try expectOffset(dir_stat.nlink, 1);
+
+    var stdout_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(sys.STDOUT, &stdout_stat), "testStat: fstat stdout", @src());
+    try expectKind(stdout_stat.kind, .CharDevice);
+    try expectOffset(stdout_stat.inode, 0);
+    try expectOffset(stdout_stat.blksize, 1);
+    try expectOffset(stdout_stat.nlink, 1);
+    try expectFlags(stdout_stat.flags, sys.STAT_FLAG_WRITABLE | sys.STAT_FLAG_SYNTHETIC);
+
+    const read_fd, const write_fd = try checkSyscall(sys.pipe(), "testStat: create pipe", @src());
+    errdefer _ = sys.close(read_fd);
+    errdefer _ = sys.close(write_fd);
+
+    var read_stat: sys.Stat = undefined;
+    var write_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(read_fd, &read_stat), "testStat: fstat pipe reader", @src());
+    _ = try expectSyscall(sys.fstat(write_fd, &write_stat), "testStat: fstat pipe writer", @src());
+    try expectKind(read_stat.kind, .Pipe);
+    try expectKind(write_stat.kind, .Pipe);
+    try expectOffset(read_stat.size, 0);
+    try expectOffset(read_stat.blksize, pipe_capacity);
+    try expectOffset(write_stat.blksize, pipe_capacity);
+    try expectFlags(read_stat.flags, sys.STAT_FLAG_READABLE | sys.STAT_FLAG_SYNTHETIC);
+    try expectFlags(write_stat.flags, sys.STAT_FLAG_WRITABLE | sys.STAT_FLAG_SYNTHETIC);
+
+    try writeAll(write_fd, "hi");
+    _ = try expectSyscall(sys.fstat(read_fd, &read_stat), "testStat: fstat pipe after write", @src());
+    try expectOffset(read_stat.size, 2);
+
+    _ = try expectSyscall(sys.close(read_fd), "testStat: close pipe reader", @src());
+    _ = try expectSyscall(sys.close(write_fd), "testStat: close pipe writer", @src());
+
+    _ = try expectSyscall(sys.close(fd), "testStat: close stat file", @src());
+    _ = try expectSyscall(sys.unlink(stat_link), "testStat: unlink hard link", @src());
+    _ = try expectSyscall(sys.unlink(stat_file), "testStat: unlink stat file", @src());
+    _ = try expectSyscall(sys.rmdir(stat_dir), "testStat: rmdir stat dir", @src());
+
+    try syscallShouldFail(sys.stat(nonexistent_file, &path_stat), "testStat: stat missing path", @src());
+    try syscallShouldFail(sys.fstat(99, &path_stat), "testStat: fstat bad fd", @src());
+}
+
 fn testPipeSpawn() !void {
     // Create two pipes: one for feeding cat's stdin, one for capturing cat's stdout.
     const stdin_read, const stdin_write = try checkSyscall(sys.pipe(), "testPipeSpawn: create stdin pipe", @src());
@@ -449,6 +553,7 @@ pub fn main(argv: []const []const u8) !void {
     try testTruncate();
     try testUnlink();
     try testLink();
+    try testStat();
     try testRmdir();
     try testPipe();
     try testBrokenPipe();

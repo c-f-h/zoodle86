@@ -100,6 +100,29 @@ pub const FileInfo = struct {
     is_directory: bool,
 };
 
+pub const StatKind = enum(u32) {
+    Unknown = 0,
+    Regular = 1,
+    Directory = 2,
+    CharDevice = 3,
+    Pipe = 4,
+};
+
+pub const STAT_FLAG_READABLE: u32 = 1 << 0;
+pub const STAT_FLAG_WRITABLE: u32 = 1 << 1;
+pub const STAT_FLAG_APPEND: u32 = 1 << 2;
+pub const STAT_FLAG_SYNTHETIC: u32 = 1 << 3;
+
+pub const Stat = extern struct {
+    inode: u32,
+    size: u32,
+    blocks: u32,
+    blksize: u32,
+    nlink: u32,
+    kind: StatKind,
+    flags: u32,
+};
+
 /// Returns the number of 512-byte sectors needed to store `len` bytes.
 pub fn sectorsForBytes(len: usize) u32 {
     if (len == 0) return 0;
@@ -349,6 +372,19 @@ pub const FileSystem = struct {
             .sector_count = fileBlocksForSize(inode.size_bytes),
             .is_directory = inode.kind == InodeKind.Directory,
         };
+    }
+
+    /// Returns stat-like metadata for the inode-backed object at `inode_index`.
+    pub fn statInode(self: *const FileSystem, inode_index: InodeT) FsError!Stat {
+        const inode = try self.readInode(inode_index);
+        try self.validateInode(&inode);
+        return buildStatForInode(inode_index, &inode);
+    }
+
+    /// Returns stat-like metadata for the object referenced by `path`.
+    pub fn statPath(self: *const FileSystem, path: []const u8) FsError!Stat {
+        const inode_index = try self.walkPathToInode(ROOT_INODE_INDEX, path);
+        return self.statInode(inode_index);
     }
 
     /// Returns the raw directory entry for a slot when it contains a file or directory.
@@ -997,6 +1033,23 @@ pub const FileSystem = struct {
         var inode: Inode = undefined;
         @memcpy(std.mem.asBytes(&inode), sector[inode_offset .. inode_offset + @sizeOf(Inode)]);
         return inode;
+    }
+
+    fn buildStatForInode(inode_index: InodeT, inode: *const Inode) FsError!Stat {
+        const kind = switch (inode.kind) {
+            .File => StatKind.Regular,
+            .Directory => StatKind.Directory,
+            else => return error.Corrupt,
+        };
+        return .{
+            .inode = inode_index,
+            .size = inode.size_bytes,
+            .blocks = fileBlocksForSize(inode.size_bytes),
+            .blksize = BLOCK_SIZE,
+            .nlink = inode.link_count,
+            .kind = kind,
+            .flags = 0,
+        };
     }
 
     fn writeInode(self: *const FileSystem, inode_index: InodeT, inode: *const Inode) FsError!void {

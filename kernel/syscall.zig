@@ -13,6 +13,8 @@ const Syscall = enum(u32) {
     Write = 1,
     Open = 2,
     Close = 3,
+    Stat = 4,
+    Fstat = 5,
     Lseek = 8,
     Brk = 12, // change program heap size
     Pipe = 22,
@@ -95,6 +97,23 @@ fn sys_open(path_ofs: u32, path_len: u32, flags: u32) !u32 {
 
 fn sys_close(fd: u32) !u32 {
     try filedesc.closeFile(task.getCurrentTask(), fd);
+    return 0;
+}
+
+fn sys_stat(path_slice_va: u32, stat_ofs: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const path = try current_task.readUserSlice(u8, path_slice_va);
+    const stat = try filedesc.statPath(kernel.getFileSystem(), path);
+    const out = try current_task.getUserMem(stat_ofs, @sizeOf(filedesc.Stat));
+    @memcpy(out, std.mem.asBytes(&stat));
+    return 0;
+}
+
+fn sys_fstat(fd: u32, stat_ofs: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const stat = try filedesc.statFd(current_task, fd);
+    const out = try current_task.getUserMem(stat_ofs, @sizeOf(filedesc.Stat));
+    @memcpy(out, std.mem.asBytes(&stat));
     return 0;
 }
 
@@ -353,6 +372,8 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
     const retval = (switch (nr) {
         .Close => sys_close(arg1),
         .Exit => kernel.exitCurrentTask(arg1),
+        .Stat => sys_stat(arg1, arg2),
+        .Fstat => sys_fstat(arg1, arg2),
         .GetPid => task.getCurrentTask().pid,
         .Lseek => sys_lseek(arg1, arg2, arg3),
         .Brk => sys_brk(arg1),

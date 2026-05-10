@@ -49,11 +49,38 @@ pub const SeekWhence = enum(u32) {
     End = 2, // offset from end of file
 };
 
+/// Categorizes the underlying object described by `Stat`.
+pub const FileKind = enum(u32) {
+    Unknown = 0,
+    Regular = 1,
+    Directory = 2,
+    CharDevice = 3,
+    Pipe = 4,
+};
+
+pub const STAT_FLAG_READABLE: u32 = 1 << 0;
+pub const STAT_FLAG_WRITABLE: u32 = 1 << 1;
+pub const STAT_FLAG_APPEND: u32 = 1 << 2;
+pub const STAT_FLAG_SYNTHETIC: u32 = 1 << 3;
+
+/// Stable stat-like file metadata returned by `stat` and `fstat`.
+pub const Stat = extern struct {
+    inode: u32,
+    size: u32,
+    blocks: u32,
+    blksize: u32,
+    nlink: u32,
+    kind: FileKind,
+    flags: u32,
+};
+
 const Syscall = enum(u32) {
     Read = 0,
     Write = 1,
     Open = 2,
     Close = 3,
+    Stat = 4,
+    Fstat = 5,
     Seek = 8,
     Brk = 12, // change program heap size
     Pipe = 22,
@@ -175,6 +202,16 @@ pub fn open(path: []const u8, flags: FileOpenFlags) u32 {
 /// Closes a userspace-visible file descriptor.
 pub fn close(fd: u32) u32 {
     return syscall(.Close, fd, 0, 0);
+}
+
+/// Reads metadata for a filesystem path into `out`.
+pub fn stat(path: []const u8, out: *Stat) u32 {
+    return syscall(.Stat, @intFromPtr(&AbiSlice.fromSlice(u8, path)), @intFromPtr(out), 0);
+}
+
+/// Reads metadata for an open file descriptor into `out`.
+pub fn fstat(fd: u32, out: *Stat) u32 {
+    return syscall(.Fstat, fd, @intFromPtr(out), 0);
 }
 
 /// Repositions a userspace-visible file descriptor and returns the new offset.
