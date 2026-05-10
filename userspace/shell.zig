@@ -15,9 +15,13 @@ pub fn main(_: []const []const u8) !void {
 
     while (true) {
         rl.init("$ ");
-        const line = rl.readLine() orelse {
-            _ = sys.write(sys.STDOUT, "\n");
-            return;
+        const line = rl.readLine() catch |err| {
+            if (err == error.EOF) {
+                _ = sys.write(sys.STDOUT, "\n");
+                readline.showCursor(false);
+                return;
+            }
+            return err;
         };
 
         const trimmed = std.mem.trim(u8, line, " \t");

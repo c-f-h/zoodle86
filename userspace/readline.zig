@@ -34,17 +34,17 @@ pub const Readline = struct {
 
     /// Block until the user commits a line (Enter) and return the committed slice.
     /// Returns null when the user presses Ctrl-D on an empty line (EOF signal).
-    pub fn readLine(self: *Readline) ?[]const u8 {
+    pub fn readLine(self: *Readline) error{EOF}![]const u8 {
         while (true) {
             const ev = sys.readKey();
-            if (self.handleKey(ev)) |done| {
+            if (try self.handleKey(ev)) |done| {
                 return done;
             }
         }
     }
 
     // Processes a single key event, returns non-null when a line is committed.
-    fn handleKey(self: *Readline, ev: sys.KeyEvent) ?[]const u8 {
+    fn handleKey(self: *Readline, ev: sys.KeyEvent) error{EOF}!?[]const u8 {
         const kc = ev.keycode;
         const ctrl = (ev.modifiers & sys.MOD_CTRL) != 0;
 
@@ -59,7 +59,7 @@ pub const Readline = struct {
                 sys.VK_K => self.killToEol(), // Ctrl-K: kill to end
                 sys.VK_U => self.killLine(), // Ctrl-U: kill whole line
                 sys.VK_D => { // Ctrl-D: delete forward or EOF
-                    if (self.len == 0) return null;
+                    if (self.len == 0) return error.EOF;
                     self.deleteForward();
                 },
                 else => {},
