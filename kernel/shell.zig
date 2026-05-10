@@ -5,7 +5,6 @@ const app_memmap = @import("app_memmap.zig");
 const console = @import("console.zig");
 const cpuid = @import("cpuid.zig");
 const fs = @import("fs.zig");
-const filedesc = @import("filedesc.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const kprof = @import("kprof.zig");
@@ -20,7 +19,6 @@ const autoexec_name = "autoexec";
 const executable_search_path = [_][]const u8{
     "/bin",
 };
-const MAX_SHELL_TOKENS = task.MAX_ARGV_COUNT * 2 + 8;
 
 var autoexec_next_line_idx: usize = 0;
 var autoexec_finished: bool = false;
@@ -31,7 +29,6 @@ pub const Shell = struct {
     alloc: std.mem.Allocator,
     disk_fs: *fs.FileSystem,
     console: *console.Console,
-    cur_cmdline: []const u8 = undefined,
 };
 
 const Command = struct {
@@ -54,7 +51,7 @@ const commands = [_]Command{
     .{ .name = "profile", .description = "Kernel EIP profiler control: profile start|stop.", .handler = cmdProfile },
     .{ .name = "fontbench", .description = "Stress font rendering without scrollback: fontbench <count>.", .handler = cmdFontbench },
     .{ .name = "serial", .description = "Mirror console output to COM1: serial on|off.", .handler = cmdSerial },
-    .{ .name = "run", .description = "Run an ELF executable with basic | and > redirection.", .handler = cmdRun },
+    .{ .name = "run", .description = "Run an ELF executable with command-line arguments.", .handler = cmdRun },
     .{ .name = "multirun", .description = "Run multiple copies of an ELF executable with command-line arguments.", .handler = cmdMultiRun },
     .{ .name = "ps", .description = "List all active tasks and their status.", .handler = cmdPs },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
@@ -63,9 +60,6 @@ const commands = [_]Command{
 
 /// Execute a shell command with the given shell instance.
 pub fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
-    shell.cur_cmdline = cmdline; // save the full command line for `run`
-    defer shell.cur_cmdline = undefined;
-
     var args = std.mem.tokenizeAny(u8, cmdline, " \t");
     const cmd_name = args.next() orelse return;
 
@@ -104,140 +98,6 @@ fn findCommand(name: []const u8) ?*const Command {
         }
     }
     return null;
-}
-
-fn handleRunCommandLine(shell: *Shell, tokens: []const []const u8) void {
-    var lhs_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
-    var rhs_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
-    var token_index: usize = 1;
-
-    // Parse command line up to the first redirection operator
-    const lhs_argv = collectRunInvocation(tokens, &token_index, &lhs_buf) orelse {
-        printUsage(shell, "run");
-        return;
-    };
-
-    // If there is no redirection, just run the command.
-    if (token_index == tokens.len) {
-        const ptask = loadRunTask(shell, lhs_argv) orelse return;
-        kernel.schedule_initial(ptask);
-    }
-
-    const operator = tokens[token_index];
-    token_index += 1;
-
-    // ">": redirection to a file
-    if (std.mem.eql(u8, operator, ">")) {
-        const output_path = tokens[token_index..];
-        if (output_path.len != 1 or isRedirectionToken(output_path[0])) {
-            printUsage(shell, "run");
-            return;
-        }
-
-        const ptask = loadRunTask(shell, lhs_argv) orelse return;
-        if (!redirectTaskStdoutToFile(shell, ptask, output_path[0])) {
-            kernel.discardTask(ptask);
-            return;
-        }
-
-        kernel.schedule_initial(ptask);
-    }
-
-    if (!std.mem.eql(u8, operator, "|")) {
-        printUsage(shell, "run");
-        return;
-    }
-
-    // "|": pipe between two commands
-    const rhs_argv = collectRunInvocation(tokens, &token_index, &rhs_buf) orelse {
-        printUsage(shell, "run");
-        return;
-    };
-    if (token_index != tokens.len) {
-        shell.console.puts("Basic run redirection supports only one operator.\n");
-        return;
-    }
-
-    const producer = loadRunTask(shell, lhs_argv) orelse return;
-    const consumer = loadRunTask(shell, rhs_argv) orelse {
-        kernel.discardTask(producer);
-        return;
-    };
-
-    const pipe_fds = filedesc.makePipe() catch |err| {
-        shell.console.put(.{ "Failed to create pipe: ", kernel.getErrorDesc(err), "\n" });
-        kernel.discardTask(consumer);
-        kernel.discardTask(producer);
-        return;
-    };
-
-    producer.replaceFdSlot(1, pipe_fds.@"1");
-    consumer.replaceFdSlot(0, pipe_fds.@"0");
-
-    kernel.schedule_initial(producer);
-}
-
-fn tokenizeShellCommandLine(cmdline: []const u8, buf: *[MAX_SHELL_TOKENS][]const u8) ?[]const []const u8 {
-    var count: usize = 0;
-    var cursor: usize = 0;
-
-    while (nextShellToken(cmdline, &cursor)) |token| {
-        if (count >= buf.len) return null;
-        buf[count] = token;
-        count += 1;
-    }
-
-    return buf[0..count];
-}
-
-fn nextShellToken(cmdline: []const u8, cursor: *usize) ?[]const u8 {
-    while (cursor.* < cmdline.len and (cmdline[cursor.*] == ' ' or cmdline[cursor.*] == '\t')) : (cursor.* += 1) {}
-    if (cursor.* >= cmdline.len) return null;
-
-    const start = cursor.*;
-    const ch = cmdline[cursor.*];
-    if (ch == '|' or ch == '>') {
-        cursor.* += 1;
-        return cmdline[start..cursor.*];
-    }
-
-    while (cursor.* < cmdline.len) : (cursor.* += 1) {
-        const current = cmdline[cursor.*];
-        if (current == ' ' or current == '\t' or current == '|' or current == '>') break;
-    }
-
-    return cmdline[start..cursor.*];
-}
-
-fn isRedirectionToken(token: []const u8) bool {
-    return token.len == 1 and (token[0] == '|' or token[0] == '>');
-}
-
-/// Collects tokens up to the next redirection operator or the end of the token list, returning them as an argv slice.
-fn collectRunInvocation(
-    tokens: []const []const u8,
-    token_index: *usize,
-    buf: *[task.MAX_ARGV_COUNT][]const u8,
-) ?[]const []const u8 {
-    var argc: usize = 0;
-    while (token_index.* < tokens.len and !isRedirectionToken(tokens[token_index.*])) : (token_index.* += 1) {
-        if (argc >= buf.len) {
-            return null;
-        }
-        buf[argc] = tokens[token_index.*];
-        argc += 1;
-    }
-    if (argc == 0) return null;
-    return buf[0..argc];
-}
-
-fn redirectTaskStdoutToFile(shell: *Shell, ptask: *task.Task, path: []const u8) bool {
-    const desc = filedesc.openFileDesc(shell.disk_fs, path, filedesc.O_WRONLY | filedesc.O_CREAT | filedesc.O_TRUNC) catch |err| {
-        shell.console.put(.{ "Failed to redirect stdout to ", path, ": ", kernel.getErrorDesc(err), "\n" });
-        return false;
-    };
-    ptask.replaceFdSlot(1, desc);
-    return true;
 }
 
 fn runAutoexec(shell: *Shell) !void {
@@ -684,16 +544,25 @@ fn cmdMultiRun(shell: *Shell, args: *ArgsIterator) !void {
 }
 
 fn cmdRun(shell: *Shell, args: *ArgsIterator) !void {
-    _ = args;
-    var tokens_buf: [MAX_SHELL_TOKENS][]const u8 = undefined;
-    const tokens = tokenizeShellCommandLine(shell.cur_cmdline, &tokens_buf) orelse {
-        shell.console.puts("Too many arguments.\n");
-        return;
-    };
-    if (tokens.len == 0) return;
-    if (!std.mem.eql(u8, tokens[0], "run")) return;
+    var argv_buf: [task.MAX_ARGV_COUNT][]const u8 = undefined;
+    var argc: usize = 0;
 
-    handleRunCommandLine(shell, tokens);
+    while (args.next()) |arg| {
+        if (argc >= argv_buf.len) {
+            shell.console.puts("Too many arguments.\n");
+            return;
+        }
+        argv_buf[argc] = arg;
+        argc += 1;
+    }
+
+    if (argc == 0) {
+        printUsage(shell, "run");
+        return;
+    }
+
+    const ptask = loadRunTask(shell, argv_buf[0..argc]) orelse return;
+    kernel.schedule_initial(ptask);
 }
 
 fn printTaskRow(con: *console.Console, t: *const task.Task) void {
@@ -770,11 +639,7 @@ fn printUsage(shell: *Shell, name: []const u8) void {
         } else if (std.mem.eql(u8, command.name, "serial")) {
             shell.console.puts(" <on|off>");
         } else if (std.mem.eql(u8, command.name, "run")) {
-            shell.console.puts(" <executable> [<arg> ...]\n");
-            shell.console.puts("       run <executable> [<arg> ...] > <file>\n");
-            shell.console.puts("       run <executable> [<arg> ...] | [run] <executable> [<arg> ...]");
-            shell.console.puts("\n");
-            return;
+            shell.console.puts(" <executable> [<arg> ...]");
         }
         shell.console.puts("\n");
     }

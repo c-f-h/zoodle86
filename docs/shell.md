@@ -17,7 +17,7 @@ The kernel provides an interactive shell with the following commands:
 | **profile** | `<start\|stop>` | Control the kernel timer-tick EIP profiler. `start` begins sampling to page-backed buffers; `stop` writes a descending EIP count histogram to COM1. |
 | **fontbench** | `<count>` | Stress framebuffer font rendering without scrollback by drawing 1000 characters, restoring the original cursor position, and repeating the pass `count` times. |
 | **serial** | `<on\|off>` | Mirror console output to COM1 (toggle serial logging). |
-| **run** | `<executable> [<arg> ...]` | Run an ELF executable with optional command-line arguments. Also supports basic stdout redirection with `> <file>` and stdout-to-stdin pipelines with `| [run] <executable> [<arg> ...]`. Bare names are resolved through the shell path, currently `/bin`. |
+| **run** | `<executable> [<arg> ...]` | Run an ELF executable with optional command-line arguments. Bare names are resolved through the shell path, currently `/bin`. |
 | **multirun** | `<count> <executable> [<arg> ...]` | Run `count` concurrent copies of one ELF executable, forwarding the same argv to each copy. Bare names are resolved through the shell path, currently `/bin`. |
 | **ps** | (none) | List all active tasks with their PID, state, and parent PID. |
 | **shutdown** | (none) | Power off Bochs/QEMU. |
@@ -33,23 +33,12 @@ scons run AUTOEXEC="serial on\nrun hello\nshutdown"
 
 End scripts with `shutdown` for a clean exit.
 
-## Basic Redirection
-
-The shell supports a small redirection layer specifically for `run`:
-
-- `run hello 4 > hello.txt` writes the launched program's stdout to `hello.txt`.
-- `run hello 4 | cat` connects the first program's stdout to the second program's stdin.
-
-This is currently limited to one operator per `run` command line. Chaining and append mode are not supported.
-
 ## Userspace Shell
 
-The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. Unlike the kernel shell's `run` command, every non-empty line is treated as a program invocation directly:
+The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. Every non-empty line is treated as a program invocation, with basic redirection support:
 
 - `hello 4` runs `/bin/hello 4`.
 - `ls /bin > list.txt` redirects stdout to a file using spawn-time fd remapping.
 - `hello 4 | cat` connects one program's stdout to another program's stdin with a single pipe.
-
-Like the kernel `run` support, this is limited to one redirection operator per line.
 
 Kernel shell commands can be invoked by prefixing with a `!`, e.g., `!memmap`.
