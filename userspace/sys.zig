@@ -288,6 +288,24 @@ pub fn yield() void {
     _ = syscall(.Yield, 0, 0, 0);
 }
 
+/// Duplicates a file descriptor, returning the new fd number.
+pub fn dupFd(old_fd: u32) !u32 {
+    const result = syscall(.DupFd, old_fd, 0xFFFF_FFFF, 0);
+    if (result == FAIL) {
+        return error.SyscallFailed;
+    }
+    return result;
+}
+
+// Replace the calling process's file descriptor `new_fd` with a copy of `old_fd`.
+pub fn dupFdTo(old_fd: u32, new_fd: u32) !u32 {
+    const result = syscall(.DupFd, old_fd, new_fd, 0);
+    if (result == FAIL) {
+        return error.SyscallFailed;
+    }
+    return result;
+}
+
 /// Waits for the child with the given PID to exit and returns its exit status.
 /// Returns FAIL if the PID is not a child of the calling process.
 pub fn waitpid(pid: u32) u32 {

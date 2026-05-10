@@ -14,6 +14,7 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `brk` | 12 | addr | new break or `FAIL` | Gets heap break if addr=0; sets break to addr if valid; validates bounds and grows/shrinks data memory |
 | `pipe` | 22 | fds_slice_ptr | 0 or `FAIL` | Expects an `AbiSlice` describing a writable 2-element `u32` buffer and fills it with `{ read_fd, write_fd }` |
 | `yield` | 24 | — | — | Voluntarily reschedule; does not return to caller directly |
+| `dupfd` | 33 | old_fd, new_fd | new fd or `FAIL` | Duplicates file descriptor `old_fd` to `new_fd`; if new_fd is -1, uses lowest available fd |
 | `getpid` | 39 | — | PID | Returns `getCurrentTask().pid` |
 | `exit` | 60 | exit_code | — | Terminates task with the given exit code, closes descriptors, and reschedules; does not return |
 | `waitpid` | 61 | pid | exit_status or `FAIL` | Blocks until the child with the given PID exits; returns its exit status. Returns `FAIL` if PID is not a direct child. |

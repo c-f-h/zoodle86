@@ -101,17 +101,6 @@ pub const FileDesc = union(FdKind) {
     /// Reads bytes from a descriptor into the provided buffer.
     pub fn read(self: *FileDesc, dest: []u8) (fs.FsError || error{ BadFd, AccessDenied, OutOfMemory })!usize {
         switch (self.*) {
-            .stdin => {
-                // Each read delivers exactly one 4-byte StdinKeyEvent; block until one is available.
-                if (dest.len < @sizeOf(keyboard.StdinKeyEvent)) return error.BadFd;
-                var ev: keyboard.StdinKeyEvent = undefined;
-                while (!keyboard.tryPopStdinKeyEvent(&ev)) {
-                    try task.getCurrentTask().waitInQueue(kernel.getStdinWaiters());
-                    _ = kernel.kernel_yield();
-                }
-                @memcpy(dest[0..@sizeOf(keyboard.StdinKeyEvent)], std.mem.asBytes(&ev));
-                return @sizeOf(keyboard.StdinKeyEvent);
-            },
             .file => |file_index| {
                 const open_file = getOpenFile(file_index);
                 if (!open_file.readable) return error.AccessDenied;
@@ -192,6 +181,12 @@ pub fn makePipe() error{OutOfMemory}!struct { FileDesc, FileDesc } {
     return makePipeWithSize(4096);
 }
 
+/// Attaches a new reader descriptor to an existing pipe.
+pub fn newPipeReader(pp: *pipe.Pipe) FileDesc {
+    pp.num_readers += 1;
+    return FileDesc{ .pipe = .{ .handle = pp, .writable = false } };
+}
+
 pub const FiledescError = fs.WriteFileError || error{
     AccessDenied,
     BadFd,
@@ -200,6 +195,7 @@ pub const FiledescError = fs.WriteFileError || error{
     InvalidSeek,
     ProcessFileTableFull,
     SystemFileTableFull,
+    OutOfMemory,
 };
 
 pub const Stat = abi.Stat;
@@ -253,10 +249,20 @@ pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Filed
     return FileDesc{ .file = @truncate(open_index) };
 }
 
+fn tryOpenSpecialFile(path: []const u8) !?FileDesc {
+    if (std.mem.eql(u8, path, "/dev/keyboard")) {
+        return try keyboard.getKeyEventPipe();
+    } else {
+        return null;
+    }
+}
+
 /// Opens or creates a filesystem-backed descriptor for a task.
 pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
-    const filedesc = try openFileDesc(disk_fs, path, flags);
+    const filedesc =
+        try tryOpenSpecialFile(path) orelse
+        try openFileDesc(disk_fs, path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
 }
@@ -457,13 +463,6 @@ pub fn truncateFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, size: u
 pub fn closeFile(ptask: *task.Task, fd: u32) FiledescError!void {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     try slot.close(); // will also set the slot to empty
-}
-
-/// Closes all descriptors owned by a task before the task slot is recycled.
-pub fn closeTaskFiles(ptask: *task.Task) void {
-    for (&ptask.fd_table) |*slot| {
-        slot.closeIfOpen();
-    }
 }
 
 fn validateOpenFlags(flags: u32) FiledescError!u32 {

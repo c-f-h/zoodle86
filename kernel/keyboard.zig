@@ -1,7 +1,9 @@
 const interrupt_frame = @import("interrupt_frame.zig");
 const kernel = @import("kernel.zig");
 const io = @import("io.zig");
+const filedesc = @import("filedesc.zig");
 const abi = @import("abi");
+const std = @import("std");
 
 // Modifier flags
 pub const MOD_SHIFT = abi.MOD_SHIFT;
@@ -83,7 +85,7 @@ pub const KeyEvent = struct {
     ascii: u8,
 };
 
-/// Compact 4-byte key event delivered to userspace via read(STDIN).
+/// Compact 4-byte key event delivered to userspace via the keyboard event pipe.
 pub const StdinKeyEvent = abi.KeyEvent;
 
 // Keyboard ring buffer
@@ -287,25 +289,35 @@ pub export fn pollingLoop() void {
     asm volatile ("sti");
 }
 
-// Stdin ring buffer for key events delivered to userspace tasks via read(STDIN).
-const STDIN_BUF_LEN: u32 = 32;
-var stdin_key_buf: [STDIN_BUF_LEN]StdinKeyEvent = undefined;
-var stdin_key_head: u32 = 0; // write index
-var stdin_key_tail: u32 = 0; // read index
+var pipe_initialized: bool = false;
+var pipe_writer_fd: filedesc.FileDesc = undefined;
 
-/// Pushes a key event into the stdin ring buffer; drops the event if the buffer is full.
-pub fn pushStdinKeyEvent(ev: StdinKeyEvent) void {
-    const next_head = (stdin_key_head + 1) % STDIN_BUF_LEN;
-    if (next_head == stdin_key_tail) return; // full; drop
-    stdin_key_buf[stdin_key_head] = ev;
-    stdin_key_head = next_head;
+/// Get a pipe FileDesc for reading keyboard events as StdinKeyEvent structs.
+pub fn getKeyEventPipe() error{ OutOfMemory, BadFd }!filedesc.FileDesc {
+    if (!pipe_initialized) {
+        var reader, const writer = try filedesc.makePipe();
+        try reader.close(); // readers will be created on demand
+        pipe_writer_fd = writer;
+        pipe_initialized = true;
+    }
+    return filedesc.newPipeReader(pipe_writer_fd.pipe.handle);
 }
 
-/// Pops the oldest key event from the stdin ring buffer into *out.
-/// Returns true on success, false if the buffer is empty.
-pub fn tryPopStdinKeyEvent(out: *StdinKeyEvent) bool {
-    if (stdin_key_head == stdin_key_tail) return false;
-    out.* = stdin_key_buf[stdin_key_tail];
-    stdin_key_tail = (stdin_key_tail + 1) % STDIN_BUF_LEN;
-    return true;
+/// Pushes a key event into the event pipe; drops the event if the buffer is full or there are no readers.
+pub fn pushRawKeyEventToPipe(ev: KeyEvent) void {
+    if (!pipe_initialized) return;
+    if (pipe_writer_fd.pipe.handle.num_readers == 0) return; // no readers, drop event
+    if (pipe_writer_fd.pipe.handle.bytesFree() < @sizeOf(abi.KeyEvent)) return; // not enough space, drop event
+
+    const write_ev = abi.KeyEvent{
+        .keycode = ev.keycode,
+        .modifiers = ev.modifiers,
+        .ascii = ev.ascii,
+    };
+
+    const written = pipe_writer_fd.pipe.handle.write(std.mem.asBytes(&write_ev));
+    if (written != @sizeOf(abi.KeyEvent)) {
+        // Shouldn't happen due to check; possible race condition once kernel is reentrant
+        @panic("partial write to keyevent pipe");
+    }
 }

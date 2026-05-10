@@ -164,6 +164,23 @@ fn sys_pipe(fds_slice_va: u32, _: u32) !u32 {
     return 0;
 }
 
+fn sys_dupfd(old_fd: u32, new_fd: u32) !u32 {
+    const ptask = task.getCurrentTask();
+    const src_slot = ptask.getFdSlot(old_fd) orelse return error.BadFd;
+    if (src_slot.* == .empty) return error.BadFd;
+
+    const real_new_fd = if (new_fd == 0xFFFF_FFFF)
+        // dupfd with new_fd == -1 means "find the lowest available fd"
+        ptask.findFreeFd() orelse return error.ProcessFileTableFull
+    else
+        new_fd;
+
+    const dst_slot = ptask.getFdSlot(real_new_fd) orelse return error.ProcessFileTableFull;
+    dst_slot.closeIfOpen();
+    dst_slot.* = src_slot.dupe();
+    return real_new_fd;
+}
+
 const FdRemap = abi.FdRemap;
 const SpawnOpts = abi.SpawnOpts;
 
@@ -351,17 +368,19 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
     const arg2 = frame.interrupt.regs.ecx;
     const arg3 = frame.interrupt.regs.edx;
     const retval = (switch (nr) {
+        .Read => sys_read(arg1, arg2, arg3),
+        .Write => sys_write(arg1, arg2, arg3),
+        .Open => sys_open(arg1, arg2, arg3),
         .Close => sys_close(arg1),
-        .Exit => kernel.exitCurrentTask(arg1),
         .Stat => sys_stat(arg1, arg2),
         .Fstat => sys_fstat(arg1, arg2),
         .GetPid => task.getCurrentTask().pid,
         .Lseek => sys_lseek(arg1, arg2, arg3),
         .Brk => sys_brk(arg1),
         .Pipe => sys_pipe(arg1, arg2),
-        .Open => sys_open(arg1, arg2, arg3),
-        .Read => sys_read(arg1, arg2, arg3),
-        .Write => sys_write(arg1, arg2, arg3),
+        .Yield => sys_yield(),
+        .DupFd => sys_dupfd(arg1, arg2),
+        .Exit => kernel.exitCurrentTask(arg1),
         .Unlink => sys_unlink(arg1, arg2),
         .Ftruncate => sys_ftruncate(arg1, arg2),
         .WaitPid => sys_waitpid(arg1),
@@ -370,9 +389,8 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Rmdir => sys_rmdir(arg1),
         .Link => sys_link(arg1, arg2),
         .Rename => sys_rename(arg1, arg2),
-        .SetChildReap => sys_set_child_reap(),
-        .Yield => sys_yield(),
         .Spawn => sys_spawn(arg1, arg2),
+        .SetChildReap => sys_set_child_reap(),
         .KShell => sys_kshell(arg1),
         .GetCursor => sys_getcursor(),
         else => error.InvalidArgument,

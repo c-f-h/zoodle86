@@ -35,6 +35,7 @@ pub const Syscall = enum(u32) {
     Brk = 12,
     Pipe = 22,
     Yield = 24,
+    DupFd = 33,
     GetPid = 39,
     Exit = 60,
     WaitPid = 61,
@@ -124,7 +125,7 @@ pub const DirEntry = extern struct {
     name: [DIRENT_NAME_MAX]u8 = @splat(0),
 };
 
-/// A compact key event delivered by read(STDIN). Exactly 4 bytes.
+/// A compact key event delivered via the keyboard event pipe. Exactly 4 bytes.
 pub const KeyEvent = extern struct {
     keycode: u16,
     modifiers: u8,

@@ -54,4 +54,8 @@ pub const Pipe = struct {
     pub fn full(self: *Pipe) bool {
         return self.buffer.full();
     }
+
+    pub fn bytesFree(self: *Pipe) usize {
+        return self.buffer.bytesFree();
+    }
 };

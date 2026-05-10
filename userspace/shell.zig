@@ -11,6 +11,16 @@ const MAX_SHELL_TOKENS = sys.MAX_ARGV_COUNT * 2 + 8;
 /// Runs an interactive userspace shell with basic `>` and `|` redirection.
 pub fn main(_: []const []const u8) !void {
     const alloc = heap.getAllocator();
+
+    // Set up stdin to read from the raw keyboard event pipe (expected by readline).
+    const key_event_fd = sys.open("/dev/keyboard", .{ .open_mode = .ReadOnly });
+    if (key_event_fd == sys.FAIL) {
+        writeError("", "shell: failed to open /dev/keyboard\n");
+        sys.exit(1);
+    }
+    _ = try sys.dupFdTo(key_event_fd, sys.STDIN);
+    _ = sys.close(key_event_fd);
+
     var rl: readline.Readline = .{};
 
     while (true) {

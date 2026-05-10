@@ -150,11 +150,17 @@ pub const Task = struct {
         paging.loadPageDir(task.page_dir_phys_addr);
     }
 
+    /// Closes all file descriptors owned by a task.
+    fn closeTaskFiles(t: *Task) void {
+        for (&t.fd_table) |*slot| {
+            slot.closeIfOpen();
+        }
+    }
+
     /// Closes files and frees all memory owned by the task.
     /// Does NOT change state or pid; call terminate() or set state manually after.
     pub fn cleanup(t: *Task) void {
-        filedesc.closeTaskFiles(t);
-        t.initFdTable();
+        t.closeTaskFiles();
         t.kernel_esp = 0;
         t.code_mem.freePages();
         t.data_mem.freePages();
