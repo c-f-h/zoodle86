@@ -280,10 +280,17 @@ fn appendCursorMove(buf: []u8, pos: u32, row: u32, col: u32) u32 {
     return p;
 }
 
+const esc_show_cursor = "\x1B[?25h";
+const esc_hide_cursor = "\x1B[?25l";
+
 fn appendShowCursor(buf: []u8, pos: u32, show: bool) u32 {
-    const seq = if (show) "\x1B[?25h" else "\x1B[?25l";
+    const seq = if (show) esc_show_cursor else esc_hide_cursor;
     @memcpy(buf[pos..][0..seq.len], seq);
     return pos + seq.len;
+}
+
+pub fn showCursor(show: bool) void {
+    _ = sys.write(sys.STDOUT, if (show) esc_show_cursor else esc_hide_cursor);
 }
 
 fn appendDecU32(buf: []u8, pos: u32, value: u32) u32 {
@@ -305,10 +312,4 @@ fn appendDecU32(buf: []u8, pos: u32, value: u32) u32 {
         p += 1;
     }
     return p;
-}
-
-pub fn showCursor(show: bool) void {
-    var out: [6]u8 = undefined;
-    const n = appendShowCursor(&out, 0, show);
-    _ = sys.write(sys.STDOUT, out[0..n]);
 }
