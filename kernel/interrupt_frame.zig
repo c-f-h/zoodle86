@@ -41,9 +41,10 @@ pub const UserInterruptFrame = extern struct {
     interrupt: InterruptFrame,
     user: UserStackTail,
 
-    /// Writes the userspace return value that will be restored into EAX.
-    pub fn setReturnValue(frame: *UserInterruptFrame, value: u32) void {
+    /// Writes the userspace syscall return value into EAX and errno into ECX.
+    pub fn setSyscallResult(frame: *UserInterruptFrame, value: u32, errno: u32) void {
         frame.interrupt.regs.eax = value;
+        frame.interrupt.regs.ecx = errno;
     }
 };
 

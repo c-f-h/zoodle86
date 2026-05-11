@@ -20,10 +20,9 @@ fn baseName(path: []const u8) []const u8 {
 fn catCopyFd(fd: u32) bool {
     var buf: [128]u8 = undefined;
     while (true) {
-        const count = sys.read(fd, &buf);
-        if (count == sys.FAIL) return false;
+        const count = sys.read(fd, &buf) catch return false;
         if (count == 0) return true;
-        if (!sys.writeAll(sys.STDOUT, buf[0..@intCast(count)])) return false;
+        sys.writeAll(sys.STDOUT, buf[0..@intCast(count)]) catch return false;
     }
 }
 
@@ -34,20 +33,19 @@ fn catMain(argv: []const []const u8) noreturn {
     }
 
     for (argv[1..]) |path| {
-        const fd = sys.open(path, .{});
-        if (fd == sys.FAIL) {
+        const fd = sys.open(path, .{}) catch {
             var buf: [160]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "cat: failed to open {s}\n", .{path}) catch "cat: failed to open file\n";
-            _ = sys.writeAll(sys.STDERR, msg);
+            sys.writeAll(sys.STDERR, msg) catch {};
             sys.exit(1);
-        }
+        };
 
         if (!catCopyFd(fd)) {
-            _ = sys.close(fd);
+            sys.close(fd) catch {};
             sys.exit(1);
         }
 
-        _ = sys.close(fd);
+        sys.close(fd) catch {};
     }
 
     sys.exit(0);
@@ -82,7 +80,8 @@ fn lsPrintEntry(name: []const u8, kind: sys.FileKind, size: u32) bool {
         lsEntryTag(kind),
         size,
     }) catch return false;
-    return sys.writeAll(sys.STDOUT, line);
+    sys.writeAll(sys.STDOUT, line) catch return false;
+    return true;
 }
 
 fn lsListDirectory(fd: u32) bool {
@@ -92,26 +91,27 @@ fn lsListDirectory(fd: u32) bool {
         found_any = true;
         if (!lsPrintEntry(entry.name[0..entry.name_len], entry.kind, entry.size)) return false;
     }
-    return if (found_any) true else sys.writeAll(sys.STDOUT, "(empty)\n");
+    if (found_any) return true;
+    sys.writeAll(sys.STDOUT, "(empty)\n") catch return false;
+    return true;
 }
 
 fn lsListPath(path: []const u8) bool {
-    const fd = sys.open(path, .{});
-    if (fd == sys.FAIL) {
+    const fd = sys.open(path, .{}) catch {
         var buf: [192]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "ls: failed to open {s}\n", .{lsDisplayName(path)}) catch return false;
-        _ = sys.writeAll(sys.STDERR, msg);
+        sys.writeAll(sys.STDERR, msg) catch {};
         return false;
-    }
-    defer _ = sys.close(fd);
+    };
+    defer sys.close(fd) catch {};
 
     var stat: sys.Stat = undefined;
-    if (sys.fstat(fd, &stat) == sys.FAIL) {
+    sys.fstat(fd, &stat) catch {
         var buf: [192]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "ls: failed to stat {s}\n", .{lsDisplayName(path)}) catch return false;
-        _ = sys.writeAll(sys.STDERR, msg);
+        sys.writeAll(sys.STDERR, msg) catch {};
         return false;
-    }
+    };
 
     if (stat.kind == .Directory) return lsListDirectory(fd);
     return lsPrintEntry(lsBaseName(path), stat.kind, stat.size);
@@ -125,8 +125,15 @@ fn lsMain(argv: []const []const u8) noreturn {
 
     for (paths, 0..) |path, index| {
         if (paths.len > 1) {
-            if (index != 0 and !sys.writeAll(sys.STDOUT, "\n")) ok = false;
-            if (!sys.writeAll(sys.STDOUT, lsDisplayName(path)) or !sys.writeAll(sys.STDOUT, ":\n")) ok = false;
+            if (index != 0) sys.writeAll(sys.STDOUT, "\n") catch {
+                ok = false;
+            };
+            sys.writeAll(sys.STDOUT, lsDisplayName(path)) catch {
+                ok = false;
+            };
+            sys.writeAll(sys.STDOUT, ":\n") catch {
+                ok = false;
+            };
         }
         if (!lsListPath(path)) ok = false;
     }
@@ -141,17 +148,17 @@ fn lsMain(argv: []const []const u8) noreturn {
 /// Creates a hard link from a new path to an existing regular file.
 fn lnMain(argv: []const []const u8) noreturn {
     if (argv.len != 3) {
-        _ = sys.writeAll(sys.STDERR, "Usage: ln <existing-path> <new-path>\n");
+        sys.writeAll(sys.STDERR, "Usage: ln <existing-path> <new-path>\n") catch {};
         sys.exit(1);
     }
 
-    if (sys.link(argv[1], argv[2]) == sys.FAIL) {
+    sys.link(argv[1], argv[2]) catch {
         var buf: [256]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "ln: failed to link {s} -> {s}\n", .{ argv[2], argv[1] }) catch
             "ln: failed to create link\n";
-        _ = sys.writeAll(sys.STDERR, msg);
+        sys.writeAll(sys.STDERR, msg) catch {};
         sys.exit(1);
-    }
+    };
 
     sys.exit(0);
 }
@@ -163,18 +170,18 @@ fn lnMain(argv: []const []const u8) noreturn {
 /// Removes one or more files by unlinking them from the filesystem.
 fn rmMain(argv: []const []const u8) noreturn {
     if (argv.len < 2) {
-        _ = sys.writeAll(sys.STDERR, "Usage: rm <path> ...\n");
+        sys.writeAll(sys.STDERR, "Usage: rm <path> ...\n") catch {};
         sys.exit(1);
     }
 
     var ok = true;
     for (argv[1..]) |path| {
-        if (sys.unlink(path) == sys.FAIL) {
+        sys.unlink(path) catch {
             var buf: [192]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "rm: failed to remove {s}\n", .{path}) catch "rm: failed to remove file\n";
-            _ = sys.writeAll(sys.STDERR, msg);
+            sys.writeAll(sys.STDERR, msg) catch {};
             ok = false;
-        }
+        };
     }
 
     sys.exit(if (ok) 0 else 1);
@@ -206,45 +213,45 @@ fn statAccessStr(flags: u32) []const u8 {
 /// Prints stat(2)-style metadata for one or more paths.
 fn statMain(argv: []const []const u8) noreturn {
     if (argv.len < 2) {
-        _ = sys.writeAll(sys.STDERR, "Usage: stat <path> ...\n");
+        sys.writeAll(sys.STDERR, "Usage: stat <path> ...\n") catch {};
         sys.exit(1);
     }
 
     var ok = true;
     for (argv[1..]) |path| {
         var st: sys.Stat = undefined;
-        if (sys.stat(path, &st) == sys.FAIL) {
+        sys.stat(path, &st) catch {
             var buf: [224]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "stat: cannot stat '{s}': No such file or directory\n", .{path}) catch
                 "stat: cannot stat file\n";
-            _ = sys.writeAll(sys.STDERR, msg);
+            sys.writeAll(sys.STDERR, msg) catch {};
             ok = false;
             continue;
-        }
+        };
 
         var buf: [256]u8 = undefined;
 
         const line1 = std.fmt.bufPrint(&buf, "  File: {s}\n", .{path}) catch continue;
-        if (!sys.writeAll(sys.STDOUT, line1)) {
+        sys.writeAll(sys.STDOUT, line1) catch {
             ok = false;
             continue;
-        }
+        };
 
         const line2 = std.fmt.bufPrint(&buf, "  Size: {d:<15} Blocks: {d:<10} IO Block: {d:<6} {s}\n", .{
             st.size, st.blocks, st.blksize, statKindStr(st.kind),
         }) catch continue;
-        if (!sys.writeAll(sys.STDOUT, line2)) {
+        sys.writeAll(sys.STDOUT, line2) catch {
             ok = false;
             continue;
-        }
+        };
 
         const line3 = std.fmt.bufPrint(&buf, " Inode: {d:<15} Links: {d:<11} Access: {s}\n", .{
             st.inode, st.nlink, statAccessStr(st.flags),
         }) catch continue;
-        if (!sys.writeAll(sys.STDOUT, line3)) {
+        sys.writeAll(sys.STDOUT, line3) catch {
             ok = false;
             continue;
-        }
+        };
     }
 
     sys.exit(if (ok) 0 else 1);
@@ -257,7 +264,7 @@ fn statMain(argv: []const []const u8) noreturn {
 /// Moves (renames) src to dst, placing src inside dst when dst is a directory.
 fn mvMain(argv: []const []const u8) noreturn {
     if (argv.len != 3) {
-        _ = sys.writeAll(sys.STDERR, "Usage: mv <src> <dst>\n");
+        sys.writeAll(sys.STDERR, "Usage: mv <src> <dst>\n") catch {};
         sys.exit(1);
     }
 
@@ -267,23 +274,27 @@ fn mvMain(argv: []const []const u8) noreturn {
 
     // If dst is a directory, append the basename of src to form the full destination path.
     var dst_stat: sys.Stat = undefined;
-    if (sys.stat(dst, &dst_stat) != sys.FAIL and dst_stat.kind == .Directory) {
+    var dst_has_stat = true;
+    sys.stat(dst, &dst_stat) catch {
+        dst_has_stat = false;
+    };
+    if (dst_has_stat and dst_stat.kind == .Directory) {
         dst = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{
             std.mem.trimEnd(u8, dst, "/"),
             baseName(src),
         }) catch {
-            _ = sys.writeAll(sys.STDERR, "mv: path too long\n");
+            sys.writeAll(sys.STDERR, "mv: path too long\n") catch {};
             sys.exit(1);
         };
     }
 
-    if (sys.rename(src, dst) == sys.FAIL) {
+    sys.rename(src, dst) catch {
         var buf: [256]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "mv: failed to move {s} to {s}\n", .{ src, dst }) catch
             "mv: failed\n";
-        _ = sys.writeAll(sys.STDERR, msg);
+        sys.writeAll(sys.STDERR, msg) catch {};
         sys.exit(1);
-    }
+    };
 
     sys.exit(0);
 }
@@ -295,7 +306,7 @@ fn mvMain(argv: []const []const u8) noreturn {
 /// Copies src to dst, placing the copy inside dst when dst is a directory.
 fn cpMain(argv: []const []const u8) noreturn {
     if (argv.len != 3) {
-        _ = sys.writeAll(sys.STDERR, "Usage: cp <src> <dst>\n");
+        sys.writeAll(sys.STDERR, "Usage: cp <src> <dst>\n") catch {};
         sys.exit(1);
     }
 
@@ -305,48 +316,49 @@ fn cpMain(argv: []const []const u8) noreturn {
 
     // If dst is a directory, append the basename of src to form the full destination path.
     var dst_stat: sys.Stat = undefined;
-    if (sys.stat(dst, &dst_stat) != sys.FAIL and dst_stat.kind == .Directory) {
+    var dst_has_stat = true;
+    sys.stat(dst, &dst_stat) catch {
+        dst_has_stat = false;
+    };
+    if (dst_has_stat and dst_stat.kind == .Directory) {
         dst = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{
             std.mem.trimEnd(u8, dst, "/"),
             baseName(src),
         }) catch {
-            _ = sys.writeAll(sys.STDERR, "cp: path too long\n");
+            sys.writeAll(sys.STDERR, "cp: path too long\n") catch {};
             sys.exit(1);
         };
     }
 
-    const src_fd = sys.open(src, .{});
-    if (src_fd == sys.FAIL) {
+    const src_fd = sys.open(src, .{}) catch {
         var buf: [192]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "cp: cannot open {s}\n", .{src}) catch
             "cp: cannot open source\n";
-        _ = sys.writeAll(sys.STDERR, msg);
+        sys.writeAll(sys.STDERR, msg) catch {};
         sys.exit(1);
-    }
-    defer _ = sys.close(src_fd);
+    };
+    defer sys.close(src_fd) catch {};
 
-    const dst_fd = sys.open(dst, .{ .open_mode = .WriteOnly, .create = true, .truncate = true });
-    if (dst_fd == sys.FAIL) {
+    const dst_fd = sys.open(dst, .{ .open_mode = .WriteOnly, .create = true, .truncate = true }) catch {
         var buf: [192]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "cp: cannot create {s}\n", .{dst}) catch
             "cp: cannot create destination\n";
-        _ = sys.writeAll(sys.STDERR, msg);
+        sys.writeAll(sys.STDERR, msg) catch {};
         sys.exit(1);
-    }
-    defer _ = sys.close(dst_fd);
+    };
+    defer sys.close(dst_fd) catch {};
 
     var buf: [512]u8 = undefined;
     while (true) {
-        const n = sys.read(src_fd, &buf);
-        if (n == sys.FAIL) {
-            _ = sys.writeAll(sys.STDERR, "cp: read error\n");
+        const n = sys.read(src_fd, &buf) catch {
+            sys.writeAll(sys.STDERR, "cp: read error\n") catch {};
             sys.exit(1);
-        }
+        };
         if (n == 0) break;
-        if (!sys.writeAll(dst_fd, buf[0..@intCast(n)])) {
-            _ = sys.writeAll(sys.STDERR, "cp: write error\n");
+        sys.writeAll(dst_fd, buf[0..@intCast(n)]) catch {
+            sys.writeAll(sys.STDERR, "cp: write error\n") catch {};
             sys.exit(1);
-        }
+        };
     }
 
     sys.exit(0);
@@ -359,7 +371,7 @@ fn cpMain(argv: []const []const u8) noreturn {
 /// Creates one or more directories.
 fn mkdirMain(argv: []const []const u8) noreturn {
     if (argv.len < 2) {
-        _ = sys.writeAll(sys.STDERR, "Usage: mkdir <path> ...\n");
+        sys.writeAll(sys.STDERR, "Usage: mkdir <path> ...\n") catch {};
         sys.exit(1);
     }
 
@@ -369,7 +381,7 @@ fn mkdirMain(argv: []const []const u8) noreturn {
             var buf: [192]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "mkdir: failed to create directory {s}\n", .{path}) catch
                 "mkdir: failed to create directory\n";
-            _ = sys.writeAll(sys.STDERR, msg);
+            sys.writeAll(sys.STDERR, msg) catch {};
             ok = false;
         };
     }
@@ -384,19 +396,19 @@ fn mkdirMain(argv: []const []const u8) noreturn {
 /// Removes one or more empty directories.
 fn rmdirMain(argv: []const []const u8) noreturn {
     if (argv.len < 2) {
-        _ = sys.writeAll(sys.STDERR, "Usage: rmdir <path> ...\n");
+        sys.writeAll(sys.STDERR, "Usage: rmdir <path> ...\n") catch {};
         sys.exit(1);
     }
 
     var ok = true;
     for (argv[1..]) |path| {
-        if (sys.rmdir(path) == sys.FAIL) {
+        sys.rmdir(path) catch {
             var buf: [192]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "rmdir: failed to remove directory {s}\n", .{path}) catch
                 "rmdir: failed to remove directory\n";
-            _ = sys.writeAll(sys.STDERR, msg);
+            sys.writeAll(sys.STDERR, msg) catch {};
             ok = false;
-        }
+        };
     }
 
     sys.exit(if (ok) 0 else 1);
@@ -406,13 +418,13 @@ fn rmdirMain(argv: []const []const u8) noreturn {
 // echo
 // ---------------------------------------------------------------------------
 
-/// Prints arguments separated by spaces, followed by a newline.
+    /// Prints arguments separated by spaces, followed by a newline.
 fn echoMain(argv: []const []const u8) noreturn {
     for (argv[1..], 0..) |arg, i| {
-        if (i > 0 and !sys.writeAll(sys.STDOUT, " ")) sys.exit(1);
-        if (!sys.writeAll(sys.STDOUT, arg)) sys.exit(1);
+        if (i > 0) sys.writeAll(sys.STDOUT, " ") catch sys.exit(1);
+        sys.writeAll(sys.STDOUT, arg) catch sys.exit(1);
     }
-    if (!sys.writeAll(sys.STDOUT, "\n")) sys.exit(1);
+    sys.writeAll(sys.STDOUT, "\n") catch sys.exit(1);
     sys.exit(0);
 }
 
@@ -435,11 +447,11 @@ pub fn main(argv: []const []const u8) noreturn {
     if (std.mem.eql(u8, name, "rmdir")) rmdirMain(argv);
     if (std.mem.eql(u8, name, "stat")) statMain(argv);
 
-    _ = sys.writeAll(
+    sys.writeAll(
         sys.STDERR,
         "busybox: available tools: cat, cp, echo, ln, ls, mkdir, mv, rm, rmdir, stat\n" ++
             "Invoke via a named link.\n",
-    );
+    ) catch {};
     sys.exit(1);
 }
 

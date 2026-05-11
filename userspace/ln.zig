@@ -19,10 +19,10 @@ pub fn main(argv: []const []const u8) noreturn {
         sys.exit(1);
     }
 
-    if (sys.link(argv[1], argv[2]) == sys.FAIL) {
+    sys.link(argv[1], argv[2]) catch {
         writeLinkError(argv[1], argv[2]);
         sys.exit(1);
-    }
+    };
 
     sys.exit(0);
 }

@@ -4,10 +4,9 @@ const sys = @import("sys.zig");
 fn copyFd(fd: u32) bool {
     var buf: [128]u8 = undefined;
     while (true) {
-        const count = sys.read(fd, &buf);
-        if (count == sys.FAIL) return false;
+        const count = sys.read(fd, &buf) catch return false;
         if (count == 0) return true;
-        if (!sys.writeAll(sys.STDOUT, buf[0..@intCast(count)])) return false;
+        sys.writeAll(sys.STDOUT, buf[0..@intCast(count)]) catch return false;
     }
 }
 
@@ -24,18 +23,17 @@ pub fn main(argv: []const []const u8) noreturn {
     }
 
     for (argv[1..]) |path| {
-        const fd = sys.open(path, .{});
-        if (fd == sys.FAIL) {
+        const fd = sys.open(path, .{}) catch {
             writeOpenError(path);
             sys.exit(1);
-        }
+        };
 
         if (!copyFd(fd)) {
-            _ = sys.close(fd);
+            sys.close(fd) catch {};
             sys.exit(1);
         }
 
-        _ = sys.close(fd);
+        sys.close(fd) catch {};
     }
 
     sys.exit(0);

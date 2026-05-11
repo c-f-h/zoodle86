@@ -18,7 +18,7 @@ pub fn main(_: []const []const u8) !void {
         rl.init("$ ");
         const line = rl.readLine() catch |err| {
             if (err == error.EOF) {
-                _ = sys.write(sys.STDOUT, "\n");
+                _ = sys.write(sys.STDOUT, "\n") catch {};
                 return;
             }
             return err;
@@ -29,7 +29,9 @@ pub fn main(_: []const []const u8) !void {
 
         if (trimmed[0] == '!') {
             // kernel shell escape
-            _ = sys.kshell(trimmed[1..]);
+            sys.kshell(trimmed[1..]) catch {
+                writeLine("shell: kernel shell command failed\n");
+            };
             continue;
         }
 
@@ -109,12 +111,11 @@ fn redirectStdoutToFile(alloc: std.mem.Allocator, argv: []const []const u8, path
         .open_mode = .WriteOnly,
         .create = true,
         .truncate = true,
-    });
-    if (output_fd == sys.FAIL) {
+    }) catch {
         writeError("shell: failed to redirect stdout to ", path);
         return;
-    }
-    defer _ = sys.close(output_fd);
+    };
+    defer sys.close(output_fd) catch {};
 
     const fd_remaps = [_]sys.FdRemap{
         .{ .dst = sys.STDOUT, .src = output_fd },
@@ -128,8 +129,8 @@ fn runPipeline(alloc: std.mem.Allocator, lhs_argv: []const []const u8, rhs_argv:
         writeLine("shell: failed to create pipe\n");
         return;
     };
-    defer _ = sys.close(read_fd);
-    defer _ = sys.close(write_fd);
+    defer sys.close(read_fd) catch {};
+    defer sys.close(write_fd) catch {};
 
     const consumer_remaps = [_]sys.FdRemap{
         .{ .dst = sys.STDIN, .src = read_fd },
@@ -189,16 +190,17 @@ fn resolveProgramPath(alloc: std.mem.Allocator, fname: []const u8) ![]const u8 {
 }
 
 fn pathExists(path: []const u8) bool {
-    const fd = sys.open(path, .{});
-    if (fd == sys.FAIL) return false;
-    _ = sys.close(fd);
+    const fd = sys.open(path, .{}) catch return false;
+    sys.close(fd) catch return false;
     return true;
 }
 
 fn waitForChild(pid: u32) bool {
-    if (sys.waitpid(pid) != sys.FAIL) return true;
-    writeLine("shell: failed to wait for child\n");
-    return false;
+    _ = sys.waitpid(pid) catch {
+        writeLine("shell: failed to wait for child\n");
+        return false;
+    };
+    return true;
 }
 
 fn tokenizeShellCommandLine(cmdline: []const u8, buf: *[MAX_SHELL_TOKENS][]const u8) ?[]const []const u8 {
@@ -263,11 +265,11 @@ fn writeUsage() void {
 fn writeError(prefix: []const u8, desc: []const u8) void {
     var buf: [256]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, "{s}{s}\n", .{ prefix, desc }) catch return;
-    _ = sys.writeAll(sys.STDERR, msg);
+    sys.writeAll(sys.STDERR, msg) catch {};
 }
 
 fn writeLine(msg: []const u8) void {
-    _ = sys.writeAll(sys.STDOUT, msg);
+    sys.writeAll(sys.STDOUT, msg) catch {};
 }
 
 comptime {

@@ -21,7 +21,8 @@ fn baseNameForPath(path: []const u8) []const u8 {
 }
 
 fn writeLine(msg: []const u8) bool {
-    return sys.writeAll(sys.STDOUT, msg);
+    sys.writeAll(sys.STDOUT, msg) catch return false;
+    return true;
 }
 
 fn writeError(prefix: []const u8, desc: []const u8) void {
@@ -51,18 +52,17 @@ fn listDirectory(fd: u32) bool {
 }
 
 fn listPath(path: []const u8) bool {
-    const fd = sys.open(path, .{});
-    if (fd == sys.FAIL) {
+    const fd = sys.open(path, .{}) catch {
         writeError("ls: failed to open ", displayNameForPath(path));
         return false;
-    }
-    defer _ = sys.close(fd);
+    };
+    defer sys.close(fd) catch {};
 
     var stat: sys.Stat = undefined;
-    if (sys.fstat(fd, &stat) == sys.FAIL) {
+    sys.fstat(fd, &stat) catch {
         writeError("ls: failed to stat ", displayNameForPath(path));
         return false;
-    }
+    };
 
     if (stat.kind == .Directory) {
         return listDirectory(fd);

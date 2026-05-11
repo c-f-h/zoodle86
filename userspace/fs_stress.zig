@@ -1,46 +1,38 @@
 const std = @import("std");
 const sys = @import("sys.zig");
 
-const FAIL = 0xFFFFFFFF;
-
-inline fn expectSyscall(rc: anyerror!u32, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !u32 {
-    const result = rc catch FAIL;
-    if (result == FAIL) {
+inline fn expectSyscall(rc: anytype, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !@typeInfo(@TypeOf(rc)).error_union.payload {
+    const result = rc catch |err| {
         var buf: [160]u8 = undefined;
-        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall failed: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
-        return error.SyscallFailed;
-    }
-    _ = sys.write(sys.STDOUT, ".");
-    return rc;
-}
-
-inline fn checkSyscall(rc: anytype, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !@typeInfo(@TypeOf(rc)).error_union.payload {
-    const result = rc catch {
-        var buf: [160]u8 = undefined;
-        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall failed: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
+        _ = sys.write(
+            sys.STDOUT,
+            try std.fmt.bufPrint(&buf, "syscall failed: {s} ({s}:{}): {s}\n", .{ step, callsite.file, callsite.line, @errorName(err) }),
+        ) catch {};
         return error.SyscallFailed;
     };
-    _ = sys.write(sys.STDOUT, ".");
+    _ = sys.write(sys.STDOUT, ".") catch {};
     return result;
 }
 
-inline fn syscallShouldFail(rc: u32, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !void {
-    if (rc != FAIL) {
-        var buf: [160]u8 = undefined;
-        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall unexpectedly succeeded: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
-        return error.ExpectedFailure;
-    }
-    _ = sys.write(sys.STDOUT, ".");
+inline fn checkSyscall(rc: anytype, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !@typeInfo(@TypeOf(rc)).error_union.payload {
+    return expectSyscall(rc, step, callsite);
 }
 
-inline fn callShouldFail(rc: anytype, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !void {
+inline fn syscallShouldFail(rc: anytype, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !void {
     _ = rc catch {
-        _ = sys.write(sys.STDOUT, ".");
+        _ = sys.write(sys.STDOUT, ".") catch {};
         return;
     };
     var buf: [160]u8 = undefined;
-    _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "syscall unexpectedly succeeded: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }));
+    _ = sys.write(
+        sys.STDOUT,
+        try std.fmt.bufPrint(&buf, "syscall unexpectedly succeeded: {s} ({s}:{})\n", .{ step, callsite.file, callsite.line }),
+    ) catch {};
     return error.ExpectedFailure;
+}
+
+inline fn callShouldFail(rc: anytype, comptime step: []const u8, comptime callsite: std.builtin.SourceLocation) !void {
+    return syscallShouldFail(rc, step, callsite);
 }
 
 const tmpdir = "/tmp";
@@ -130,7 +122,7 @@ fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
 
 fn verifyFileContents(path: []const u8, expected: []const u8) !void {
     const fd = try expectSyscall(sys.open(path, .{}), "verifyFileContents: open", @src());
-    defer _ = sys.close(fd);
+    defer sys.close(fd) catch {};
 
     var actual: [total_bytes]u8 = undefined;
     try readExact(fd, &actual);
@@ -144,7 +136,7 @@ fn testSeek() !void {
         .create = true,
         .truncate = true,
     }), "testSeek: open seek file", @src());
-    errdefer _ = sys.close(fd);
+    errdefer sys.close(fd) catch {};
 
     try writeAll(fd, "0123456789");
     try expectOffset(try expectSyscall(sys.lseek(fd, 4, .Set), "testSeek: lseek set 4", @src()), 4);
@@ -166,10 +158,10 @@ fn testSeek() !void {
     try syscallShouldFail(sys.lseek(fd, -100, .Cur), "testSeek: lseek cur -100", @src());
     try syscallShouldFail(sys.lseek(sys.STDOUT, 0, .Set), "testSeek: lseek stdout set 0", @src());
 
-    if (sys.close(fd) == FAIL) return error.SyscallFailed;
+    _ = try expectSyscall(sys.close(fd), "testSeek: close seek file", @src());
 
     const verify_fd = try expectSyscall(sys.open(seek_file, .{}), "testSeek: reopen seek file", @src());
-    defer _ = sys.close(verify_fd);
+    defer sys.close(verify_fd) catch {};
 
     var actual: [seek_expected.len]u8 = undefined;
     try readExact(verify_fd, &actual);
@@ -189,7 +181,7 @@ fn seedDiskWithNonzeroData() !void {
             .create = true,
             .truncate = true,
         }), "testSparseSeek: open seed file", @src());
-        errdefer _ = sys.close(seed_fd);
+        errdefer sys.close(seed_fd) catch {};
 
         @memset(&seed, @as(u8, '0') + @as(u8, @intCast(seed_index)));
         try writeAll(seed_fd, &seed);
@@ -206,7 +198,7 @@ fn testSparseSeek() !void {
         .create = true,
         .truncate = true,
     }), "testSparseSeek: open sparse file", @src());
-    errdefer _ = sys.close(fd);
+    errdefer sys.close(fd) catch {};
 
     var head: [sector_size]u8 = undefined;
     var tail: [sector_size]u8 = undefined;
@@ -219,7 +211,7 @@ fn testSparseSeek() !void {
     _ = try expectSyscall(sys.close(fd), "testSparseSeek: close sparse file", @src());
 
     const verify_fd = try expectSyscall(sys.open(sparse_seek_file, .{}), "testSparseSeek: reopen sparse file", @src());
-    defer _ = sys.close(verify_fd);
+    defer sys.close(verify_fd) catch {};
 
     var actual: [sector_size * 4]u8 = undefined;
     var expected: [sector_size * 4]u8 = undefined;
@@ -241,9 +233,13 @@ fn testUnlink() !void {
 
     try writeAll(fd, "temporary contents");
 
-    if (sys.unlink(unlink_file) != FAIL) {
-        _ = sys.write(sys.STDOUT, "unexpectedly unlinked open file\n");
-        _ = sys.close(fd);
+    var unlinked_open_file = true;
+    sys.unlink(unlink_file) catch {
+        unlinked_open_file = false;
+    };
+    if (unlinked_open_file) {
+        _ = sys.write(sys.STDOUT, "unexpectedly unlinked open file\n") catch {};
+        sys.close(fd) catch {};
         return error.SyscallFailed;
     }
 
@@ -260,7 +256,7 @@ fn testLink() !void {
         .create = true,
         .truncate = true,
     }), "testLink: create source file", @src());
-    errdefer _ = sys.close(fd);
+    errdefer sys.close(fd) catch {};
 
     try writeAll(fd, "hard");
     _ = try expectSyscall(sys.close(fd), "testLink: close source file", @src());
@@ -273,7 +269,7 @@ fn testLink() !void {
     const append_fd = try expectSyscall(sys.open(link_alias_file, .{
         .open_mode = .ReadWrite,
     }), "testLink: open hard link", @src());
-    errdefer _ = sys.close(append_fd);
+    errdefer sys.close(append_fd) catch {};
     try expectOffset(try expectSyscall(sys.lseek(append_fd, 0, .End), "testLink: seek hard link end", @src()), 4);
     try writeAll(append_fd, " link");
     _ = try expectSyscall(sys.close(append_fd), "testLink: close hard link", @src());
@@ -300,8 +296,8 @@ fn testLink() !void {
 }
 
 fn testRename() !void {
-    _ = sys.unlink(rename_src);
-    _ = sys.unlink(rename_dst);
+    sys.unlink(rename_src) catch {};
+    sys.unlink(rename_dst) catch {};
 
     // 1. Basic rename: old path disappears, new path holds the content, inode is preserved.
     const fd = try expectSyscall(sys.open(rename_src, .{
@@ -321,7 +317,7 @@ fn testRename() !void {
     var dst_stat: sys.Stat = undefined;
     _ = try expectSyscall(sys.fstat(verify_fd, &dst_stat), "testRename: fstat dst", @src());
     if (dst_stat.inode != src_stat.inode) return error.InodeMismatch;
-    _ = sys.write(sys.STDOUT, ".");
+    _ = sys.write(sys.STDOUT, ".") catch {};
     var content: ["rename me".len]u8 = undefined;
     try readExact(verify_fd, &content);
     try expectEof(verify_fd);
@@ -402,7 +398,7 @@ fn testTruncate() !void {
         .create = true,
         .truncate = true,
     }), "testTruncate: open truncate file", @src());
-    errdefer _ = sys.close(fd);
+    errdefer sys.close(fd) catch {};
 
     try writeAll(fd, "ABCDEFGHIJ");
     try expectOffset(try expectSyscall(sys.lseek(fd, 3, .Set), "testTruncate: lseek set 3", @src()), 3);
@@ -416,7 +412,7 @@ fn testTruncate() !void {
     _ = try expectSyscall(sys.close(fd), "testTruncate: close truncation fd", @src());
 
     const verify_fd = try expectSyscall(sys.open(truncate_file, .{}), "testTruncate: reopen truncate file", @src());
-    defer _ = sys.close(verify_fd);
+    defer sys.close(verify_fd) catch {};
 
     var actual: [truncate_expected.len]u8 = undefined;
     try readExact(verify_fd, &actual);
@@ -436,7 +432,7 @@ fn testRmdir() !void {
         .create = true,
     }), "testRmdir: open subfile in non-existent directory", @src());
 
-    _ = sys.mkdir(test_dir) catch {};
+    sys.mkdir(test_dir) catch {};
 
     // 1. Fail to remove non-empty directory
     const fd = try expectSyscall(sys.open(sub_file, .{
@@ -475,17 +471,17 @@ fn testPipe() !void {
 }
 
 fn testStat() !void {
-    _ = sys.unlink(stat_link);
-    _ = sys.unlink(stat_file);
-    _ = sys.rmdir(stat_dir);
-    _ = sys.mkdir(stat_dir) catch {};
+    sys.unlink(stat_link) catch {};
+    sys.unlink(stat_file) catch {};
+    sys.rmdir(stat_dir) catch {};
+    sys.mkdir(stat_dir) catch {};
 
     const fd = try expectSyscall(sys.open(stat_file, .{
         .open_mode = .ReadWrite,
         .create = true,
         .truncate = true,
     }), "testStat: open stat file", @src());
-    errdefer _ = sys.close(fd);
+    errdefer sys.close(fd) catch {};
 
     try writeAll(fd, stat_payload);
 
@@ -534,8 +530,8 @@ fn testStat() !void {
     try expectFlags(stdout_stat.flags, sys.STAT_FLAG_WRITABLE | sys.STAT_FLAG_SYNTHETIC);
 
     const read_fd, const write_fd = try checkSyscall(sys.pipe(), "testStat: create pipe", @src());
-    errdefer _ = sys.close(read_fd);
-    errdefer _ = sys.close(write_fd);
+    errdefer sys.close(read_fd) catch {};
+    errdefer sys.close(write_fd) catch {};
 
     var read_stat: sys.Stat = undefined;
     var write_stat: sys.Stat = undefined;
@@ -566,11 +562,11 @@ fn testStat() !void {
 }
 
 fn testGetDents() !void {
-    _ = sys.unlink(dirent_file);
-    _ = sys.rmdir(dirent_subdir);
-    _ = sys.rmdir(dirent_dir);
-    _ = sys.mkdir(dirent_dir) catch {};
-    _ = sys.mkdir(dirent_subdir) catch {};
+    sys.unlink(dirent_file) catch {};
+    sys.rmdir(dirent_subdir) catch {};
+    sys.rmdir(dirent_dir) catch {};
+    sys.mkdir(dirent_dir) catch {};
+    sys.mkdir(dirent_subdir) catch {};
 
     const fd = try expectSyscall(sys.open(dirent_file, .{
         .open_mode = .ReadWrite,
@@ -581,7 +577,7 @@ fn testGetDents() !void {
     _ = try expectSyscall(sys.close(fd), "testGetDents: close directory file", @src());
 
     const dir_fd = try expectSyscall(sys.open(dirent_dir, .{}), "testGetDents: open directory", @src());
-    errdefer _ = sys.close(dir_fd);
+    errdefer sys.close(dir_fd) catch {};
 
     var batch: [2]sys.DirEntry = undefined;
     const first_batch = try expectSyscall(sys.getdents(dir_fd, &batch), "testGetDents: first batch", @src());
@@ -659,7 +655,7 @@ fn testPipeSpawn() !void {
     try expectBytes(buf[0..input.len], input);
     _ = try expectSyscall(sys.close(stdout_read), "testPipeSpawn: close stdout read in parent", @src());
 
-    _ = sys.waitpid(pid);
+    _ = try expectSyscall(sys.waitpid(pid), "testPipeSpawn: wait for cat", @src());
 }
 
 fn testBrokenPipe() !void {
@@ -673,9 +669,9 @@ fn testBrokenPipe() !void {
 pub fn main(argv: []const []const u8) !void {
     _ = argv;
     var buf: [96]u8 = undefined;
-    _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
+    _ = try sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
 
-    _ = sys.mkdir(tmpdir) catch {}; // on error, assume tmp exists
+    sys.mkdir(tmpdir) catch {}; // on error, assume tmp exists
 
     const create_flags: sys.FileOpenFlags = .{
         .open_mode = .ReadWrite,
@@ -685,10 +681,14 @@ pub fn main(argv: []const []const u8) !void {
     const fd_a = try expectSyscall(sys.open(stress_file_a, create_flags), "main: open stress_file_a", @src());
     const fd_b = try expectSyscall(sys.open(stress_file_b, create_flags), "main: open stress_file_b", @src());
 
-    const fd_c = sys.open(nonexistent_file, .{});
-    if (fd_c != FAIL) {
-        _ = sys.write(sys.STDOUT, "unexpectedly opened nonexistent file\n");
-        _ = sys.close(fd_c);
+    var opened_missing_file = true;
+    const fd_c = sys.open(nonexistent_file, .{}) catch blk: {
+        opened_missing_file = false;
+        break :blk 0;
+    };
+    if (opened_missing_file) {
+        _ = sys.write(sys.STDOUT, "unexpectedly opened nonexistent file\n") catch {};
+        sys.close(fd_c) catch {};
         return error.SyscallFailed;
     }
 
@@ -733,7 +733,7 @@ pub fn main(argv: []const []const u8) !void {
 
     _ = try expectSyscall(sys.close(sys.STDIN), "main: close stdin", @src());
     _ = try expectSyscall(sys.close(sys.STDERR), "main: close stderr", @src());
-    _ = sys.write(sys.STDOUT, "filesystem tests OK\n");
+    _ = try sys.write(sys.STDOUT, "filesystem tests OK\n");
     _ = try expectSyscall(sys.close(sys.STDOUT), "main: close stdout", @src());
     sys.yield();
 }

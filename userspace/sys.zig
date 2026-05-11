@@ -3,10 +3,11 @@ const abi = @import("abi");
 pub const STDIN: u32 = 0;
 pub const STDOUT: u32 = 1;
 pub const STDERR: u32 = 2;
-pub const FAIL: u32 = 0xFFFF_FFFF;
+pub const INVALID_FD: u32 = 0xFFFF_FFFF;
 
 pub const AbiSlice = abi.AbiSlice;
 pub const MAX_ARGV_COUNT = abi.MAX_ARGV_COUNT;
+pub const Errno = abi.Errno;
 pub const FileOpenMode = abi.FileOpenMode;
 pub const FileOpenFlags = abi.FileOpenFlags;
 pub const SeekWhence = abi.SeekWhence;
@@ -67,6 +68,27 @@ pub const MOD_ALT = abi.MOD_ALT;
 pub const MOD_CTRL = abi.MOD_CTRL;
 pub const KeyEvent = abi.KeyEvent;
 
+pub const SyscallError = error{
+    ENOENT,
+    EIO,
+    E2BIG,
+    EBADF,
+    EAGAIN,
+    ENOMEM,
+    EACCES,
+    EFAULT,
+    EBUSY,
+    EEXIST,
+    ENOTDIR,
+    EINVAL,
+    ENFILE,
+    EMFILE,
+    ENOSPC,
+    ENOTEMPTY,
+};
+
+pub const WriteAllError = SyscallError || error{WriteZero};
+
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
 pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
     var i: usize = 0;
@@ -85,15 +107,48 @@ pub export fn memset(dest: [*]u8, val: u8, len: usize) [*]u8 {
     return dest;
 }
 
-inline fn syscall(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) u32 {
-    return asm volatile (
+fn mapErrno(errno: Errno) SyscallError {
+    return switch (errno) {
+        .ENOENT => error.ENOENT,
+        .EIO => error.EIO,
+        .E2BIG => error.E2BIG,
+        .EBADF => error.EBADF,
+        .EAGAIN => error.EAGAIN,
+        .ENOMEM => error.ENOMEM,
+        .EACCES => error.EACCES,
+        .EFAULT => error.EFAULT,
+        .EBUSY => error.EBUSY,
+        .EEXIST => error.EEXIST,
+        .ENOTDIR => error.ENOTDIR,
+        .EINVAL => error.EINVAL,
+        .ENFILE => error.ENFILE,
+        .EMFILE => error.EMFILE,
+        .ENOSPC => error.ENOSPC,
+        .ENOTEMPTY => error.ENOTEMPTY,
+        .Success, _ => error.EIO,
+    };
+}
+
+inline fn rawSyscall(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) struct { value: u32, errno: u32 } {
+    var errno: u32 = 0;
+    const value = asm volatile (
         \\int $0x80
+        \\mov %%ecx, (%[errno_ptr])
         : [ret] "={eax}" (-> u32),
         : [nr] "{eax}" (@intFromEnum(nr)),
           [a1] "{ebx}" (arg1),
           [a2] "{ecx}" (arg2),
           [a3] "{edx}" (arg3),
-        : .{ .memory = true });
+          [errno_ptr] "{edi}" (@intFromPtr(&errno)),
+        : .{ .memory = true, .eax = true, .ebx = true, .ecx = true, .edx = true, .edi = true });
+    return .{ .value = value, .errno = errno };
+}
+
+inline fn syscall(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) SyscallError!u32 {
+    const result = rawSyscall(nr, arg1, arg2, arg3);
+    const errno: Errno = @enumFromInt(result.errno);
+    if (errno != .Success) return mapErrno(errno);
+    return result.value;
 }
 
 /// Emits a Bochs magic breakpoint instruction for low-level debugging.
@@ -102,87 +157,85 @@ pub inline fn bochsDebugBreak() void {
 }
 
 /// Writes a byte slice to a userspace-visible file descriptor.
-pub fn write(fd: u32, buf: []const u8) u32 {
+pub fn write(fd: u32, buf: []const u8) SyscallError!u32 {
     return syscall(.Write, fd, @intFromPtr(buf.ptr), @intCast(buf.len));
 }
 
 /// Writes the full slice to a userspace-visible file descriptor.
-/// Returns false if the syscall fails or makes no forward progress.
-pub fn writeAll(fd: u32, data: []const u8) bool {
+/// Returns `error.WriteZero` if the writer makes no forward progress.
+pub fn writeAll(fd: u32, data: []const u8) WriteAllError!void {
     var written: usize = 0;
     while (written < data.len) {
-        const chunk = write(fd, data[written..]);
-        if (chunk == FAIL or chunk == 0) return false;
+        const chunk = try write(fd, data[written..]);
+        if (chunk == 0) return error.WriteZero;
         written += @intCast(chunk);
     }
-    return true;
 }
 
 /// Reads bytes from a userspace-visible file descriptor into a buffer.
-pub fn read(fd: u32, buf: []u8) u32 {
+pub fn read(fd: u32, buf: []u8) SyscallError!u32 {
     return syscall(.Read, fd, @intFromPtr(buf.ptr), @intCast(buf.len));
 }
 
 /// Opens a filesystem path with the provided userspace flags.
-pub fn open(path: []const u8, flags: FileOpenFlags) u32 {
+pub fn open(path: []const u8, flags: FileOpenFlags) SyscallError!u32 {
     return syscall(.Open, @intFromPtr(path.ptr), @intCast(path.len), @bitCast(flags));
 }
 
 /// Closes a userspace-visible file descriptor.
-pub fn close(fd: u32) u32 {
-    return syscall(.Close, fd, 0, 0);
+pub fn close(fd: u32) SyscallError!void {
+    _ = try syscall(.Close, fd, 0, 0);
 }
 
 /// Reads metadata for a filesystem path into `out`.
-pub fn stat(path: []const u8, out: *Stat) u32 {
-    return syscall(.Stat, @intFromPtr(&AbiSlice.fromSlice(u8, path)), @intFromPtr(out), 0);
+pub fn stat(path: []const u8, out: *Stat) SyscallError!void {
+    _ = try syscall(.Stat, @intFromPtr(&AbiSlice.fromSlice(u8, path)), @intFromPtr(out), 0);
 }
 
 /// Reads metadata for an open file descriptor into `out`.
-pub fn fstat(fd: u32, out: *Stat) u32 {
-    return syscall(.Fstat, fd, @intFromPtr(out), 0);
+pub fn fstat(fd: u32, out: *Stat) SyscallError!void {
+    _ = try syscall(.Fstat, fd, @intFromPtr(out), 0);
 }
 
 /// Repositions a userspace-visible file descriptor and returns the new offset.
-pub fn lseek(fd: u32, offset: i32, whence: SeekWhence) u32 {
+pub fn lseek(fd: u32, offset: i32, whence: SeekWhence) SyscallError!u32 {
     return syscall(.Lseek, fd, @bitCast(offset), @intFromEnum(whence));
 }
 
 /// Resizes a filesystem-backed file descriptor to the requested byte length.
-pub fn ftruncate(fd: u32, length: u32) u32 {
-    return syscall(.Ftruncate, fd, length, 0);
+pub fn ftruncate(fd: u32, length: u32) SyscallError!void {
+    _ = try syscall(.Ftruncate, fd, length, 0);
 }
 
 /// Reads a batch of fixed-size directory entries from an open directory descriptor.
-pub fn getdents(fd: u32, entries: []DirEntry) u32 {
+pub fn getdents(fd: u32, entries: []DirEntry) SyscallError!u32 {
     const entry_slice = AbiSlice.fromSlice(DirEntry, entries);
     return syscall(.GetDents, fd, @intFromPtr(&entry_slice), 0);
 }
 
 /// Reads the next directory entry from an open directory descriptor.
-/// Returns false on end-of-directory and an error when the syscall fails.
-pub fn readdir(fd: u32, out: *DirEntry) !bool {
+/// Returns `false` on end-of-directory.
+pub fn readdir(fd: u32, out: *DirEntry) SyscallError!bool {
     var entry_buf: [1]DirEntry = undefined;
-    const count = getdents(fd, &entry_buf);
-    if (count == FAIL) return error.SyscallFailed;
+    const count = try getdents(fd, &entry_buf);
     if (count == 0) return false;
     out.* = entry_buf[0];
     return true;
 }
 
 /// Unlinks a filesystem path by name.
-pub fn unlink(path: []const u8) u32 {
-    return syscall(.Unlink, @intFromPtr(path.ptr), @intCast(path.len), 0);
+pub fn unlink(path: []const u8) SyscallError!void {
+    _ = try syscall(.Unlink, @intFromPtr(path.ptr), @intCast(path.len), 0);
 }
 
 /// Returns the current process identifier.
 pub fn getpid() u32 {
-    return syscall(.GetPid, 0, 0, 0);
+    return syscall(.GetPid, 0, 0, 0) catch unreachable;
 }
 
 /// Returns the stdout console cursor position packed as (row << 16) | col (both 0-indexed).
 pub fn getCursor() struct { row: u32, col: u32 } {
-    const packed_pos = syscall(.GetCursor, 0, 0, 0);
+    const packed_pos = syscall(.GetCursor, 0, 0, 0) catch unreachable;
     return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
 }
 
@@ -205,11 +258,7 @@ pub fn spawnv(argv: []const []const u8) !u32 {
         .ptr = if (argv.len == 0) 0 else @intFromPtr(&argv_abi_storage[0]),
         .len = @intCast(argv.len),
     };
-    const pid = syscall(.Spawn, @intFromPtr(&argv_abi), 0, 0);
-    if (pid == FAIL) {
-        return error.SpawnFailed;
-    }
-    return pid;
+    return try syscall(.Spawn, @intFromPtr(&argv_abi), 0, 0);
 }
 
 /// Spawns a userspace executable, prepending the command name as argv[0].
@@ -248,9 +297,7 @@ pub fn spawnvOpts(argv: []const []const u8, fd_remaps: []const FdRemap) !u32 {
             .len = @intCast(fd_remaps.len),
         },
     };
-    const pid = syscall(.Spawn, @intFromPtr(&argv_abi), @intFromPtr(&opts), 0);
-    if (pid == FAIL) return error.SpawnFailed;
-    return pid;
+    return try syscall(.Spawn, @intFromPtr(&argv_abi), @intFromPtr(&opts), 0);
 }
 
 /// Spawns an executable, prepending the command name as argv[0], with optional fd remapping.
@@ -269,93 +316,79 @@ pub fn spawnOpts(path: []const u8, args: []const []const u8, fd_remaps: []const 
 pub fn pipe() !struct { u32, u32 } {
     var fds: [2]u32 = undefined;
     const fds_slice = AbiSlice.fromSlice(u32, &fds);
-    const result = syscall(.Pipe, @intFromPtr(&fds_slice), 0, 0);
-    if (result == FAIL) {
-        return error.SyscallFailed;
-    }
+    _ = try syscall(.Pipe, @intFromPtr(&fds_slice), 0, 0);
     return .{ fds[0], fds[1] };
 }
 
 /// Voluntarily yields execution to the scheduler.
 pub fn yield() void {
-    _ = syscall(.Yield, 0, 0, 0);
+    _ = syscall(.Yield, 0, 0, 0) catch unreachable;
 }
 
 /// Duplicates a file descriptor, returning the new fd number.
 pub fn dupFd(old_fd: u32) !u32 {
-    const result = syscall(.DupFd, old_fd, 0xFFFF_FFFF, 0);
-    if (result == FAIL) {
-        return error.SyscallFailed;
-    }
-    return result;
+    return try syscall(.DupFd, old_fd, INVALID_FD, 0);
 }
 
 // Replace the calling process's file descriptor `new_fd` with a copy of `old_fd`.
 pub fn dupFdTo(old_fd: u32, new_fd: u32) !u32 {
-    const result = syscall(.DupFd, old_fd, new_fd, 0);
-    if (result == FAIL) {
-        return error.SyscallFailed;
-    }
-    return result;
+    return try syscall(.DupFd, old_fd, new_fd, 0);
 }
 
 /// Waits for the child with the given PID to exit and returns its exit status.
-/// Returns FAIL if the PID is not a child of the calling process.
-pub fn waitpid(pid: u32) u32 {
+pub fn waitpid(pid: u32) SyscallError!u32 {
     return syscall(.WaitPid, pid, 0, 0);
 }
 
-pub fn mkdir(path: []const u8) !void {
+/// Creates a directory by name.
+pub fn mkdir(path: []const u8) SyscallError!void {
     const path_abi = AbiSlice.fromSlice(u8, path);
-    if (syscall(.Mkdir, @intFromPtr(&path_abi), 0, 0) == FAIL) {
-        return error.MkdirFailed;
-    }
+    _ = try syscall(.Mkdir, @intFromPtr(&path_abi), 0, 0);
 }
 
 /// Removes a directory by name.
-pub fn rmdir(path: []const u8) u32 {
+pub fn rmdir(path: []const u8) SyscallError!void {
     const path_abi = AbiSlice.fromSlice(u8, path);
-    return syscall(.Rmdir, @intFromPtr(&path_abi), 0, 0);
+    _ = try syscall(.Rmdir, @intFromPtr(&path_abi), 0, 0);
 }
 
 /// Renames or moves a file from old_path to new_path, replacing any existing regular file there.
-pub fn rename(old_path: []const u8, new_path: []const u8) u32 {
+pub fn rename(old_path: []const u8, new_path: []const u8) SyscallError!void {
     const old_path_abi = AbiSlice.fromSlice(u8, old_path);
     const new_path_abi = AbiSlice.fromSlice(u8, new_path);
-    return syscall(.Rename, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
+    _ = try syscall(.Rename, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
 }
 
 /// Creates a new hard link from `new_path` to the existing regular file at `old_path`.
-pub fn link(old_path: []const u8, new_path: []const u8) u32 {
+pub fn link(old_path: []const u8, new_path: []const u8) SyscallError!void {
     const old_path_abi = AbiSlice.fromSlice(u8, old_path);
     const new_path_abi = AbiSlice.fromSlice(u8, new_path);
-    return syscall(.Link, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
+    _ = try syscall(.Link, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
 }
 
 /// Marks the calling process so all its children are auto-reaped on exit
 /// instead of becoming zombies. After this call, waitpid on children will fail.
 pub fn setChildReap() void {
-    _ = syscall(.SetChildReap, 0, 0, 0);
+    _ = syscall(.SetChildReap, 0, 0, 0) catch unreachable;
 }
 
 /// Executes a kernel shell command using the calling task's console.
 /// The command string is passed as a slice and will be interpreted by the kernel shell.
-/// Returns 0 on success, FAIL on error.
-pub fn kshell(cmdline: []const u8) u32 {
+pub fn kshell(cmdline: []const u8) SyscallError!void {
     const cmdline_abi = AbiSlice.fromSlice(u8, cmdline);
-    return syscall(.KShell, @intFromPtr(&cmdline_abi), 0, 0);
+    _ = try syscall(.KShell, @intFromPtr(&cmdline_abi), 0, 0);
 }
 
 /// Terminates the current process with the provided exit code.
 pub fn exit(exitcode: u32) noreturn {
-    _ = syscall(.Exit, exitcode, 0, 0);
+    _ = syscall(.Exit, exitcode, 0, 0) catch unreachable;
     unreachable;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 fn sys_brk(addr: usize) usize {
-    return syscall(.Brk, addr, 0, 0);
+    return @intCast(syscall(.Brk, @intCast(addr), 0, 0) catch unreachable);
 }
 
 var old_brk: usize = 0;
@@ -375,10 +408,7 @@ pub fn getHeapBreak() usize {
 /// Sets the process break to an absolute address and returns the previous break.
 pub fn setHeapBreak(new_brk: usize) ![*]u8 {
     const orig_brk = cachedHeapBreak();
-    const result = sys_brk(new_brk);
-    if (result == FAIL) {
-        return error.OutOfMemory;
-    }
+    const result = try syscall(.Brk, @intCast(new_brk), 0, 0);
     old_brk = result;
     return @ptrFromInt(orig_brk);
 }
@@ -424,9 +454,9 @@ export fn argvStartup(argv: *const AbiSlice) callconv(.c) noreturn {
     }
 
     root.main(argv_slices[0..argc]) catch |err| {
-        _ = write(STDOUT, "Runtime error: ");
-        _ = write(STDOUT, @errorName(err));
-        _ = write(STDOUT, "\n");
+        _ = write(STDOUT, "Runtime error: ") catch {};
+        _ = write(STDOUT, @errorName(err)) catch {};
+        _ = write(STDOUT, "\n") catch {};
         exit(1);
     };
     exit(0);

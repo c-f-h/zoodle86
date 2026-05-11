@@ -53,6 +53,28 @@ pub const Syscall = enum(u32) {
     _,
 };
 
+/// Userspace-visible errno values returned in `ecx` after a syscall.
+pub const Errno = enum(u32) {
+    Success = 0,
+    ENOENT = 2,
+    EIO = 5,
+    E2BIG = 7,
+    EBADF = 9,
+    EAGAIN = 11,
+    ENOMEM = 12,
+    EACCES = 13,
+    EFAULT = 14,
+    EBUSY = 16,
+    EEXIST = 17,
+    ENOTDIR = 20,
+    EINVAL = 22,
+    ENFILE = 23,
+    EMFILE = 24,
+    ENOSPC = 28,
+    ENOTEMPTY = 39,
+    _,
+};
+
 /// Selects the access mode encoded in userspace open flags.
 pub const FileOpenMode = enum(u2) {
     ReadOnly = 0,

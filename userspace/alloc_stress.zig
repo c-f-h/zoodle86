@@ -121,7 +121,7 @@ pub fn main(argv: []const []const u8) !void {
     const allocator = brk_allocator.allocator();
 
     var buf: [96]u8 = undefined;
-    _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing userspace allocator...\n", .{sys.getpid()}));
+    _ = try sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing userspace allocator...\n", .{sys.getpid()}));
 
     try testCreateDestroy(allocator);
     try testReuse(allocator);
@@ -129,7 +129,7 @@ pub fn main(argv: []const []const u8) !void {
     try testLargeBlocks(allocator);
     try testSlabThreshold(allocator);
 
-    _ = sys.write(sys.STDOUT, "userspace allocator stress test OK\n");
+    _ = try sys.write(sys.STDOUT, "userspace allocator stress test OK\n");
 }
 
 comptime {

@@ -11,61 +11,40 @@ const std = @import("std");
 
 const Syscall = abi.Syscall;
 
-const ERRNO_E2BIG: u32 = 7;
-const ERRNO_EAGAIN: u32 = 11;
-const ERRNO_EIO: u32 = 5;
-const ERRNO_ENOENT: u32 = 2;
-const ERRNO_ENOMEM: u32 = 12;
-const ERRNO_EFAULT: u32 = 14;
-const ERRNO_EACCES: u32 = 13;
-const ERRNO_EEXIST: u32 = 17;
-const ERRNO_ENFILE: u32 = 23;
-const ERRNO_EMFILE: u32 = 24;
-const ERRNO_EBADF: u32 = 9;
-const ERRNO_EBUSY: u32 = 16;
-const ERRNO_ENOTDIR: u32 = 20;
-const ERRNO_EINVAL: u32 = 22;
-const ERRNO_ENOSPC: u32 = 28;
-const ERRNO_ENOTEMPTY: u32 = 39;
+const Errno = abi.Errno;
 
-fn errnoResult(errno: u32) u32 {
-    _ = errno;
-    // TODO: set errno
-    return 0xFFFF_FFFF;
-}
-
-fn mapError(err: anyerror) u32 {
-    return errnoResult(switch (err) {
-        error.AccessDenied => ERRNO_EACCES,
-        error.ArgsTooLarge => ERRNO_E2BIG,
-        error.BadFd => ERRNO_EBADF,
-        error.FileInUse => ERRNO_EBUSY,
-        error.AccessViolation => ERRNO_EFAULT,
-        error.ControllerError => ERRNO_EIO,
-        error.Corrupt => ERRNO_EIO,
-        error.DeviceFault => ERRNO_EIO,
-        error.DirectoryFull => ERRNO_ENOSPC,
-        error.DirNotEmpty => ERRNO_ENOTEMPTY,
-        error.FileExists => ERRNO_EEXIST,
-        error.FileNotFound => ERRNO_ENOENT,
-        error.InvalidArgument => ERRNO_EINVAL,
-        error.InvalidFlags => ERRNO_EINVAL,
-        error.InvalidLba => ERRNO_EIO,
-        error.InvalidName => ERRNO_EINVAL,
-        error.InvalidSeek => ERRNO_EINVAL,
-        error.InvalidSuperblock => ERRNO_EIO,
-        error.NotADirectory => ERRNO_ENOTDIR,
-        error.NotARegularFile => ERRNO_EINVAL,
-        error.NoDevice => ERRNO_EIO,
-        error.NoTaskSlots => ERRNO_EAGAIN,
-        error.NoSpace => ERRNO_ENOSPC,
-        error.NotAtaDevice => ERRNO_EIO,
-        error.OutOfMemory => ERRNO_ENOMEM,
-        error.ProcessFileTableFull => ERRNO_EMFILE,
-        error.SystemFileTableFull => ERRNO_ENFILE,
-        error.Timeout => ERRNO_EIO,
-        else => ERRNO_EIO,
-    });
+fn mapError(err: anyerror) Errno {
+    return switch (err) {
+        error.AccessDenied => .EACCES,
+        error.ArgsTooLarge => .E2BIG,
+        error.BadFd => .EBADF,
+        error.FileInUse => .EBUSY,
+        error.AccessViolation => .EFAULT,
+        error.ControllerError => .EIO,
+        error.Corrupt => .EIO,
+        error.DeviceFault => .EIO,
+        error.DirectoryFull => .ENOSPC,
+        error.DirNotEmpty => .ENOTEMPTY,
+        error.FileExists => .EEXIST,
+        error.FileNotFound => .ENOENT,
+        error.InvalidArgument => .EINVAL,
+        error.InvalidFlags => .EINVAL,
+        error.InvalidLba => .EIO,
+        error.InvalidName => .EINVAL,
+        error.InvalidSeek => .EINVAL,
+        error.InvalidSuperblock => .EIO,
+        error.NotADirectory => .ENOTDIR,
+        error.NotARegularFile => .EINVAL,
+        error.NoDevice => .EIO,
+        error.NoTaskSlots => .EAGAIN,
+        error.NoSpace => .ENOSPC,
+        error.NotAtaDevice => .EIO,
+        error.OutOfMemory => .ENOMEM,
+        error.ProcessFileTableFull => .EMFILE,
+        error.SystemFileTableFull => .ENFILE,
+        error.Timeout => .EIO,
+        else => .EIO,
+    };
 }
 
 fn sys_open(path_ofs: u32, path_len: u32, flags: u32) !u32 {
@@ -395,6 +374,9 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .KShell => sys_kshell(arg1),
         .GetCursor => sys_getcursor(),
         else => error.InvalidArgument,
-    }) catch |err| mapError(err);
-    frame.setReturnValue(retval);
+    }) catch |err| {
+        frame.setSyscallResult(0, @intFromEnum(mapError(err)));
+        return;
+    };
+    frame.setSyscallResult(retval, @intFromEnum(Errno.Success));
 }

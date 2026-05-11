@@ -24,7 +24,7 @@ pub fn main(argv: []const []const u8) !void {
         const n = start_n + index;
         const value = fibValue(n);
         const line = try std.fmt.bufPrint(&line_buf, "pid {d}: fib({d}) = {d}\n", .{ sys.getpid(), n, value });
-        _ = sys.write(sys.STDOUT, line);
+        _ = try sys.write(sys.STDOUT, line);
     }
 }
 

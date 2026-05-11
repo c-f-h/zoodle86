@@ -36,6 +36,7 @@ Files and directories from `static/` are copied into the filesystem image during
 
 - Use Zig 0.16.
 - Every public Zig function should have at least a one-line doc comment.
+- Userspace syscalls return the value in `eax` and errno in `ecx`; `userspace/sys.zig` surfaces errno as Zig errors.
 - Whenever the design of the project changes, keep AGENTS.md and the documentation up to date!
 
 ## Debugging

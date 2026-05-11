@@ -16,16 +16,16 @@ pub fn main(argv: []const []const u8) !void {
     var buf: [64]u8 = undefined;
     const msg = try std.fmt.bufPrint(&buf, "{0}", .{sys.getpid()});
     while (count > 0) : (count -= 1) {
-        _ = sys.write(sys.STDOUT, msg);
+        _ = try sys.write(sys.STDOUT, msg);
         //sys.yield();
     }
 
     if (child_pid != 0) {
-        const exit_status = sys.waitpid(child_pid);
+        const exit_status = try sys.waitpid(child_pid);
         var wbuf: [64]u8 = undefined;
-        _ = sys.write(sys.STDOUT, try std.fmt.bufPrint(&wbuf, "Child {0} exited with status {1}\n", .{ child_pid, exit_status }));
+        _ = try sys.write(sys.STDOUT, try std.fmt.bufPrint(&wbuf, "Child {0} exited with status {1}\n", .{ child_pid, exit_status }));
     } else {
-        _ = sys.write(sys.STDOUT, "\n");
+        _ = try sys.write(sys.STDOUT, "\n");
     }
     sys.exit(total);
 }

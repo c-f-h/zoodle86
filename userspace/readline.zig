@@ -18,7 +18,7 @@ pub const Readline = struct {
     prompt: []const u8 = "",
     row: u32 = 0, // console row where editing takes place
     col: u32 = 0, // console column right after the prompt
-    key_event_fd: u32 = sys.FAIL,
+    key_event_fd: u32 = sys.INVALID_FD,
 
     /// Prepare the readline state, print the prompt, and record the cursor anchor.
     pub fn init(self: *Readline, prompt: []const u8) void {
@@ -26,7 +26,7 @@ pub const Readline = struct {
         self.cursor = 0;
         self.rendered_len = 0;
         self.prompt = prompt;
-        _ = sys.write(sys.STDOUT, prompt);
+        _ = sys.write(sys.STDOUT, prompt) catch {};
         const pos = sys.getCursor();
         self.row = pos.row;
         self.col = pos.col;
@@ -35,9 +35,9 @@ pub const Readline = struct {
 
     /// Close the internal keyboard event descriptor if it is open.
     fn closeKeyEventFd(self: *Readline) void {
-        if (self.key_event_fd != sys.FAIL) {
-            _ = sys.close(self.key_event_fd);
-            self.key_event_fd = sys.FAIL;
+        if (self.key_event_fd != sys.INVALID_FD) {
+            sys.close(self.key_event_fd) catch {};
+            self.key_event_fd = sys.INVALID_FD;
         }
     }
 
@@ -46,10 +46,9 @@ pub const Readline = struct {
     pub fn readLine(self: *Readline) error{EOF}![]const u8 {
         // Workaround for tty and keyboard events not being synchronized: close the event stream
         // after every call to tell the kernel that we are no longer listening on it.
-        self.key_event_fd = sys.open("/dev/keyboard", .{ .open_mode = .ReadOnly });
-        if (self.key_event_fd == sys.FAIL) {
+        self.key_event_fd = sys.open("/dev/keyboard", .{ .open_mode = .ReadOnly }) catch {
             return error.EOF;
-        }
+        };
         defer self.closeKeyEventFd();
         defer showCursor(false); // Hide cursor when done with editing
 
@@ -62,11 +61,11 @@ pub const Readline = struct {
     }
 
     fn readKey(self: *Readline) error{EOF}!sys.KeyEvent {
-        if (self.key_event_fd == sys.FAIL) return error.EOF;
+        if (self.key_event_fd == sys.INVALID_FD) return error.EOF;
 
         var bytes: [@sizeOf(sys.KeyEvent)]u8 = undefined;
-        const count = sys.read(self.key_event_fd, &bytes);
-        if (count == sys.FAIL or count == 0) return error.EOF;
+        const count = sys.read(self.key_event_fd, &bytes) catch return error.EOF;
+        if (count == 0) return error.EOF;
         if (count != bytes.len) return error.EOF;
         return @bitCast(bytes);
     }
@@ -99,7 +98,7 @@ pub const Readline = struct {
             sys.VK_ENTER => {
                 // Commit the line: move cursor past the line and print newline.
                 self.moveToEnd();
-                _ = sys.write(sys.STDOUT, "\n");
+                _ = sys.write(sys.STDOUT, "\n") catch {};
                 return self.buf[0..self.len];
             },
             sys.VK_BACKSPACE => self.deleteBackward(),
@@ -264,7 +263,7 @@ pub const Readline = struct {
         // Show cursor
         pos = appendShowCursor(&out, pos, true);
 
-        _ = sys.write(sys.STDOUT, out[0..pos]);
+        _ = sys.write(sys.STDOUT, out[0..pos]) catch {};
         self.rendered_len = self.len;
     }
 
@@ -272,7 +271,7 @@ pub const Readline = struct {
     fn syncCursorOnly(self: *Readline) void {
         var out: [16]u8 = undefined;
         const n = appendCursorMove(&out, 0, self.row, self.col + self.cursor);
-        _ = sys.write(sys.STDOUT, out[0..n]);
+        _ = sys.write(sys.STDOUT, out[0..n]) catch {};
     }
 };
 
@@ -303,7 +302,7 @@ fn appendShowCursor(buf: []u8, pos: u32, show: bool) u32 {
 }
 
 pub fn showCursor(show: bool) void {
-    _ = sys.write(sys.STDOUT, if (show) esc_show_cursor else esc_hide_cursor);
+    _ = sys.write(sys.STDOUT, if (show) esc_show_cursor else esc_hide_cursor) catch {};
 }
 
 fn appendDecU32(buf: []u8, pos: u32, value: u32) u32 {
