@@ -204,7 +204,7 @@ pub const Tty = struct {
 
         self.line_buf[self.line_len] = ch;
         self.line_len += 1;
-        self.console.puts(&[1]u8{ch});
+        self.console.putch(ch);
         self.echo_positions[self.line_len] = self.cursorPos();
     }
 

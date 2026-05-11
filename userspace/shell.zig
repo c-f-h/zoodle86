@@ -19,7 +19,6 @@ pub fn main(_: []const []const u8) !void {
         const line = rl.readLine() catch |err| {
             if (err == error.EOF) {
                 _ = sys.write(sys.STDOUT, "\n");
-                readline.showCursor(false);
                 return;
             }
             return err;
@@ -35,7 +34,6 @@ pub fn main(_: []const []const u8) !void {
         }
 
         if (std.mem.eql(u8, trimmed, "exit") or std.mem.eql(u8, trimmed, "quit")) {
-            readline.showCursor(false);
             return;
         }
 

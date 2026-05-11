@@ -286,17 +286,23 @@ pub const VConsole = struct {
     pub fn updateCursor(self: *VConsole, cells: [*]const u16, row: u32, col: u32, visible: bool) void {
         if (!self.win.isReady()) return;
 
-        if (self.cursor_visible) {
-            // Redraw the previously highlighted cell to remove highlight
-            self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, false);
-            self.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);
-        }
+        const old_row = self.cursor_row;
+        const old_col = self.cursor_col;
+        const old_visible = self.cursor_visible;
 
         self.cursor_row = if (row < self.rows) row else self.rows - 1;
         self.cursor_col = if (col < self.cols) col else self.cols - 1;
         self.cursor_visible = visible;
 
-        if (self.cursor_visible) {
+        const pos_changed = old_row != self.cursor_row or old_col != self.cursor_col;
+
+        if (old_visible and (pos_changed or !visible)) {
+            // Redraw the previously highlighted cell to remove highlight
+            self.drawConsoleCellRaw(cells[self.cellIndex(old_row, old_col)], old_row, old_col, false);
+            self.blitShadowCellToFramebuffer(old_row, old_col);
+        }
+
+        if (visible and (pos_changed or !old_visible)) {
             // Draw the newly highlighted cell
             self.drawConsoleCellRaw(cells[self.cellIndex(self.cursor_row, self.cursor_col)], self.cursor_row, self.cursor_col, true);
             self.blitShadowCellToFramebuffer(self.cursor_row, self.cursor_col);

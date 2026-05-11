@@ -51,6 +51,7 @@ pub const Readline = struct {
             return error.EOF;
         }
         defer self.closeKeyEventFd();
+        defer showCursor(false); // Hide cursor when done with editing
 
         while (true) {
             const ev = try self.readKey();
@@ -229,10 +230,7 @@ pub const Readline = struct {
         var pos: u32 = 0;
 
         // Hide cursor, move to start of editing area
-        const hide = "\x1B[?25l";
-        @memcpy(out[pos..][0..hide.len], hide);
-        pos += hide.len;
-
+        pos = appendShowCursor(&out, pos, false);
         pos = appendCursorMove(&out, pos, self.row, self.col);
 
         // Write buffer content
