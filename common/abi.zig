@@ -67,6 +67,7 @@ pub const Errno = enum(u32) {
     EBUSY = 16,
     EEXIST = 17,
     ENOTDIR = 20,
+    EISDIR = 21,
     EINVAL = 22,
     ENFILE = 23,
     EMFILE = 24,

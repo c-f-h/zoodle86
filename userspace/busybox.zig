@@ -13,6 +13,13 @@ fn baseName(path: []const u8) []const u8 {
     return path;
 }
 
+fn err_toolFailedTo(tool: []const u8, action: []const u8, path: []const u8) void {
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "{s}: failed to {s} {s}\n", .{ tool, action, path }) catch
+        "failure\n";
+    sys.writeAll(sys.STDERR, msg) catch {};
+}
+
 // ---------------------------------------------------------------------------
 // cat
 // ---------------------------------------------------------------------------
@@ -26,21 +33,43 @@ fn catCopyFd(fd: u32) bool {
     }
 }
 
+fn catWriteIsDirectoryError(path: []const u8) void {
+    var buf: [160]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "cat: {s}: Is a directory\n", .{path}) catch "cat: is a directory\n";
+    sys.writeAll(sys.STDERR, msg) catch {};
+}
+
 /// Copies stdin when no filenames are provided, or prints each named file to stdout.
 fn catMain(argv: []const []const u8) noreturn {
     if (argv.len <= 1) {
-        sys.exit(if (catCopyFd(sys.STDIN)) 0 else 1);
+        if (!catCopyFd(sys.STDIN)) {
+            err_toolFailedTo("cat", "read from", "stdin");
+            sys.exit(1);
+        }
+        sys.exit(0);
     }
 
     for (argv[1..]) |path| {
-        const fd = sys.open(path, .{}) catch {
-            var buf: [160]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "cat: failed to open {s}\n", .{path}) catch "cat: failed to open file\n";
-            sys.writeAll(sys.STDERR, msg) catch {};
+        const fd = sys.open(path, .{}) catch |err| {
+            if (err == error.EISDIR) {
+                catWriteIsDirectoryError(path);
+            } else {
+                err_toolFailedTo("cat", "open", path);
+            }
             sys.exit(1);
         };
 
         if (!catCopyFd(fd)) {
+            var st: sys.Stat = undefined;
+            if (sys.fstat(fd, &st)) |_| {
+                if (st.kind == .Directory) {
+                    catWriteIsDirectoryError(path);
+                } else {
+                    err_toolFailedTo("cat", "read", path);
+                }
+            } else |_| {
+                err_toolFailedTo("cat", "read", path);
+            }
             sys.close(fd) catch {};
             sys.exit(1);
         }
@@ -98,18 +127,14 @@ fn lsListDirectory(fd: u32) bool {
 
 fn lsListPath(path: []const u8) bool {
     const fd = sys.open(path, .{}) catch {
-        var buf: [192]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "ls: failed to open {s}\n", .{lsDisplayName(path)}) catch return false;
-        sys.writeAll(sys.STDERR, msg) catch {};
+        err_toolFailedTo("ls", "open", path);
         return false;
     };
     defer sys.close(fd) catch {};
 
     var stat: sys.Stat = undefined;
     sys.fstat(fd, &stat) catch {
-        var buf: [192]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "ls: failed to stat {s}\n", .{lsDisplayName(path)}) catch return false;
-        sys.writeAll(sys.STDERR, msg) catch {};
+        err_toolFailedTo("ls", "stat", path);
         return false;
     };
 
@@ -153,10 +178,7 @@ fn lnMain(argv: []const []const u8) noreturn {
     }
 
     sys.link(argv[1], argv[2]) catch {
-        var buf: [256]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "ln: failed to link {s} -> {s}\n", .{ argv[2], argv[1] }) catch
-            "ln: failed to create link\n";
-        sys.writeAll(sys.STDERR, msg) catch {};
+        err_toolFailedTo("ln", "link", argv[2]);
         sys.exit(1);
     };
 
@@ -177,9 +199,7 @@ fn rmMain(argv: []const []const u8) noreturn {
     var ok = true;
     for (argv[1..]) |path| {
         sys.unlink(path) catch {
-            var buf: [192]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "rm: failed to remove {s}\n", .{path}) catch "rm: failed to remove file\n";
-            sys.writeAll(sys.STDERR, msg) catch {};
+            err_toolFailedTo("rm", "remove", path);
             ok = false;
         };
     }
@@ -221,10 +241,7 @@ fn statMain(argv: []const []const u8) noreturn {
     for (argv[1..]) |path| {
         var st: sys.Stat = undefined;
         sys.stat(path, &st) catch {
-            var buf: [224]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "stat: cannot stat '{s}': No such file or directory\n", .{path}) catch
-                "stat: cannot stat file\n";
-            sys.writeAll(sys.STDERR, msg) catch {};
+            err_toolFailedTo("stat", "stat", path);
             ok = false;
             continue;
         };
@@ -289,10 +306,7 @@ fn mvMain(argv: []const []const u8) noreturn {
     }
 
     sys.rename(src, dst) catch {
-        var buf: [256]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "mv: failed to move {s} to {s}\n", .{ src, dst }) catch
-            "mv: failed\n";
-        sys.writeAll(sys.STDERR, msg) catch {};
+        err_toolFailedTo("mv", "move", src);
         sys.exit(1);
     };
 
@@ -331,19 +345,13 @@ fn cpMain(argv: []const []const u8) noreturn {
     }
 
     const src_fd = sys.open(src, .{}) catch {
-        var buf: [192]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "cp: cannot open {s}\n", .{src}) catch
-            "cp: cannot open source\n";
-        sys.writeAll(sys.STDERR, msg) catch {};
+        err_toolFailedTo("cp", "open", src);
         sys.exit(1);
     };
     defer sys.close(src_fd) catch {};
 
     const dst_fd = sys.open(dst, .{ .open_mode = .WriteOnly, .create = true, .truncate = true }) catch {
-        var buf: [192]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "cp: cannot create {s}\n", .{dst}) catch
-            "cp: cannot create destination\n";
-        sys.writeAll(sys.STDERR, msg) catch {};
+        err_toolFailedTo("cp", "create", dst);
         sys.exit(1);
     };
     defer sys.close(dst_fd) catch {};
@@ -378,10 +386,7 @@ fn mkdirMain(argv: []const []const u8) noreturn {
     var ok = true;
     for (argv[1..]) |path| {
         sys.mkdir(path) catch {
-            var buf: [192]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "mkdir: failed to create directory {s}\n", .{path}) catch
-                "mkdir: failed to create directory\n";
-            sys.writeAll(sys.STDERR, msg) catch {};
+            err_toolFailedTo("mkdir", "create directory", path);
             ok = false;
         };
     }
@@ -403,10 +408,7 @@ fn rmdirMain(argv: []const []const u8) noreturn {
     var ok = true;
     for (argv[1..]) |path| {
         sys.rmdir(path) catch {
-            var buf: [192]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "rmdir: failed to remove directory {s}\n", .{path}) catch
-                "rmdir: failed to remove directory\n";
-            sys.writeAll(sys.STDERR, msg) catch {};
+            err_toolFailedTo("rmdir", "remove directory", path);
             ok = false;
         };
     }
@@ -418,7 +420,7 @@ fn rmdirMain(argv: []const []const u8) noreturn {
 // echo
 // ---------------------------------------------------------------------------
 
-    /// Prints arguments separated by spaces, followed by a newline.
+/// Prints arguments separated by spaces, followed by a newline.
 fn echoMain(argv: []const []const u8) noreturn {
     for (argv[1..], 0..) |arg, i| {
         if (i > 0) sys.writeAll(sys.STDOUT, " ") catch sys.exit(1);
