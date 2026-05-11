@@ -77,8 +77,18 @@ pub const Tty = struct {
 
     /// Write bytes to the tty, interpreting ANSI escape sequences to update the console.
     pub fn write(self: *Tty, src: []const u8) usize {
-        for (src) |ch| {
-            self.putch(ch);
+        var i: usize = 0;
+        while (i < src.len) {
+            // Write everything up to the next escape byte in one chunk (performance)
+            if (self.esc_state == .normal and src[i] != 0x1B) {
+                const start = i;
+                while (i < src.len and src[i] != 0x1B) : (i += 1) {}
+                self.console.puts(src[start..i]);
+                continue;
+            }
+
+            self.putch(src[i]);
+            i += 1;
         }
         return src.len;
     }

@@ -120,6 +120,7 @@ pub const Readline = struct {
 
     fn insert(self: *Readline, ch: u8) void {
         if (self.len >= MAX_LINE) return;
+        const redraw_start = self.cursor;
         // Shift tail rightward to make room
         var i = self.len;
         while (i > self.cursor) : (i -= 1) {
@@ -128,39 +129,43 @@ pub const Readline = struct {
         self.buf[self.cursor] = ch;
         self.len += 1;
         self.cursor += 1;
-        self.redraw();
+        self.redrawFrom(redraw_start);
     }
 
     fn deleteBackward(self: *Readline) void {
         if (self.cursor == 0) return;
         self.cursor -= 1;
+        const redraw_start = self.cursor;
         var i = self.cursor;
         while (i < self.len - 1) : (i += 1) {
             self.buf[i] = self.buf[i + 1];
         }
         self.len -= 1;
-        self.redraw();
+        self.redrawFrom(redraw_start);
     }
 
     fn deleteForward(self: *Readline) void {
         if (self.cursor >= self.len) return;
+        const redraw_start = self.cursor;
         var i = self.cursor;
         while (i < self.len - 1) : (i += 1) {
             self.buf[i] = self.buf[i + 1];
         }
         self.len -= 1;
-        self.redraw();
+        self.redrawFrom(redraw_start);
     }
 
     fn killToEol(self: *Readline) void {
+        const redraw_start = self.cursor;
         self.len = self.cursor;
-        self.redraw();
+        self.redrawFrom(redraw_start);
     }
 
     fn killLine(self: *Readline) void {
+        const redraw_start = if (self.cursor < self.len) self.cursor else self.len;
         self.cursor = 0;
         self.len = 0;
-        self.redraw();
+        self.redrawFrom(redraw_start);
     }
 
     fn moveLeft(self: *Readline) void {
@@ -223,22 +228,30 @@ pub const Readline = struct {
         self.syncCursorOnly();
     }
 
-    // Rebuilds the editing row on screen without any flicker.
+    // Rebuilds the full editing row on screen without any flicker.
     fn redraw(self: *Readline) void {
+        self.redrawFrom(0);
+    }
+
+    // Rewrites only the changed suffix of the editing row and then restores the cursor.
+    fn redrawFrom(self: *Readline, start: u32) void {
+        const redraw_start = @min(start, self.len);
+        const old_rendered_len = self.rendered_len;
         // Build the full ANSI redraw sequence into a stack buffer to issue a single write.
         var out: [16 + (MAX_LINE * 2) + 32]u8 = undefined;
         var pos: u32 = 0;
 
-        // Hide cursor, move to start of editing area
+        // Hide cursor, move to the start of the changed region.
         pos = appendShowCursor(&out, pos, false);
-        pos = appendCursorMove(&out, pos, self.row, self.col);
+        pos = appendCursorMove(&out, pos, self.row, self.col + redraw_start);
 
-        // Write buffer content
-        @memcpy(out[pos..][0..self.len], self.buf[0..self.len]);
-        pos += self.len;
+        // Rewrite only the changed suffix.
+        const tail_len = self.len - redraw_start;
+        @memcpy(out[pos..][0..tail_len], self.buf[redraw_start..self.len]);
+        pos += tail_len;
 
         // Clear any stale tail from the previously rendered line.
-        const trailing = self.rendered_len -| self.len;
+        const trailing = old_rendered_len -| self.len;
         var i: u32 = 0;
         while (i < trailing) : (i += 1) {
             out[pos] = ' ';

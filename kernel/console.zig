@@ -332,11 +332,13 @@ pub const Console = struct {
     }
 
     pub fn puts(self: *Console, s: []const u8) void {
-        if (self.backend == .framebuf and self.cursor_visible and s.len > 1) {
+        if (self.backend == .framebuf and s.len > 1) {
+            // Hide the cursor while rendering a string, then restore it at the end (performance)
+            const old_cursor_visible = self.cursor_visible;
             self.cursor_visible = false;
             self.syncCursor();
             defer {
-                self.cursor_visible = true;
+                self.cursor_visible = old_cursor_visible;
                 self.syncCursor();
             }
             for (s) |ch| {
