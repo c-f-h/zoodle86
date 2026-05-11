@@ -336,6 +336,10 @@ fn sys_getcursor() u32 {
     return (con.row << 16) | con.col;
 }
 
+fn sys_ioctl(fd: u32, command: u32, arg: u32) !u32 {
+    return try filedesc.ioctlFd(task.getCurrentTask(), fd, command, arg);
+}
+
 fn sys_yield() u32 {
     _ = kernel.kernel_yield();
     return 0;
@@ -373,6 +377,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .SetChildReap => sys_set_child_reap(),
         .KShell => sys_kshell(arg1),
         .GetCursor => sys_getcursor(),
+        .Ioctl => sys_ioctl(arg1, arg2, arg3),
         else => error.InvalidArgument,
     }) catch |err| {
         frame.setSyscallResult(0, @intFromEnum(mapError(err)));

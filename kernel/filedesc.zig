@@ -1,9 +1,9 @@
+const std = @import("std");
+
 const console = @import("console.zig");
 const fs = @import("fs.zig");
-const std = @import("std");
 const task = @import("task.zig");
 const pipe = @import("pipe.zig");
-const keyboard = @import("keyboard.zig");
 const kernel = @import("kernel.zig");
 const tty = @import("tty.zig");
 const abi = @import("abi");
@@ -196,6 +196,14 @@ pub const FileDesc = union(enum) {
             else => error.BadFd,
         };
     }
+
+    /// Applies a device-specific ioctl request to this descriptor.
+    pub fn ioctl(self: *FileDesc, command: u32, arg: u32) FiledescError!u32 {
+        return switch (self.*) {
+            .tty => |tty_info| try tty_info.handle.ioctl(command, arg),
+            else => error.InvalidArgument,
+        };
+    }
 };
 
 /// Creates a fresh pipe and returns descriptors for its read and write ends.
@@ -225,6 +233,7 @@ pub const FiledescError = fs.WriteFileError || error{
     AccessDenied,
     BadFd,
     FileInUse,
+    InvalidArgument,
     InvalidFlags,
     InvalidSeek,
     ProcessFileTableFull,
@@ -296,9 +305,7 @@ fn openTty(index: u8, access_mode: u32) ?FileDesc {
 
 fn tryOpenSpecialFile(path: []const u8, flags: u32) !?FileDesc {
     const access_mode = try validateOpenFlags(flags);
-    if (std.mem.eql(u8, path, "/dev/keyboard")) {
-        return try keyboard.getKeyEventPipe();
-    } else if (std.mem.eql(u8, path, "/dev/tty0")) {
+    if (std.mem.eql(u8, path, "/dev/tty0")) {
         return openTty(0, access_mode);
     } else if (std.mem.eql(u8, path, "/dev/tty1")) {
         return openTty(1, access_mode);
@@ -440,6 +447,12 @@ pub fn writeToFd(ptask: *task.Task, fd: u32, src: []const u8) WriteError!usize {
 
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return slot.write(src);
+}
+
+/// Applies an ioctl request to a task-owned descriptor.
+pub fn ioctlFd(ptask: *task.Task, fd: u32, command: u32, arg: u32) FiledescError!u32 {
+    const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
+    return slot.ioctl(command, arg);
 }
 
 /// Repositions a task-owned file descriptor and returns the resulting byte offset.

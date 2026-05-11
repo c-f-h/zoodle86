@@ -1,3 +1,4 @@
+const abi = @import("abi");
 const console = @import("console.zig");
 const ansi = @import("ansi.zig");
 const kernel = @import("kernel.zig");
@@ -10,18 +11,26 @@ const std = @import("std");
 pub const CANON_LINE_MAX = 256;
 const COOKED_BUF_SIZE = 4096;
 
+/// Tty operating mode.
+pub const Mode = enum {
+    canonical,
+    raw,
+};
+
 const CursorPos = struct {
     row: u32,
     col: u32,
 };
 
-/// A simple canonical-mode tty bound to one console.
+/// A tty bound to one console, operating in canonical or raw mode.
 pub const Tty = struct {
     // Whether this tty is initialized and can be used
     available: bool = false,
+    // Operating mode - buffered line editing or raw key events
+    mode: Mode = .canonical,
     // The console this tty instance is bound to
     console: *console.Console,
-    // Processed data waiting for a reader
+    // Processed data waiting for a reader (canonical) or raw abi.KeyEvent bytes (raw)
     cooked: ringbuf.RingBuf = undefined,
     // Tasks waiting for data to become available
     read_waiters: waitqueue.WaitQueue = undefined,
@@ -50,23 +59,34 @@ pub const Tty = struct {
         };
     }
 
-    /// Release the cooked-input buffer.
+    /// Release the buffer.
     pub fn deinit(self: *Tty, allocator: std.mem.Allocator) void {
         if (!self.available) return;
         self.cooked.deinit(allocator);
         self.available = false;
     }
 
-    /// Read cooked bytes from the tty, blocking until a committed line or EOF is available.
+    /// Read bytes from the tty, blocking until data is available.
     pub fn read(self: *Tty, dest: []u8) error{OutOfMemory}!usize {
         while (true) {
-            if (self.eof_pending and self.cooked.empty()) {
-                self.eof_pending = false;
-                return 0;
+            switch (self.mode) {
+                .canonical => {
+                    if (self.eof_pending and self.cooked.empty()) {
+                        self.eof_pending = false;
+                        return 0;
+                    }
+                    if (!self.cooked.empty()) {
+                        return self.cooked.read(dest);
+                    }
+                },
+                .raw => {
+                    if (!self.cooked.empty()) {
+                        return self.cooked.read(dest);
+                    }
+                },
             }
-            if (!self.cooked.empty()) {
-                return self.cooked.read(dest);
-            }
+            // No data available; show cursor and wait for user input
+            self.console.setCursorVisible(true);
             try task.getCurrentTask().waitInQueue(&self.read_waiters);
             _ = kernel.kernel_yield();
         }
@@ -82,31 +102,70 @@ pub const Tty = struct {
         return self.cooked.buf.len;
     }
 
-    /// Consume one key event into canonical-mode input state.
+    /// Consume one key event according to the current mode.
     pub fn handleKeyEvent(self: *Tty, ev: *const keyboard.KeyEvent) void {
-        if (ev.pressed == 0) return;
-
-        if ((ev.modifiers & keyboard.MOD_CTRL) != 0 and ev.keycode == keyboard.VK_D) {
-            if (self.line_len == 0) {
-                self.eof_pending = true;
+        switch (self.mode) {
+            .raw => {
+                if (ev.pressed == 0) return;
+                const key_event = abi.KeyEvent{
+                    .keycode = ev.keycode,
+                    .modifiers = ev.modifiers,
+                    .ascii = ev.ascii,
+                };
+                if (self.cooked.bytesFree() < @sizeOf(abi.KeyEvent)) return;
+                _ = self.cooked.write(std.mem.asBytes(&key_event));
                 _ = self.read_waiters.wakeOne(0);
-            } else {
-                self.commitLine(false);
-            }
-            return;
-        }
-
-        switch (ev.keycode) {
-            keyboard.VK_ENTER => {
-                self.echoNewline();
-                self.commitLine(true);
             },
-            keyboard.VK_BACKSPACE => self.handleBackspace(),
-            else => {
-                if (ev.ascii >= 0x20 and ev.ascii < 0x7F) {
-                    self.handlePrintable(ev.ascii);
+            .canonical => {
+                if (ev.pressed == 0) return;
+
+                if ((ev.modifiers & keyboard.MOD_CTRL) != 0 and ev.keycode == keyboard.VK_D) {
+                    if (self.line_len == 0) {
+                        self.eof_pending = true;
+                        _ = self.read_waiters.wakeOne(0);
+                    } else {
+                        self.commitLine(false);
+                    }
+                    return;
+                }
+
+                switch (ev.keycode) {
+                    keyboard.VK_ENTER => {
+                        self.echoNewline();
+                        self.commitLine(true);
+                        self.console.setCursorVisible(false);
+                    },
+                    keyboard.VK_BACKSPACE => self.handleBackspace(),
+                    else => {
+                        if (ev.ascii >= 0x20 and ev.ascii < 0x7F) {
+                            self.handlePrintable(ev.ascii);
+                        }
+                    },
                 }
             },
+        }
+    }
+
+    /// Switch between canonical and raw mode, discarding all buffered contents.
+    pub fn switchMode(self: *Tty, mode: Mode) void {
+        self.mode = mode;
+        self.cooked.clear();
+        self.line_len = 0;
+        self.eof_pending = false;
+    }
+
+    /// Handles tty-specific ioctl commands and returns 0 on success.
+    pub fn ioctl(self: *Tty, command: u32, arg: u32) error{InvalidArgument}!u32 {
+        switch (command) {
+            abi.IOCTL_TTY_SET_MODE => {
+                self.switchMode(switch (arg) {
+                    abi.TTY_MODE_CANONICAL => Mode.canonical,
+                    abi.TTY_MODE_RAW => Mode.raw,
+                    else => return error.InvalidArgument,
+                });
+                return 0;
+            },
+            else => return error.InvalidArgument,
         }
     }
 

@@ -54,6 +54,13 @@ pub const RingBuf = struct {
         return num_write;
     }
 
+    /// Discard all buffered data without reading.
+    pub fn clear(self: *RingBuf) void {
+        self.size = 0;
+        self.readat = 0;
+        self.writeat = 0;
+    }
+
     /// Reads up to `out.len` bytes and returns the number removed.
     pub fn read(self: *RingBuf, out: []u8) usize {
         const num_read = @min(out.len, self.size);

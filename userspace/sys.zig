@@ -67,6 +67,9 @@ pub const MOD_SHIFT = abi.MOD_SHIFT;
 pub const MOD_ALT = abi.MOD_ALT;
 pub const MOD_CTRL = abi.MOD_CTRL;
 pub const KeyEvent = abi.KeyEvent;
+pub const IOCTL_TTY_SET_MODE = abi.IOCTL_TTY_SET_MODE;
+pub const TTY_MODE_CANONICAL = abi.TTY_MODE_CANONICAL;
+pub const TTY_MODE_RAW = abi.TTY_MODE_RAW;
 
 pub const SyscallError = error{
     ENOENT,
@@ -239,6 +242,11 @@ pub fn getpid() u32 {
 pub fn getCursor() struct { row: u32, col: u32 } {
     const packed_pos = syscall(.GetCursor, 0, 0, 0) catch unreachable;
     return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
+}
+
+/// Applies a device-specific ioctl request to an open file descriptor.
+pub fn ioctl(fd: u32, command: u32, arg: u32) SyscallError!u32 {
+    return syscall(.Ioctl, fd, command, arg);
 }
 
 pub const FdRemap = abi.FdRemap;

@@ -46,12 +46,19 @@ pub const Syscall = enum(u32) {
     Unlink = 87,
     Rename = 82,
     Ftruncate = 93,
+    Ioctl = 156,
     Spawn = 1001,
     SetChildReap = 1002,
     KShell = 1003,
     GetCursor = 1004,
     _,
 };
+
+/// Ioctl request numbers
+pub const IOCTL_TTY_SET_MODE: u32 = 1;
+
+pub const TTY_MODE_CANONICAL: u32 = 0;
+pub const TTY_MODE_RAW: u32 = 1;
 
 /// Userspace-visible errno values returned in `ecx` after a syscall.
 pub const Errno = enum(u32) {

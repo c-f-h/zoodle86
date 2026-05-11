@@ -148,11 +148,6 @@ pub fn consumeKeyEvent(event: *const keyboard.KeyEvent) void {
         return;
     }
     if (event.pressed != 0) {
-        // If someone is listening on the keyboard event pipe, it takes
-        // precedence over the foreground TTY. This is for readline compatibility
-        // until TTY is rich enough to support all its features.
-        if (keyboard.pushRawKeyEventToPipe(event.*))
-            return;
         if (foreground_tty) |focused| {
             focused.handleKeyEvent(event);
             return;

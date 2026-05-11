@@ -288,37 +288,3 @@ pub export fn pollingLoop() void {
     // Re-enable interrupts
     asm volatile ("sti");
 }
-
-var pipe_initialized: bool = false;
-var pipe_writer_fd: filedesc.FileDesc = undefined;
-
-/// Get a pipe FileDesc for reading keyboard events as StdinKeyEvent structs.
-pub fn getKeyEventPipe() error{ OutOfMemory, BadFd }!filedesc.FileDesc {
-    if (!pipe_initialized) {
-        var reader, const writer = try filedesc.makePipe();
-        try reader.close(); // readers will be created on demand
-        pipe_writer_fd = writer;
-        pipe_initialized = true;
-    }
-    return filedesc.newPipeReader(pipe_writer_fd.pipe.handle);
-}
-
-/// Pushes a key event into the event pipe; drops the event if the buffer is full or there are no readers.
-pub fn pushRawKeyEventToPipe(ev: KeyEvent) bool {
-    if (!pipe_initialized) return false;
-    if (pipe_writer_fd.pipe.handle.num_readers == 0) return false; // no readers, drop event
-    if (pipe_writer_fd.pipe.handle.bytesFree() < @sizeOf(abi.KeyEvent)) return false; // not enough space, drop event
-
-    const write_ev = abi.KeyEvent{
-        .keycode = ev.keycode,
-        .modifiers = ev.modifiers,
-        .ascii = ev.ascii,
-    };
-
-    const written = pipe_writer_fd.pipe.handle.write(std.mem.asBytes(&write_ev));
-    if (written != @sizeOf(abi.KeyEvent)) {
-        // Shouldn't happen due to check; possible race condition once kernel is reentrant
-        @panic("partial write to keyevent pipe");
-    }
-    return true;
-}

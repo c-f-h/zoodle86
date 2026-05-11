@@ -18,7 +18,6 @@ pub const Readline = struct {
     prompt: []const u8 = "",
     row: u32 = 0, // console row where editing takes place
     col: u32 = 0, // console column right after the prompt
-    key_event_fd: u32 = sys.INVALID_FD,
 
     /// Prepare the readline state, print the prompt, and record the cursor anchor.
     pub fn init(self: *Readline, prompt: []const u8) void {
@@ -33,38 +32,27 @@ pub const Readline = struct {
         self.redraw();
     }
 
-    /// Close the internal keyboard event descriptor if it is open.
-    fn closeKeyEventFd(self: *Readline) void {
-        if (self.key_event_fd != sys.INVALID_FD) {
-            sys.close(self.key_event_fd) catch {};
-            self.key_event_fd = sys.INVALID_FD;
-        }
-    }
-
     /// Block until the user commits a line (Enter) and return the committed slice.
     /// Returns null when the user presses Ctrl-D on an empty line (EOF signal).
-    pub fn readLine(self: *Readline) error{EOF}![]const u8 {
-        // Workaround for tty and keyboard events not being synchronized: close the event stream
-        // after every call to tell the kernel that we are no longer listening on it.
-        self.key_event_fd = sys.open("/dev/keyboard", .{ .open_mode = .ReadOnly }) catch {
-            return error.EOF;
-        };
-        defer self.closeKeyEventFd();
-        defer showCursor(false); // Hide cursor when done with editing
+    pub fn readLine(self: *Readline) (sys.SyscallError || error{EOF})![]const u8 {
+        // Switch tty to raw mode to get raw key events and disable echo
+        _ = try sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_RAW);
+
+        // Hide cursor and switch tty back to canonical mode when done with editing
+        defer showCursor(false);
+        defer _ = sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_CANONICAL) catch {};
 
         while (true) {
-            const ev = try self.readKey();
+            const ev = try readKey();
             if (try self.handleKey(ev)) |done| {
                 return done;
             }
         }
     }
 
-    fn readKey(self: *Readline) error{EOF}!sys.KeyEvent {
-        if (self.key_event_fd == sys.INVALID_FD) return error.EOF;
-
+    fn readKey() error{EOF}!sys.KeyEvent {
         var bytes: [@sizeOf(sys.KeyEvent)]u8 = undefined;
-        const count = sys.read(self.key_event_fd, &bytes) catch return error.EOF;
+        const count = sys.read(sys.STDIN, &bytes) catch return error.EOF;
         if (count == 0) return error.EOF;
         if (count != bytes.len) return error.EOF;
         return @bitCast(bytes);

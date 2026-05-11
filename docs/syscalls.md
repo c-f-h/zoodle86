@@ -2,6 +2,8 @@
 
 User-mode programs invoke syscalls via `int 0x80` with the syscall number in `eax` and up to three arguments in `ebx`, `ecx`, `edx`. On return, `eax` holds the syscall return value and `ecx` holds the errno value (`0` on success).
 
+Syscall numbers are either the same as that of a Linux syscall which is similar in name and functionality, or > 1000 for project-native ones which have no direct Linux equivalent.
+
 | Syscall | Number | Arguments | Returns | Notes |
 |---------|--------|-----------|---------|-------|
 | `read` | 0 | fd, buf_offset, count | bytes read | Reads from filesystem-backed, pipe, or tty fds |
@@ -25,6 +27,7 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 | `rename` | 82 | old_path_slice, new_path_slice | 0 | Atomically moves `old_path` to `new_path`; replaces any existing regular file at `new_path`. |
 | `unlink` | 87 | path_offset, path_len | 0 | Removes a filesystem entry; fails if the file is still open by any task |
 | `ftruncate` | 93 | fd, length | 0 | Resizes a filesystem-backed fd; zero-fills when extending and requires write access |
+| `ioctl` | 156 | fd, command, arg | device-specific | Currently supports tty mode switching via `IOCTL_TTY_SET_MODE` with `TTY_MODE_CANONICAL`/`TTY_MODE_RAW`. |
 | `spawn` | 1001 | argv_slice_ptr, opts_ptr | child PID | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable. `opts_ptr` is 0 (no options) or a pointer to a `SpawnOpts` struct whose `fd_remaps` field is an `AbiSlice` of `(dst_u32, src_u32)` pairs; for each pair the child's `fd[dst]` is set to a copy of the parent's `fd[src]` |
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
 | `kshell` | 1003 | cmdline_slice_ptr | 0 | Executes a kernel shell command string. |
