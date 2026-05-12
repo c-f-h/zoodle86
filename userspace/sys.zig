@@ -1,4 +1,4 @@
-const abi = @import("abi");
+pub const abi = @import("abi");
 
 pub const STDIN: u32 = 0;
 pub const STDOUT: u32 = 1;

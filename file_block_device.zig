@@ -23,7 +23,11 @@ pub const FileBlockDevice = struct {
     /// `block_count` is the number of 512-byte sectors in the image.
     pub fn init(file: std.Io.File, io_ctx: std.Io, block_count: u32) FileBlockDevice {
         return .{
-            .block_dev = .{ .vtable = &vtable, .block_count = block_count },
+            .block_dev = .{
+                .vtable = &vtable,
+                .block_count = block_count,
+                .device = .{},
+            },
             .file = file,
             .io_ctx = io_ctx,
         };

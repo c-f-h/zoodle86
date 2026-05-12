@@ -44,9 +44,11 @@ pub const Tty = struct {
     echo_positions: [CANON_LINE_MAX + 1]CursorPos = undefined,
     // ANSI sequence parser
     ansi: ansi.Ansi = undefined,
+    // Minor device number (0 for primary console, 1 for secondary)
+    device_minor: u8 = 0,
 
     /// Initialize a tty for the given console.
-    pub fn init(self: *Tty, allocator: std.mem.Allocator, con: *console.Console) !void {
+    pub fn init(self: *Tty, allocator: std.mem.Allocator, con: *console.Console, device_minor: u8) !void {
         self.* = .{
             .console = con,
             .cooked = try ringbuf.RingBuf.init(allocator, COOKED_BUF_SIZE),
@@ -57,6 +59,7 @@ pub const Tty = struct {
         self.ansi = ansi.Ansi{
             .console = con,
         };
+        self.device_minor = device_minor;
     }
 
     /// Release the buffer.

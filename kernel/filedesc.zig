@@ -177,6 +177,8 @@ pub const FileDesc = union(enum) {
                     .nlink = 1,
                     .kind = .Pipe,
                     .flags = flags,
+                    .on_device = .{},
+                    .device = .{},
                 };
             },
             .tty => |tty_info| blk: {
@@ -191,6 +193,8 @@ pub const FileDesc = union(enum) {
                     .nlink = 1,
                     .kind = .CharDevice,
                     .flags = flags,
+                    .on_device = .{},
+                    .device = .{ .major = abi.DeviceMajor.Tty, .minor = tty_info.handle.device_minor },
                 };
             },
             else => error.BadFd,
@@ -549,8 +553,8 @@ fn syntheticCharStat(access_flags: u32) Stat {
     };
 }
 
-fn buildOpenFileStatFlags(open_file: *const OpenFile) u32 {
-    var flags: u32 = 0;
+fn buildOpenFileStatFlags(open_file: *const OpenFile) u8 {
+    var flags: u8 = 0;
     if (open_file.readable) flags |= fs.STAT_FLAG_READABLE;
     if (open_file.writable) flags |= fs.STAT_FLAG_WRITABLE;
     if (open_file.append) flags |= fs.STAT_FLAG_APPEND;

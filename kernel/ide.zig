@@ -2,6 +2,7 @@ const io = @import("io.zig");
 const block_device = @import("block_device.zig");
 const BlockDevice = block_device.BlockDevice;
 const BlockError = block_device.BlockError;
+const abi = @import("abi");
 
 pub const Bus = struct {
     io_base: u16,
@@ -305,7 +306,11 @@ pub const IdeBlockDevice = struct {
     /// Initializes an IdeBlockDevice for `drive` with `sector_count` total blocks.
     pub fn init(drive: Drive, sector_count: u32) IdeBlockDevice {
         return .{
-            .block_dev = .{ .vtable = &vtable, .block_count = sector_count },
+            .block_dev = .{
+                .vtable = &vtable,
+                .block_count = sector_count,
+                .device = .{ .major = abi.DeviceMajor.Ide, .minor = if (drive == .master) 0 else 1 },
+            },
             .drive = drive,
         };
     }

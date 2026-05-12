@@ -363,7 +363,7 @@ pub const FileSystem = struct {
     pub fn statInode(self: *const FileSystem, inode_index: InodeT) FsError!Stat {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
-        return buildStatForInode(inode_index, &inode);
+        return self.buildStatForInode(inode_index, &inode);
     }
 
     /// Returns stat-like metadata for the object referenced by `path`.
@@ -1003,7 +1003,7 @@ pub const FileSystem = struct {
         return inode;
     }
 
-    fn buildStatForInode(inode_index: InodeT, inode: *const Inode) FsError!Stat {
+    fn buildStatForInode(self: *const FileSystem, inode_index: InodeT, inode: *const Inode) FsError!Stat {
         const kind = switch (inode.kind) {
             .File => StatKind.Regular,
             .Directory => StatKind.Directory,
@@ -1017,6 +1017,8 @@ pub const FileSystem = struct {
             .nlink = inode.link_count,
             .kind = kind,
             .flags = 0,
+            .on_device = self.block_dev.device,
+            .device = .{},
         };
     }
 

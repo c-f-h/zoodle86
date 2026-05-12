@@ -121,18 +121,35 @@ pub const SEEK_CUR: u32 = @intFromEnum(SeekWhence.Cur);
 pub const SEEK_END: u32 = @intFromEnum(SeekWhence.End);
 
 /// Categorizes the underlying object described by `Stat`.
-pub const FileKind = enum(u32) {
+pub const FileKind = enum(u8) {
     Unknown = 0,
     Regular = 1,
     Directory = 2,
     CharDevice = 3,
-    Pipe = 4,
+    BlockDevice = 4,
+    Pipe = 5,
+    Symlink = 6,
 };
 
-pub const STAT_FLAG_READABLE: u32 = 1 << 0;
-pub const STAT_FLAG_WRITABLE: u32 = 1 << 1;
-pub const STAT_FLAG_APPEND: u32 = 1 << 2;
-pub const STAT_FLAG_SYNTHETIC: u32 = 1 << 3;
+pub const STAT_FLAG_READABLE: u8 = 1 << 0;
+pub const STAT_FLAG_WRITABLE: u8 = 1 << 1;
+pub const STAT_FLAG_APPEND: u8 = 1 << 2;
+pub const STAT_FLAG_SYNTHETIC: u8 = 1 << 3;
+
+pub const DeviceMajor = enum(u8) {
+    Unnamed = 0,
+    Ide = 3,
+    Tty = 4,
+};
+
+pub const Device = extern struct {
+    major: DeviceMajor = .Unnamed,
+    minor: u8 = 0,
+
+    pub fn isEmpty(self: Device) bool {
+        return self.major == .Unnamed and self.minor == 0;
+    }
+};
 
 /// Stable stat-like file metadata returned by `stat` and `fstat`.
 pub const Stat = extern struct {
@@ -141,8 +158,10 @@ pub const Stat = extern struct {
     blocks: u32,
     blksize: u32,
     nlink: u32,
+    on_device: Device, // device ID of the filesystem containing this file
+    device: Device, // device ID - only valid for character and block devices, otherwise {0, 0}
     kind: FileKind,
-    flags: u32,
+    flags: u8,
 };
 
 /// Fixed-size directory entry record returned by the getdents syscall.
@@ -151,7 +170,7 @@ pub const DirEntry = extern struct {
     size: u32,
     kind: FileKind,
     name_len: u8,
-    reserved: [3]u8 = @splat(0),
+    reserved: [6]u8 = @splat(0),
     name: [DIRENT_NAME_MAX]u8 = @splat(0),
 };
 

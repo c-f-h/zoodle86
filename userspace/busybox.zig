@@ -213,11 +213,13 @@ fn rmMain(argv: []const []const u8) noreturn {
 
 fn statKindStr(kind: sys.FileKind) []const u8 {
     return switch (kind) {
+        .Unknown => "unknown",
         .Regular => "regular file",
         .Directory => "directory",
-        .CharDevice => "character special file",
+        .CharDevice => "character special",
+        .BlockDevice => "block special",
         .Pipe => "pipe",
-        .Unknown => "unknown",
+        .Symlink => "symbolic link",
     };
 }
 
@@ -262,10 +264,22 @@ fn statMain(argv: []const []const u8) noreturn {
             continue;
         };
 
-        const line3 = std.fmt.bufPrint(&buf, " Inode: {d:<15} Links: {d:<11} Access: {s}\n", .{
-            st.inode, st.nlink, statAccessStr(st.flags),
+        var dev_buf: [32]u8 = undefined;
+        const dev_str = if (st.device.isEmpty())
+            ""
+        else
+            std.fmt.bufPrint(&dev_buf, "Device: {x:02},{x:02}", .{ st.on_device.major, st.on_device.minor }) catch "unknown device";
+
+        const line3 = std.fmt.bufPrint(&buf, "  On Dev: {x:02},{x:02}   Inode: {d:<10} Links: {d:<4} {s}\n", .{
+            @intFromEnum(st.on_device.major), st.on_device.minor, st.inode, st.nlink, dev_str,
         }) catch continue;
         sys.writeAll(sys.STDOUT, line3) catch {
+            ok = false;
+            continue;
+        };
+
+        const line4 = std.fmt.bufPrint(&buf, "  Access: {s}\n", .{statAccessStr(st.flags)}) catch continue;
+        sys.writeAll(sys.STDOUT, line4) catch {
             ok = false;
             continue;
         };

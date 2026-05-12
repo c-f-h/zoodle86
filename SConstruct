@@ -198,7 +198,7 @@ def build_stage2(target, source, env):
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             stage2_video_obj,
-            str(source_path),
+            *zig_module_args(source_path),
         ]
     )
 
@@ -345,7 +345,7 @@ def build_fs_image(target, source, env):
     if BOOT_IMG.exists():
         run(
             [
-                str(ZIG_EXE), "run", str(ROOT / "extract_fs.zig"),
+                str(ZIG_EXE), "run", *zig_module_args(ROOT / "extract_fs.zig"),
                 "--",
                 str(BOOT_IMG.absolute()),
                 str(FS_IMAGE_DIR.absolute()),
@@ -386,7 +386,7 @@ def build_fs_image(target, source, env):
 
     run(
         [
-            str(ZIG_EXE), "run", str(ROOT / "compile_fs.zig"),
+            str(ZIG_EXE), "run", *zig_module_args(ROOT / "compile_fs.zig"),
             "--",
             str(FS_IMAGE_DIR.absolute()),
             str(IMAGE_SIZE_SECTORS),

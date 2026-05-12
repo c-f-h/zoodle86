@@ -1,3 +1,5 @@
+const abi = @import("abi");
+
 /// Block device abstraction layer.
 ///
 /// Provides a vtable-based interface for 512-byte sector I/O.
@@ -18,6 +20,7 @@ pub const BlockDevice = struct {
     vtable: *const VTable,
     /// Total number of 512-byte blocks available on this device.
     block_count: u32,
+    device: abi.Device,
 
     pub const VTable = struct {
         /// Read one 512-byte block at `lba` into `buf`.

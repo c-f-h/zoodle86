@@ -403,7 +403,7 @@ fn kernel_enter() !noreturn {
     asm volatile ("sti");
 
     try mountFs();
-    try primary_tty.init(alloc, &console.primary);
+    try primary_tty.init(alloc, &console.primary, 0);
     foreground_tty = &primary_tty;
 
     if (graphical) {
@@ -427,7 +427,7 @@ fn kernel_enter() !noreturn {
         try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "userspace programs");
         try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows);
         secondary_console.vconsole_instance = &secondary_vconsole;
-        try secondary_tty.init(alloc, &secondary_console);
+        try secondary_tty.init(alloc, &secondary_console, 1);
         foreground_tty = &secondary_tty;
 
         // Fill desktop background once, then draw each window frame on top.
