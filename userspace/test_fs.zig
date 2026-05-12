@@ -90,7 +90,7 @@ fn expectBytes(actual: []const u8, expected: []const u8) !void {
     if (!std.mem.eql(u8, actual, expected)) return error.DataMismatch;
 }
 
-fn expectKind(actual: sys.FileKind, expected: sys.FileKind) !void {
+fn expectKind(actual: sys.InodeKind, expected: sys.InodeKind) !void {
     if (actual != expected) return error.UnexpectedKind;
 }
 

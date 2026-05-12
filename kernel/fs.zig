@@ -15,12 +15,7 @@ pub const VERSION: u16 = 2;
 
 pub const InodeT = u16;
 
-const InodeKind = enum(u8) {
-    Free = 0,
-    File = 1,
-    Directory = 2,
-    _,
-};
+const InodeKind = abi.InodeKind;
 
 pub const BLOCK_SIZE = 512;
 
@@ -43,7 +38,8 @@ pub const Inode = extern struct {
     direct_blocks: [DIRECT_BLOCK_COUNT]u32 = @splat(BLOCK_POINTER_NONE),
     indirect_block: u32 = BLOCK_POINTER_NONE,
     double_indirect_block: u32 = BLOCK_POINTER_NONE,
-    reserved: [16]u8 = @splat(0),
+    reserved: [14]u8 = @splat(0),
+    device: abi.Device = .{}, // for character and block devices, otherwise {0, 0}
 };
 
 pub const DirectoryEntry = extern struct {
@@ -101,7 +97,6 @@ pub const FileInfo = struct {
     is_directory: bool,
 };
 
-pub const StatKind = abi.FileKind;
 pub const STAT_FLAG_READABLE = abi.STAT_FLAG_READABLE;
 pub const STAT_FLAG_WRITABLE = abi.STAT_FLAG_WRITABLE;
 pub const STAT_FLAG_APPEND = abi.STAT_FLAG_APPEND;
@@ -387,7 +382,7 @@ pub const FileSystem = struct {
         return entry.inode_index;
     }
 
-    fn createFileInternal(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, kind: InodeKind, size: u32) FsError!InodeT {
+    fn createFileInternal(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, kind: InodeKind, size: u32, device: abi.Device) FsError!InodeT {
         if (!validateName(name)) return error.InvalidName;
         if ((try self.findDirEntry(dir_inode_index, name)) != null) return error.FileExists;
 
@@ -400,6 +395,7 @@ pub const FileSystem = struct {
         inode.kind = kind;
         inode.size_bytes = size;
         inode.link_count = 1;
+        inode.device = device;
         if (size > 0)
             try self.allocBlockTree(&inode, num_blocks);
         try self.writeInode(inode_index, &inode);
@@ -425,7 +421,7 @@ pub const FileSystem = struct {
 
     /// Creates a new empty regular file in the given directory and returns its inode index.
     pub fn createFile(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
-        return self.createFileInternal(dir_inode_index, name, InodeKind.File, 0);
+        return self.createFileInternal(dir_inode_index, name, InodeKind.Regular, 0, .{});
     }
 
     /// Creates a new hard link to an existing regular-file inode in the given directory.
@@ -439,7 +435,7 @@ pub const FileSystem = struct {
         try self.writeDirEntry(dir_inode_index, entry_index, &DirectoryEntry.init(
             name,
             target_inode_index,
-            InodeKind.File,
+            InodeKind.Regular,
         ));
 
         self.superblock.file_count += 1;
@@ -455,7 +451,12 @@ pub const FileSystem = struct {
 
     /// Creates a new empty directory in the given directory and returns its inode index.
     pub fn createDirectoryAt(self: *FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!InodeT {
-        return self.createFileInternal(dir_inode_index, name, InodeKind.Directory, ROOT_DIRECTORY_BYTES);
+        return self.createFileInternal(dir_inode_index, name, InodeKind.Directory, ROOT_DIRECTORY_BYTES, .{});
+    }
+
+    /// Creates a new special file (character or block device) in the given directory and returns its inode index.
+    pub fn createSpecialFile(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, kind: InodeKind, device: abi.Device) FsError!InodeT {
+        return self.createFileInternal(dir_inode_index, name, kind, 0, device);
     }
 
     /// Returns the current byte length for a file identified by inode number.
@@ -607,7 +608,7 @@ pub const FileSystem = struct {
         var inode = try self.readInode(inode_index);
         if (inode.link_count == 0) return error.Corrupt;
         // Currently only links to regular files are supported
-        if (inode.kind != .File) return error.NotARegularFile;
+        if (inode.kind != .Regular) return error.NotARegularFile;
         if (inode.link_count == std.math.maxInt(u16)) return error.Corrupt;
 
         inode.link_count += 1;
@@ -636,7 +637,7 @@ pub const FileSystem = struct {
     pub fn deleteFile(self: *FileSystem, dir_inode_index: InodeT, index: u32) FsError!void {
         const entry = try self.readDirectoryEntry(dir_inode_index, index);
 
-        if (entry.kind != .File) return error.NotARegularFile;
+        if (entry.kind != .Regular) return error.NotARegularFile;
 
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(dir_inode_index, index, &cleared);
@@ -703,7 +704,7 @@ pub const FileSystem = struct {
             const entry = try self.readDirEntry(&root_inode, index);
             switch (entry.kind) {
                 .Free => {},
-                .File => {
+                .Regular => {
                     _ = try self.readFileInode(entry.inode_index);
                 },
                 .Directory => {
@@ -750,7 +751,7 @@ pub const FileSystem = struct {
         var index: usize = 0;
         while (index < DIRECTORY_ENTRY_COUNT) : (index += 1) {
             const entry = try self.readDirEntry(&dir_inode, index);
-            if (entry.kind != InodeKind.File) continue;
+            if (entry.kind != InodeKind.Regular) continue;
             if (entry.name_len != @as(u8, @intCast(name.len))) continue;
             if (std.mem.eql(u8, entry.name[0..entry.name_len], name)) {
                 return @intCast(index);
@@ -763,7 +764,7 @@ pub const FileSystem = struct {
     /// Given the name of a regular file in a directory, find its inode index.
     pub fn findFileInodeIndex(self: *const FileSystem, dir_inode_index: InodeT, name: []const u8) FsError!?InodeT {
         const entry = (try self.findDirEntry(dir_inode_index, name)) orelse return null;
-        if (entry.kind != InodeKind.File) return null;
+        if (entry.kind != InodeKind.Regular) return null;
         return entry.inode_index;
     }
 
@@ -792,7 +793,7 @@ pub const FileSystem = struct {
     pub fn readFileInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
-        if (inode.kind != .File) return error.NotARegularFile;
+        if (inode.kind != .Regular) return error.NotARegularFile;
         return inode;
     }
 
@@ -1005,8 +1006,8 @@ pub const FileSystem = struct {
 
     fn buildStatForInode(self: *const FileSystem, inode_index: InodeT, inode: *const Inode) FsError!Stat {
         const kind = switch (inode.kind) {
-            .File => StatKind.Regular,
-            .Directory => StatKind.Directory,
+            .Regular => InodeKind.Regular,
+            .Directory => InodeKind.Directory,
             else => return error.Corrupt,
         };
         return .{
@@ -1046,7 +1047,7 @@ pub const FileSystem = struct {
                 if (inode.double_indirect_block != BLOCK_POINTER_NONE) return error.Corrupt;
                 return;
             },
-            .File, .Directory => {},
+            .Regular, .Directory => {},
             else => return error.Corrupt,
         }
 
@@ -1262,7 +1263,7 @@ fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsErro
             if (entry.name_len != 0) return error.Corrupt;
             return;
         },
-        .File, .Directory => {},
+        .Regular, .Directory => {},
         else => return error.Corrupt,
     }
 

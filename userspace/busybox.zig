@@ -84,7 +84,7 @@ fn catMain(argv: []const []const u8) noreturn {
 // ls
 // ---------------------------------------------------------------------------
 
-fn lsEntryTag(kind: sys.FileKind) []const u8 {
+fn lsEntryTag(kind: sys.InodeKind) []const u8 {
     return if (kind == .Directory) "(DIR)" else ".....";
 }
 
@@ -102,7 +102,7 @@ fn lsBaseName(path: []const u8) []const u8 {
     return trimmed;
 }
 
-fn lsPrintEntry(name: []const u8, kind: sys.FileKind, size: u32) bool {
+fn lsPrintEntry(name: []const u8, kind: sys.InodeKind, size: u32) bool {
     var buf: [96]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, " {s:<16} {s:5} {d:>7}\n", .{
         name,
@@ -211,9 +211,9 @@ fn rmMain(argv: []const []const u8) noreturn {
 // stat
 // ---------------------------------------------------------------------------
 
-fn statKindStr(kind: sys.FileKind) []const u8 {
+fn statKindStr(kind: sys.InodeKind) []const u8 {
     return switch (kind) {
-        .Unknown => "unknown",
+        .Free => "unknown",
         .Regular => "regular file",
         .Directory => "directory",
         .CharDevice => "character special",

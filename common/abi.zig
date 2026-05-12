@@ -121,8 +121,8 @@ pub const SEEK_CUR: u32 = @intFromEnum(SeekWhence.Cur);
 pub const SEEK_END: u32 = @intFromEnum(SeekWhence.End);
 
 /// Categorizes the underlying object described by `Stat`.
-pub const FileKind = enum(u8) {
-    Unknown = 0,
+pub const InodeKind = enum(u8) {
+    Free = 0,
     Regular = 1,
     Directory = 2,
     CharDevice = 3,
@@ -160,7 +160,7 @@ pub const Stat = extern struct {
     nlink: u32,
     on_device: Device, // device ID of the filesystem containing this file
     device: Device, // device ID - only valid for character and block devices, otherwise {0, 0}
-    kind: FileKind,
+    kind: InodeKind,
     flags: u8,
 };
 
@@ -168,7 +168,7 @@ pub const Stat = extern struct {
 pub const DirEntry = extern struct {
     inode: u32,
     size: u32,
-    kind: FileKind,
+    kind: InodeKind,
     name_len: u8,
     reserved: [6]u8 = @splat(0),
     name: [DIRENT_NAME_MAX]u8 = @splat(0),
