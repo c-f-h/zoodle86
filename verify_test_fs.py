@@ -50,7 +50,7 @@ def expected_bytes(file_tag: bytes) -> bytes:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("Usage: verify_fs_stress.py <extracted-directory>")
+        print("Usage: verify_test_fs.py <extracted-directory>")
         return 2
 
     root = pathlib.Path(sys.argv[1])

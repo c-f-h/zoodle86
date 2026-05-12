@@ -28,7 +28,7 @@ scons run AUTOEXEC="serial on\nrun hello\nshutdown"
 
 The default value for `AUTOEXEC` is `"run shell\nshutdown"`.
 
-There is no separate unit-test suite. A successful build is the current baseline check. Invoking the `hello 3 3` (PID, spawning, basic syscalls), `fs_stress` (syscall-heavy file operations including `lseek`/`ftruncate`/`getdents`), and `alloc_stress` (userspace memory manipulation) programs using the `run` command from the kernel shell can serve as additional checks.
+There is no separate unit-test suite. A successful build is the current baseline check. Invoking the `hello 3 3` (PID, spawning, basic syscalls), `test_fs` (syscall-heavy file operations including `lseek`/`ftruncate`/`getdents`), and `test_alloc` (userspace memory manipulation) programs using the `run` command from the kernel shell can serve as additional checks.
 
 Files and directories from `static/` are copied into the filesystem image during the build. The graphical frontend loads its PSF font from `/fonts/`.
 

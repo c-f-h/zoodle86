@@ -668,8 +668,7 @@ fn testBrokenPipe() !void {
 /// Exercises filesystem syscalls with alternating writes, seeks, and unlinks.
 pub fn main(argv: []const []const u8) !void {
     _ = argv;
-    var buf: [96]u8 = undefined;
-    _ = try sys.write(sys.STDOUT, try std.fmt.bufPrint(&buf, "pid {d}: stress-testing filesystem syscalls...\n", .{sys.getpid()}));
+    _ = try sys.write(sys.STDOUT, "testing filesystem syscalls");
 
     sys.mkdir(tmpdir) catch {}; // on error, assume tmp exists
 
@@ -733,7 +732,7 @@ pub fn main(argv: []const []const u8) !void {
 
     _ = try expectSyscall(sys.close(sys.STDIN), "main: close stdin", @src());
     _ = try expectSyscall(sys.close(sys.STDERR), "main: close stderr", @src());
-    _ = try sys.write(sys.STDOUT, "filesystem tests OK\n");
+    _ = try sys.write(sys.STDOUT, "OK\n");
     _ = try expectSyscall(sys.close(sys.STDOUT), "main: close stdout", @src());
     sys.yield();
 }

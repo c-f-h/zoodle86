@@ -36,8 +36,8 @@ USERSPACE_SOURCES = [
     ROOT / "userspace" / "hello.zig",
     ROOT / "userspace" / "busybox.zig",
     ROOT / "userspace" / "fib.zig",
-    ROOT / "userspace" / "fs_stress.zig",
-    ROOT / "userspace" / "alloc_stress.zig",
+    ROOT / "userspace" / "test_fs.zig",
+    ROOT / "userspace" / "test_alloc.zig",
     ROOT / "userspace" / "kshell_test.zig",
     ROOT / "userspace" / "shell.zig",
 ]
