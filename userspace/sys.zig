@@ -145,7 +145,7 @@ inline fn rawSyscall(nr: Syscall, arg1: u32, arg2: u32, arg3: u32) struct { valu
           [a2] "{ecx}" (arg2),
           [a3] "{edx}" (arg3),
           [errno_ptr] "{edi}" (@intFromPtr(&errno)),
-        : .{ .memory = true, .eax = true, .ebx = true, .ecx = true, .edx = true, .edi = true });
+        : .{ .memory = true, .ebx = true, .ecx = true, .edx = true, .edi = true });
     return .{ .value = value, .errno = errno };
 }
 
