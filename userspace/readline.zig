@@ -18,6 +18,17 @@ pub const Readline = struct {
     prompt: []const u8 = "",
     row: u32 = 0, // console row where editing takes place
     col: u32 = 0, // console column right after the prompt
+    history: []const []const u8 = &.{},
+    history_index: ?usize = null,
+    history_draft: [MAX_LINE]u8 = undefined,
+    history_draft_len: u32 = 0,
+
+    /// Provides command history lines used by Up/Down navigation.
+    pub fn setHistory(self: *Readline, history: []const []const u8) void {
+        self.history = history;
+        self.history_index = null;
+        self.history_draft_len = 0;
+    }
 
     /// Prepare the readline state, print the prompt, and record the cursor anchor.
     pub fn init(self: *Readline, prompt: []const u8) void {
@@ -25,6 +36,8 @@ pub const Readline = struct {
         self.cursor = 0;
         self.rendered_len = 0;
         self.prompt = prompt;
+        self.history_index = null;
+        self.history_draft_len = 0;
         _ = sys.write(sys.STDOUT, prompt) catch {};
         const pos = sys.getCursor();
         self.row = pos.row;
@@ -95,7 +108,8 @@ pub const Readline = struct {
             sys.VK_RIGHT => self.moveRight(),
             sys.VK_HOME => self.moveBol(),
             sys.VK_END => self.moveEol(),
-            sys.VK_UP, sys.VK_DOWN => {}, // history not implemented
+            sys.VK_UP => self.historyPrev(),
+            sys.VK_DOWN => self.historyNext(),
             else => {
                 if (ev.ascii >= 0x20 and ev.ascii < 0x7F) {
                     self.insert(ev.ascii);
@@ -260,6 +274,53 @@ pub const Readline = struct {
         var out: [16]u8 = undefined;
         const n = appendCursorMove(&out, 0, self.row, self.col + self.cursor);
         _ = sys.write(sys.STDOUT, out[0..n]) catch {};
+    }
+
+    fn historyPrev(self: *Readline) void {
+        if (self.history.len == 0) return;
+
+        if (self.history_index == null) {
+            self.captureDraft();
+            self.history_index = self.history.len - 1;
+        } else if (self.history_index.? > 0) {
+            self.history_index = self.history_index.? - 1;
+        }
+
+        self.loadHistoryEntry(self.history_index.?);
+    }
+
+    fn historyNext(self: *Readline) void {
+        if (self.history_index == null) return;
+
+        if (self.history_index.? + 1 < self.history.len) {
+            self.history_index = self.history_index.? + 1;
+            self.loadHistoryEntry(self.history_index.?);
+            return;
+        }
+
+        self.restoreDraft();
+        self.history_index = null;
+    }
+
+    fn captureDraft(self: *Readline) void {
+        self.history_draft_len = self.len;
+        @memcpy(self.history_draft[0..self.len], self.buf[0..self.len]);
+    }
+
+    fn restoreDraft(self: *Readline) void {
+        self.len = self.history_draft_len;
+        @memcpy(self.buf[0..self.len], self.history_draft[0..self.len]);
+        self.cursor = self.len;
+        self.redraw();
+    }
+
+    fn loadHistoryEntry(self: *Readline, index: usize) void {
+        const entry = self.history[index];
+        const copy_len = @min(entry.len, MAX_LINE);
+        self.len = @intCast(copy_len);
+        @memcpy(self.buf[0..copy_len], entry[0..copy_len]);
+        self.cursor = self.len;
+        self.redraw();
     }
 };
 

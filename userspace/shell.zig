@@ -7,14 +7,92 @@ const executable_search_path = [_][]const u8{
     "/bin",
 };
 const MAX_SHELL_TOKENS = sys.MAX_ARGV_COUNT * 2 + 8;
+const SHELL_HISTORY_PATH = "/var/history";
+const SHELL_HISTORY_MAX = 32;
+const SHELL_HISTORY_LINE_MAX = readline.MAX_LINE;
+
+const ShellHistory = struct {
+    entries: [SHELL_HISTORY_MAX][SHELL_HISTORY_LINE_MAX]u8 = undefined,
+    lens: [SHELL_HISTORY_MAX]u16 = [_]u16{0} ** SHELL_HISTORY_MAX,
+    start: u8 = 0,
+    count: u8 = 0,
+
+    fn initEmpty() ShellHistory {
+        var history = ShellHistory{};
+        @memset(&history.entries, [_]u8{0} ** SHELL_HISTORY_LINE_MAX);
+        return history;
+    }
+
+    fn len(self: *const ShellHistory) usize {
+        return self.count;
+    }
+
+    fn push(self: *ShellHistory, line: []const u8) void {
+        if (line.len == 0) return;
+
+        var clipped = line;
+        if (clipped.len > SHELL_HISTORY_LINE_MAX) {
+            clipped = clipped[0..SHELL_HISTORY_LINE_MAX];
+        }
+
+        const idx = self.nextWriteIndex();
+        @memcpy(self.entries[idx][0..clipped.len], clipped);
+        self.lens[idx] = @intCast(clipped.len);
+    }
+
+    fn nextWriteIndex(self: *ShellHistory) usize {
+        if (self.count < SHELL_HISTORY_MAX) {
+            const idx = @as(usize, self.start) + @as(usize, self.count);
+            self.count += 1;
+            return idx % SHELL_HISTORY_MAX;
+        }
+
+        const idx = self.start;
+        self.start = @intCast((@as(usize, self.start) + 1) % SHELL_HISTORY_MAX);
+        return idx;
+    }
+
+    fn at(self: *const ShellHistory, index: usize) []const u8 {
+        const idx = (self.start + index) % SHELL_HISTORY_MAX;
+        const n = self.lens[idx];
+        return self.entries[idx][0..n];
+    }
+
+    fn writeToFd(self: *const ShellHistory, fd: u32) void {
+        var i: usize = 0;
+        while (i < self.len()) : (i += 1) {
+            const line = self.at(i);
+            sys.writeAll(fd, line) catch return;
+            sys.writeAll(fd, "\n") catch return;
+        }
+    }
+
+    fn print(self: *const ShellHistory) void {
+        var i: usize = 0;
+        while (i < self.len()) : (i += 1) {
+            var line_buf: [SHELL_HISTORY_LINE_MAX + 16]u8 = undefined;
+            const rendered = std.fmt.bufPrint(&line_buf, "{d: >3}  {s}\n", .{ i + 1, self.at(i) }) catch continue;
+            sys.writeAll(sys.STDOUT, rendered) catch return;
+        }
+    }
+};
 
 /// Runs an interactive userspace shell with basic `>` and `|` redirection.
 pub fn main(_: []const []const u8) !void {
     const alloc = heap.getAllocator();
 
     var rl: readline.Readline = .{};
+    var history = ShellHistory.initEmpty();
+    loadHistory(&history);
 
     while (true) {
+        var history_view: [SHELL_HISTORY_MAX][]const u8 = undefined;
+        var history_len: usize = 0;
+        while (history_len < history.len()) : (history_len += 1) {
+            history_view[history_len] = history.at(history_len);
+        }
+        rl.setHistory(history_view[0..history_len]);
+
         rl.init("$ ");
         const line = rl.readLine() catch |err| {
             if (err == error.EOF) {
@@ -26,6 +104,14 @@ pub fn main(_: []const []const u8) !void {
 
         const trimmed = std.mem.trim(u8, line, " \t");
         if (trimmed.len == 0) continue;
+
+        history.push(trimmed);
+        saveHistory(&history);
+
+        if (std.mem.eql(u8, trimmed, "history")) {
+            history.print();
+            continue;
+        }
 
         if (trimmed[0] == '!') {
             // kernel shell escape
@@ -270,6 +356,40 @@ fn writeError(prefix: []const u8, desc: []const u8) void {
 
 fn writeLine(msg: []const u8) void {
     sys.writeAll(sys.STDOUT, msg) catch {};
+}
+
+fn loadHistory(history: *ShellHistory) void {
+    const fd = sys.open(SHELL_HISTORY_PATH, .{}) catch return;
+    defer sys.close(fd) catch {};
+
+    var file_buf: [SHELL_HISTORY_MAX * (SHELL_HISTORY_LINE_MAX + 1)]u8 = undefined;
+    const bytes = sys.read(fd, &file_buf) catch return;
+    if (bytes == 0) return;
+
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < bytes) : (i += 1) {
+        if (file_buf[i] != '\n') continue;
+        const line = std.mem.trimEnd(u8, file_buf[start..i], "\r");
+        history.push(line);
+        start = i + 1;
+    }
+
+    if (start < bytes) {
+        const tail = std.mem.trimEnd(u8, file_buf[start..bytes], "\r");
+        history.push(tail);
+    }
+}
+
+fn saveHistory(history: *const ShellHistory) void {
+    sys.mkdir("/var") catch {};
+    const fd = sys.open(SHELL_HISTORY_PATH, .{
+        .open_mode = .WriteOnly,
+        .create = true,
+        .truncate = true,
+    }) catch return;
+    defer sys.close(fd) catch {};
+    history.writeToFd(fd);
 }
 
 comptime {
