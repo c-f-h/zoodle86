@@ -66,8 +66,8 @@ Complete listing of every source file and its role.
 
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.fs.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `kernel/fs.zig` directly.
-- `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`) and extracts all files to a directory.
-- `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`) and writes a directory of input files into it using `fs.FileSystem.writeFile()`.
+- `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`), extracts regular files/directories to a host directory, and skips special inodes it cannot materialize on the host.
+- `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`), writes a directory tree of input files into it, and consumes optional root `_special`/`_links` manifests to create device nodes and hard links.
 
 ## Userspace
 
@@ -84,7 +84,7 @@ Complete listing of every source file and its role.
 
 - `build.zig`: Zig kernel-only build entrypoint for editor tooling and ad hoc builds; assembles `kernel/interrupts.asm`, links `build/kernel.full.elf`, and strips `build/kernel.elf`.
 - `stage2.ld`, `userspace.ld`, `kernel.ld`: linker scripts for stage-2, userspace, and the kernel respectively.
-- `SConstruct`: SCons build and run entrypoints. Builds `build/fsimage/` from kernel/userspace outputs plus the directory tree copied from `static/`.
+- `SConstruct`: SCons build and run entrypoints. Builds `build/fsimage/` from kernel/userspace outputs plus the directory tree copied from `static/`, regenerates `/dev`, and synthesizes `_special`/`_links` manifests for generated device nodes and hard links.
 - `build/`: generated objects, binaries, emulator config/output, and `image.img`.
 - Bochs serial output is captured to `build/serial.txt` via the generated `build/bochsrc.txt`.
 

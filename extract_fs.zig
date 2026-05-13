@@ -6,6 +6,7 @@ const std = @import("std");
 const ExtractCounts = struct {
     files: usize = 0,
     directories: usize = 0,
+    specials_skipped: usize = 0,
 };
 
 fn extractDirectory(
@@ -27,7 +28,7 @@ fn extractDirectory(
         defer init.gpa.free(child_relative_path);
 
         switch (entry.kind) {
-            .File => {
+            .Regular => {
                 const data = try disk_fs.readFileAt(init.gpa, dir_inode_index, name);
                 defer init.gpa.free(data);
 
@@ -43,6 +44,9 @@ fn extractDirectory(
                 try std.Io.Dir.cwd().createDirPath(init.io, child_output_path);
                 counts.directories += 1;
                 try extractDirectory(init, stdout, disk_fs, entry.inode_index, child_output_path, child_relative_path, counts);
+            },
+            .CharDevice, .BlockDevice => {
+                counts.specials_skipped += 1;
             },
             else => return error.Corrupt,
         }
@@ -87,7 +91,7 @@ pub fn main(init: std.process.Init) !void {
     try extractDirectory(init, stdout, &disk_fs, fs.ROOT_INODE_INDEX, output_path, "", &counts);
 
     try stdout.print(
-        "\nDone. Extracted {d} files and {d} directories.\n",
-        .{ counts.files, counts.directories },
+        "\nDone. Extracted {d} files, {d} directories, and skipped {d} special files.\n",
+        .{ counts.files, counts.directories, counts.specials_skipped },
     );
 }

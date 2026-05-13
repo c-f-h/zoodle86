@@ -34,7 +34,7 @@ fn mapError(err: anyerror) Errno {
         error.InvalidSeek => .EINVAL,
         error.InvalidSuperblock => .EIO,
         error.NotADirectory => .ENOTDIR,
-        error.NotARegularFile => .EISDIR,
+        error.NotAFile => .EISDIR,
         error.NoDevice => .EIO,
         error.NoTaskSlots => .EAGAIN,
         error.NoSpace => .ENOSPC,

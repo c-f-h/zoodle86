@@ -239,7 +239,7 @@ pub const FsError = error{
     DirectoryFull,
     FileExists,
     FileNotFound,
-    NotARegularFile,
+    NotAFile,
     NotADirectory,
     DirNotEmpty,
     InvalidName,
@@ -424,10 +424,17 @@ pub const FileSystem = struct {
         return self.createFileInternal(dir_inode_index, name, InodeKind.Regular, 0, .{});
     }
 
-    /// Creates a new hard link to an existing regular-file inode in the given directory.
+    /// Creates a new hard link to an existing non-directory inode in the given directory.
     pub fn createLink(self: *FileSystem, dir_inode_index: InodeT, name: []const u8, target_inode_index: InodeT) FsError!void {
         if (!validateName(name)) return error.InvalidName;
         if ((try self.findDirEntry(dir_inode_index, name)) != null) return error.FileExists;
+
+        const target_inode = try self.readInode(target_inode_index);
+        try self.validateInode(&target_inode);
+        switch (target_inode.kind) {
+            .Regular, .CharDevice, .BlockDevice => {},
+            else => return error.NotAFile,
+        }
 
         const entry_index = try self.findReusableEntryIndex(dir_inode_index);
         try self.linkInode(target_inode_index);
@@ -435,7 +442,7 @@ pub const FileSystem = struct {
         try self.writeDirEntry(dir_inode_index, entry_index, &DirectoryEntry.init(
             name,
             target_inode_index,
-            InodeKind.Regular,
+            target_inode.kind,
         ));
 
         self.superblock.file_count += 1;
@@ -603,12 +610,14 @@ pub const FileSystem = struct {
         return true;
     }
 
-    /// Increments the link count of an inode.
+    /// Increments the link count of a non-directory inode.
     fn linkInode(self: *FileSystem, inode_index: InodeT) FsError!void {
         var inode = try self.readInode(inode_index);
         if (inode.link_count == 0) return error.Corrupt;
-        // Currently only links to regular files are supported
-        if (inode.kind != .Regular) return error.NotARegularFile;
+        switch (inode.kind) {
+            .Regular, .CharDevice, .BlockDevice => {},
+            else => return error.NotAFile,
+        }
         if (inode.link_count == std.math.maxInt(u16)) return error.Corrupt;
 
         inode.link_count += 1;
@@ -633,11 +642,14 @@ pub const FileSystem = struct {
         try self.writeSuperblock();
     }
 
-    /// Deletes a regular file from the given directory and frees its inode and blocks.
+    /// Deletes a non-directory inode from the given directory and frees any owned blocks.
     pub fn deleteFile(self: *FileSystem, dir_inode_index: InodeT, index: u32) FsError!void {
         const entry = try self.readDirectoryEntry(dir_inode_index, index);
 
-        if (entry.kind != .Regular) return error.NotARegularFile;
+        switch (entry.kind) {
+            .Regular, .CharDevice, .BlockDevice => {},
+            else => return error.NotAFile,
+        }
 
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(dir_inode_index, index, &cleared);
@@ -704,11 +716,10 @@ pub const FileSystem = struct {
             const entry = try self.readDirEntry(&root_inode, index);
             switch (entry.kind) {
                 .Free => {},
-                .Regular => {
-                    _ = try self.readFileInode(entry.inode_index);
-                },
-                .Directory => {
-                    _ = try self.readDirectoryInode(entry.inode_index);
+                .Regular, .Directory, .CharDevice, .BlockDevice => {
+                    const inode = try self.readInode(entry.inode_index);
+                    try self.validateInode(&inode);
+                    if (inode.kind != entry.kind) return error.Corrupt;
                 },
                 else => return error.Corrupt,
             }
@@ -793,7 +804,7 @@ pub const FileSystem = struct {
     pub fn readFileInode(self: *const FileSystem, inode_index: InodeT) FsError!Inode {
         const inode = try self.readInode(inode_index);
         try self.validateInode(&inode);
-        if (inode.kind != .Regular) return error.NotARegularFile;
+        if (inode.kind != .Regular) return error.NotAFile;
         return inode;
     }
 
@@ -1005,21 +1016,16 @@ pub const FileSystem = struct {
     }
 
     fn buildStatForInode(self: *const FileSystem, inode_index: InodeT, inode: *const Inode) FsError!Stat {
-        const kind = switch (inode.kind) {
-            .Regular => InodeKind.Regular,
-            .Directory => InodeKind.Directory,
-            else => return error.Corrupt,
-        };
         return .{
             .inode = inode_index,
             .size = inode.size_bytes,
             .blocks = fileBlocksForSize(inode.size_bytes),
             .blksize = BLOCK_SIZE,
             .nlink = inode.link_count,
-            .kind = kind,
+            .kind = inode.kind,
             .flags = 0,
             .on_device = self.block_dev.device,
-            .device = .{},
+            .device = inode.device,
         };
     }
 
@@ -1047,7 +1053,18 @@ pub const FileSystem = struct {
                 if (inode.double_indirect_block != BLOCK_POINTER_NONE) return error.Corrupt;
                 return;
             },
-            .Regular, .Directory => {},
+            .Regular, .Directory => {
+                if (!inode.device.isEmpty()) return error.Corrupt;
+            },
+            .CharDevice, .BlockDevice => {
+                if (inode.link_count == 0 or inode.size_bytes != 0) return error.Corrupt;
+                for (inode.direct_blocks) |block_index| {
+                    if (block_index != BLOCK_POINTER_NONE) return error.Corrupt;
+                }
+                if (inode.indirect_block != BLOCK_POINTER_NONE) return error.Corrupt;
+                if (inode.double_indirect_block != BLOCK_POINTER_NONE) return error.Corrupt;
+                return;
+            },
             else => return error.Corrupt,
         }
 
@@ -1263,7 +1280,7 @@ fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsErro
             if (entry.name_len != 0) return error.Corrupt;
             return;
         },
-        .Regular, .Directory => {},
+        .Regular, .Directory, .CharDevice, .BlockDevice => {},
         else => return error.Corrupt,
     }
 

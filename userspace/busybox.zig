@@ -268,7 +268,7 @@ fn statMain(argv: []const []const u8) noreturn {
         const dev_str = if (st.device.isEmpty())
             ""
         else
-            std.fmt.bufPrint(&dev_buf, "Device: {x:02},{x:02}", .{ st.on_device.major, st.on_device.minor }) catch "unknown device";
+            std.fmt.bufPrint(&dev_buf, "Device: {x:02},{x:02}", .{ st.device.major, st.device.minor }) catch "unknown device";
 
         const line3 = std.fmt.bufPrint(&buf, "  On Dev: {x:02},{x:02}   Inode: {d:<10} Links: {d:<4} {s}\n", .{
             @intFromEnum(st.on_device.major), st.on_device.minor, st.inode, st.nlink, dev_str,

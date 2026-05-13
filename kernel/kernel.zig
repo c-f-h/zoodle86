@@ -296,7 +296,7 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.DirectoryFull => "Directory is full.",
         error.FileExists => "File already exists.",
         error.FileNotFound => "File not found.",
-        error.NotARegularFile => "Not a regular file.",
+        error.NotAFile => "Is a directory.",
         error.NotADirectory => "Not a directory.",
         error.DirNotEmpty => "Directory is not empty.",
         error.InvalidName => "Invalid filename.",

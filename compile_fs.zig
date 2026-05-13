@@ -1,3 +1,4 @@
+const abi = @import("abi");
 const fs = @import("kernel/fs.zig");
 const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
@@ -7,13 +8,24 @@ const CompileError = error{
     InvalidArgs,
     InvalidPathName,
     InvalidLinkEntry,
+    InvalidSpecialEntry,
 };
 
 const ImportCounts = struct {
     files: usize = 0,
     directories: usize = 0,
     links: usize = 0,
+    specials: usize = 0,
 };
+
+fn parseDeviceMajor(raw_major: u8) ?abi.DeviceMajor {
+    return switch (raw_major) {
+        @intFromEnum(abi.DeviceMajor.Unnamed) => .Unnamed,
+        @intFromEnum(abi.DeviceMajor.Ide) => .Ide,
+        @intFromEnum(abi.DeviceMajor.Tty) => .Tty,
+        else => null,
+    };
+}
 
 fn importDirectory(
     init: std.process.Init,
@@ -47,7 +59,7 @@ fn importDirectory(
                 try importDirectory(init, stdout, disk_fs, child_host_path, child_inode, child_relative_path, counts);
             },
             .file => {
-                if (std.mem.eql(u8, entry.name, "_links")) continue; // manifest, not a real file
+                if (std.mem.eql(u8, entry.name, "_links") or std.mem.eql(u8, entry.name, "_special")) continue; // manifests, not real files
                 if (!fs.validateName(entry.name)) {
                     try stdout.print("Error: invalid path component: {s}\n", .{entry.name});
                     return CompileError.InvalidPathName;
@@ -104,10 +116,16 @@ fn processLinksManifest(
         const line = std.mem.trim(u8, raw_line, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
 
-        var parts = std.mem.splitScalar(u8, line, ' ');
-        const source_path = parts.next() orelse continue;
-        const target_path = std.mem.trim(u8, parts.rest(), " \t");
-        if (target_path.len == 0) {
+        var parts = std.mem.tokenizeAny(u8, line, " \t");
+        const source_path = parts.next() orelse {
+            try stdout.print("  Error: malformed link entry: {s}\n", .{line});
+            return CompileError.InvalidLinkEntry;
+        };
+        const target_path = parts.next() orelse {
+            try stdout.print("  Error: malformed link entry: {s}\n", .{line});
+            return CompileError.InvalidLinkEntry;
+        };
+        if (parts.next() != null) {
             try stdout.print("  Error: malformed link entry: {s}\n", .{line});
             return CompileError.InvalidLinkEntry;
         }
@@ -126,6 +144,99 @@ fn processLinksManifest(
         try stdout.print("  Creating link: {s} -> {s}\n", .{ target_path, source_path });
         try disk_fs.createLink(dir_inode, split.name, source_inode);
         counts.links += 1;
+    }
+}
+
+/// Reads the optional `_special` manifest from the root input directory and creates
+/// character or block device inodes in the filesystem image. Each non-blank,
+/// non-comment line must contain exactly four whitespace-separated fields:
+///   <path> <block:0|1> <devmajor> <devminor>
+/// Paths are relative to the filesystem root and use '/' as the separator.
+fn processSpecialManifest(
+    init: std.process.Init,
+    stdout: anytype,
+    disk_fs: *fs.FileSystem,
+    root_host_dir_path: []const u8,
+    counts: *ImportCounts,
+) !void {
+    const manifest_host_path = try std.fs.path.join(init.gpa, &.{ root_host_dir_path, "_special" });
+    defer init.gpa.free(manifest_host_path);
+
+    const manifest_file = std.Io.Dir.cwd().openFile(init.io, manifest_host_path, .{}) catch return;
+    defer manifest_file.close(init.io);
+
+    const file_size = try manifest_file.length(init.io);
+    const content = try init.gpa.alloc(u8, file_size);
+    defer init.gpa.free(content);
+    _ = try manifest_file.readPositionalAll(init.io, content, 0);
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+
+        var parts = std.mem.tokenizeAny(u8, line, " \t");
+        const target_path = parts.next() orelse {
+            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        const block_text = parts.next() orelse {
+            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        const major_text = parts.next() orelse {
+            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        const minor_text = parts.next() orelse {
+            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        if (parts.next() != null) {
+            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        }
+
+        const block_flag = std.fmt.parseInt(u8, block_text, 10) catch {
+            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        const kind: abi.InodeKind = switch (block_flag) {
+            0 => .CharDevice,
+            1 => .BlockDevice,
+            else => {
+                try stdout.print("  Error: invalid special entry: {s}\n", .{line});
+                return CompileError.InvalidSpecialEntry;
+            },
+        };
+        const raw_major = std.fmt.parseInt(u8, major_text, 0) catch {
+            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        const major = parseDeviceMajor(raw_major) orelse {
+            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+        const minor = std.fmt.parseInt(u8, minor_text, 0) catch {
+            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
+            return CompileError.InvalidSpecialEntry;
+        };
+
+        const split = fs.splitPath(target_path);
+        const dir_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir) catch |err| {
+            try stdout.print("  Error: special-file directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
+            return err;
+        };
+
+        try stdout.print(
+            "  Creating special file: {s} (block={d}, major={d}, minor={d})\n",
+            .{ target_path, block_flag, raw_major, minor },
+        );
+        _ = try disk_fs.createSpecialFile(dir_inode, split.name, kind, .{
+            .major = major,
+            .minor = minor,
+        });
+        counts.specials += 1;
     }
 }
 
@@ -175,10 +286,11 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("Writing filesystem contents...\n", .{});
     var counts: ImportCounts = .{};
     try importDirectory(init, stdout, &disk_fs, input_dir_path, fs.ROOT_INODE_INDEX, "", &counts);
+    try processSpecialManifest(init, stdout, &disk_fs, input_dir_path, &counts);
     try processLinksManifest(init, stdout, &disk_fs, input_dir_path, &counts);
 
     try stdout.print(
-        "\nDone. Wrote {d} files, {d} directories, and {d} hard links to {s}\n",
-        .{ counts.files, counts.directories, counts.links, output_path },
+        "\nDone. Wrote {d} files, {d} directories, {d} special files, and {d} hard links to {s}\n",
+        .{ counts.files, counts.directories, counts.specials, counts.links, output_path },
     );
 }

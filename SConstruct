@@ -54,6 +54,12 @@ FS_HARD_LINKS = [
     ("bin/busybox", "bin/rmdir"),
     ("bin/busybox", "bin/echo"),
 ]
+FS_SPECIAL_FILES = [
+    ("/dev/hda",  1, "0x03", 0),
+    ("/dev/hdb",  1, "0x03", 1),
+    ("/dev/tty0", 0, "0x04", 0),
+    ("/dev/tty1", 0, "0x04", 1),
+]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"
 SERIALOUT = BUILD_DIR / "serial.txt"
@@ -88,6 +94,17 @@ def reset_dir(path):
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+
+
+def append_manifest_lines(path, lines):
+    if not lines:
+        return
+    existing = ""
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+    path.write_text(existing + "".join(lines), encoding="utf-8")
 
 
 def get_autoexec_script():
@@ -352,17 +369,16 @@ def build_fs_image(target, source, env):
             ]
         )
 
+    # /dev is regenerated from manifests each build instead of being preserved from the old image.
+    dev_dir = FS_IMAGE_DIR / "dev"
+    reset_dir(dev_dir)
+
     # Inject each userspace binary into the /bin directory, dropping the .elf extension.
     bin_dir = FS_IMAGE_DIR / "bin"
     reset_dir(bin_dir)
     for userspace_exe in source[0:len(USERSPACE_EXES)]:
         userspace_path = pathlib.Path(str(userspace_exe))
         shutil.copy2(userspace_path, bin_dir / userspace_path.stem)
-
-    # Write the hard-links manifest consumed by compile_fs.
-    if FS_HARD_LINKS:
-        links_text = "".join(f"{src} {dst}\n" for src, dst in FS_HARD_LINKS)
-        (FS_IMAGE_DIR / "_links").write_text(links_text, encoding="utf-8")
 
     # Inject the kernel module as "kernel".
     kernel_path = pathlib.Path(str(source[len(USERSPACE_EXES)]))
@@ -374,6 +390,15 @@ def build_fs_image(target, source, env):
             shutil.copytree(static_path, FS_IMAGE_DIR / static_path.name, dirs_exist_ok=True)
         elif static_path.is_file():
             shutil.copy2(static_path, FS_IMAGE_DIR / static_path.name)
+
+    append_manifest_lines(
+        FS_IMAGE_DIR / "_special",
+        [f"{path} {block} {major} {minor}\n" for path, block, major, minor in FS_SPECIAL_FILES],
+    )
+    append_manifest_lines(
+        FS_IMAGE_DIR / "_links",
+        [f"{src} {dst}\n" for src, dst in FS_HARD_LINKS],
+    )
 
     autoexec_path = FS_IMAGE_DIR / AUTOEXEC_FILENAME
     autoexec_script = get_autoexec_script()

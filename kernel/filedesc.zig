@@ -267,18 +267,19 @@ pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Filed
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
     const inode_index = if (path.len == 0 or std.mem.eql(u8, path, "/"))
         fs.ROOT_INODE_INDEX
-    else blk: {
-        break :blk disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, path) catch |err| switch (err) {
-            error.FileNotFound => blk2: {
+    else
+        // try to find an existing file at this path
+        disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, path) catch |err| switch (err) {
+            error.FileNotFound => blk: {
                 if ((flags & O_CREAT) == 0) return error.FileNotFound;
 
+                // not found, but creation requested: create the file and return its inode index
                 const split = fs.splitPath(path);
                 const parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
-                break :blk2 try disk_fs.createFile(parent_inode, split.name);
+                break :blk try disk_fs.createFile(parent_inode, split.name);
             },
             else => return err,
         };
-    };
 
     if ((flags & O_TRUNC) != 0) {
         try disk_fs.resizeInode(inode_index, 0);
@@ -307,6 +308,26 @@ fn openTty(index: u8, access_mode: u32) ?FileDesc {
     return null;
 }
 
+/// Open a special device inode and map it to a device descriptor.
+fn tryOpenSpecialInode(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) FiledescError!?FileDesc {
+    if (path.len == 0 or std.mem.eql(u8, path, "/")) return null;
+
+    const access_mode = try validateOpenFlags(flags);
+    const st = disk_fs.statPath(path) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+
+    return switch (st.kind) {
+        .CharDevice => switch (st.device.major) {
+            .Tty => openTty(st.device.minor, access_mode) orelse error.FileNotFound,
+            else => error.InvalidArgument,
+        },
+        .BlockDevice => error.InvalidArgument,
+        else => null,
+    };
+}
+
 fn tryOpenSpecialFile(path: []const u8, flags: u32) !?FileDesc {
     const access_mode = try validateOpenFlags(flags);
     if (std.mem.eql(u8, path, "/dev/tty0")) {
@@ -322,7 +343,7 @@ fn tryOpenSpecialFile(path: []const u8, flags: u32) !?FileDesc {
 pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const filedesc =
-        try tryOpenSpecialFile(path, flags) orelse
+        try tryOpenSpecialInode(disk_fs, path, flags) orelse
         try openFileDesc(disk_fs, path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
@@ -364,16 +385,16 @@ pub fn moveFile(disk_fs: *fs.FileSystem, old_path: []const u8, new_path: []const
     // Resolve source; it must be a regular file.
     const src_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, old_path);
     const src_stat = try disk_fs.statInode(src_inode_index);
-    if (src_stat.kind != .Regular) return error.NotARegularFile;
+    if (src_stat.kind == .Directory) return error.NotAFile;
 
     // Resolve destination parent directory (must exist).
     const new_split = fs.splitPath(new_path);
     const dst_parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, new_split.dir);
 
-    // If destination already exists remove it, provided it is a non-open regular file.
+    // If destination already exists remove it, provided it is a non-open file.
     if (disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, new_path)) |dst_inode_index| {
         const dst_stat = try disk_fs.statInode(dst_inode_index);
-        if (dst_stat.kind != .Regular) return error.NotARegularFile;
+        if (dst_stat.kind == .Directory) return error.NotAFile;
         const dst_par, const dst_idx, const dst_entry =
             try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, new_path);
         if (isInodeOpen(dst_entry.inode_index)) return error.FileInUse;
