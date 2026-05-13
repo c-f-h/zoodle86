@@ -147,9 +147,9 @@ pub const Task = struct {
     /// Bind the task's standard descriptors to a controlling tty.
     pub fn bindControllingTty(task: *Task, controlling: *tty.Tty) void {
         task.controlling_tty = controlling;
-        task.fd_table[0] = .{ .tty = .{ .handle = controlling, .readable = true, .writable = false } };
-        task.fd_table[1] = .{ .tty = .{ .handle = controlling, .readable = false, .writable = true } };
-        task.fd_table[2] = .{ .tty = .{ .handle = controlling, .readable = false, .writable = true } };
+        task.fd_table[0] = .{ .char_device = .{ .handle = controlling.charDevice(), .readable = true, .writable = false } };
+        task.fd_table[1] = .{ .char_device = .{ .handle = controlling.charDevice(), .readable = false, .writable = true } };
+        task.fd_table[2] = .{ .char_device = .{ .handle = controlling.charDevice(), .readable = false, .writable = true } };
     }
 
     pub fn getConsole(task: *Task) ?*console.Console {

@@ -27,8 +27,8 @@ Complete listing of every source file and its role.
 - `kernel/interrupt_frame.zig`: stack frame layouts for both normalized user interrupt returns and saved kernel-yield resume points.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/waitqueue.zig`: intrusive singly-linked WaitQueue; tasks blocked on an event are added as heap-allocated nodes and freed when woken via `wakeOne`/`wakeAll`.
-- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek`/`moveFile` descriptor semantics layered over filesystem files, console streams, and pipe endpoints.
-- `kernel/tty.zig`: console-backed canonical tty devices with cooked line input, echo/backspace handling, and tty fd read/write support.
+- `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek`/`moveFile` descriptor semantics layered over filesystem files, generic character devices, and pipe endpoints.
+- `kernel/tty.zig`: console-backed canonical tty devices with cooked line input, echo/backspace handling, and an embedded `CharDevice` interface for fd I/O.
 - `kernel/ansi.zig`: decodes ANSI escape sequences and translates them into console commands.
 - `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
 - `kernel/ringbuf.zig`: fixed-capacity byte ring buffer used by the pipe implementation.
@@ -45,6 +45,7 @@ Complete listing of every source file and its role.
 ## Storage & Filesystem
 
 - `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
+- `kernel/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` buffer-size operations.
 - `kernel/fs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
 - `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O. Also provides `IdeBlockDevice`, a concrete `BlockDevice` implementation backed by an ATA drive.

@@ -1,4 +1,5 @@
 const abi = @import("abi");
+const char_device = @import("char_device.zig");
 const console = @import("console.zig");
 const ansi = @import("ansi.zig");
 const kernel = @import("kernel.zig");
@@ -7,6 +8,7 @@ const ringbuf = @import("ringbuf.zig");
 const task = @import("task.zig");
 const waitqueue = @import("waitqueue.zig");
 const std = @import("std");
+const CharDevice = char_device.CharDevice;
 
 pub const CANON_LINE_MAX = 256;
 const COOKED_BUF_SIZE = 4096;
@@ -24,6 +26,7 @@ const CursorPos = struct {
 
 /// A tty bound to one console, operating in canonical or raw mode.
 pub const Tty = struct {
+    char_dev: CharDevice = undefined,
     // Whether this tty is initialized and can be used
     available: bool = false,
     // Operating mode - buffered line editing or raw key events
@@ -44,12 +47,21 @@ pub const Tty = struct {
     echo_positions: [CANON_LINE_MAX + 1]CursorPos = undefined,
     // ANSI sequence parser
     ansi: ansi.Ansi = undefined,
-    // Minor device number (0 for primary console, 1 for secondary)
-    device_minor: u8 = 0,
+
+    const vtable = CharDevice.VTable{
+        .read = charDeviceRead,
+        .write = charDeviceWrite,
+        .ioctl = charDeviceIoctl,
+        .bufferSize = charDeviceBufferSize,
+    };
 
     /// Initialize a tty for the given console.
     pub fn init(self: *Tty, allocator: std.mem.Allocator, con: *console.Console, device_minor: u8) !void {
         self.* = .{
+            .char_dev = .{
+                .vtable = &vtable,
+                .device = .{ .major = abi.DeviceMajor.Tty, .minor = device_minor },
+            },
             .console = con,
             .cooked = try ringbuf.RingBuf.init(allocator, COOKED_BUF_SIZE),
             .read_waiters = waitqueue.WaitQueue.init(allocator),
@@ -59,7 +71,6 @@ pub const Tty = struct {
         self.ansi = ansi.Ansi{
             .console = con,
         };
-        self.device_minor = device_minor;
     }
 
     /// Release the buffer.
@@ -103,6 +114,11 @@ pub const Tty = struct {
     /// Return the cooked-buffer capacity used for stat metadata.
     pub fn bufferSize(self: *const Tty) usize {
         return self.cooked.buf.len;
+    }
+
+    /// Returns the generic character-device interface for this tty.
+    pub fn charDevice(self: *Tty) *CharDevice {
+        return &self.char_dev;
     }
 
     /// Consume one key event according to the current mode.
@@ -180,6 +196,26 @@ pub const Tty = struct {
             .canonical => abi.TTY_MODE_CANONICAL,
             .raw => abi.TTY_MODE_RAW,
         };
+    }
+
+    fn charDeviceRead(dev: *CharDevice, dest: []u8) char_device.CharDeviceError!usize {
+        const self: *Tty = @fieldParentPtr("char_dev", dev);
+        return self.read(dest);
+    }
+
+    fn charDeviceWrite(dev: *CharDevice, src: []const u8) char_device.CharDeviceError!usize {
+        const self: *Tty = @fieldParentPtr("char_dev", dev);
+        return self.write(src);
+    }
+
+    fn charDeviceIoctl(dev: *CharDevice, command: u32, arg: u32) char_device.CharDeviceError!u32 {
+        const self: *Tty = @fieldParentPtr("char_dev", dev);
+        return self.ioctl(command, arg);
+    }
+
+    fn charDeviceBufferSize(dev: *const CharDevice) usize {
+        const self: *const Tty = @fieldParentPtr("char_dev", dev);
+        return self.bufferSize();
     }
 
     fn handlePrintable(self: *Tty, ch: u8) void {

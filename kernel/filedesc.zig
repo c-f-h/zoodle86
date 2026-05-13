@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const console = @import("console.zig");
+const char_device = @import("char_device.zig");
 const fs = @import("fs.zig");
 const task = @import("task.zig");
 const pipe = @import("pipe.zig");
@@ -25,7 +26,7 @@ pub const FileDesc = union(enum) {
     empty: void,
     file: u8, // Always refers to a valid index in the global open_files table
     pipe: struct { handle: *pipe.Pipe, writable: bool },
-    tty: struct { handle: *tty.Tty, readable: bool, writable: bool },
+    char_device: struct { handle: *char_device.CharDevice, readable: bool, writable: bool },
 
     /// Closes a descriptor and releases any backing pipe or open-file state.
     pub fn close(self: *FileDesc) error{BadFd}!void {
@@ -48,7 +49,7 @@ pub const FileDesc = union(enum) {
                     kernel.getAllocator().destroy(pp);
                 }
             },
-            .tty => {},
+            .char_device => {},
             else => return error.BadFd,
         }
         self.* = .empty;
@@ -74,7 +75,7 @@ pub const FileDesc = union(enum) {
                     return .{ .pipe = .{ .handle = pp, .writable = false } };
                 }
             },
-            .tty => return self.*,
+            .char_device => return self.*,
         }
     }
 
@@ -110,9 +111,9 @@ pub const FileDesc = union(enum) {
                 }
                 return pp.read(dest);
             },
-            .tty => |tty_info| {
-                if (!tty_info.readable) return error.AccessDenied;
-                return tty_info.handle.read(dest);
+            .char_device => |char_info| {
+                if (!char_info.readable) return error.AccessDenied;
+                return char_info.handle.read(dest);
             },
             else => return error.BadFd,
         }
@@ -144,9 +145,9 @@ pub const FileDesc = union(enum) {
                 }
                 return pp.write(src);
             },
-            .tty => |tty_info| {
-                if (!tty_info.writable) return error.AccessDenied;
-                return tty_info.handle.write(src);
+            .char_device => |char_info| {
+                if (!char_info.writable) return error.AccessDenied;
+                return char_info.handle.write(src);
             },
             else => return error.BadFd,
         }
@@ -181,20 +182,20 @@ pub const FileDesc = union(enum) {
                     .device = .{},
                 };
             },
-            .tty => |tty_info| blk: {
+            .char_device => |char_info| blk: {
                 var flags = fs.STAT_FLAG_SYNTHETIC;
-                if (tty_info.readable) flags |= fs.STAT_FLAG_READABLE;
-                if (tty_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
+                if (char_info.readable) flags |= fs.STAT_FLAG_READABLE;
+                if (char_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
                 break :blk .{
                     .inode = 0,
                     .size = 0,
                     .blocks = 0,
-                    .blksize = @intCast(tty_info.handle.bufferSize()),
+                    .blksize = @intCast(char_info.handle.bufferSize()),
                     .nlink = 1,
                     .kind = .CharDevice,
                     .flags = flags,
                     .on_device = .{},
-                    .device = .{ .major = abi.DeviceMajor.Tty, .minor = tty_info.handle.device_minor },
+                    .device = char_info.handle.device,
                 };
             },
             else => error.BadFd,
@@ -204,7 +205,7 @@ pub const FileDesc = union(enum) {
     /// Applies a device-specific ioctl request to this descriptor.
     pub fn ioctl(self: *FileDesc, command: u32, arg: u32) FiledescError!u32 {
         return switch (self.*) {
-            .tty => |tty_info| try tty_info.handle.ioctl(command, arg),
+            .char_device => |char_info| try char_info.handle.ioctl(command, arg),
             else => error.InvalidArgument,
         };
     }
@@ -299,8 +300,8 @@ pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Filed
 
 fn openTty(index: u8, access_mode: u32) ?FileDesc {
     if (kernel.getTty(index)) |ptty| {
-        return .{ .tty = .{
-            .handle = ptty,
+        return .{ .char_device = .{
+            .handle = ptty.charDevice(),
             .readable = access_mode != O_WRONLY,
             .writable = access_mode != O_RDONLY,
         } };
