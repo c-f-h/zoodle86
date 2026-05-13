@@ -1,5 +1,7 @@
 const mem = @import("../mem.zig");
 const paging = @import("../paging.zig");
+const char_device = @import("../char_device.zig");
+const task = @import("../task.zig");
 const psf = @import("psf.zig");
 const abi = @import("abi");
 
@@ -31,9 +33,77 @@ var info: *align(1) const BootVideoInfo = undefined;
 var fb_base: [*]u8 = undefined;
 var bytes_per_pixel: u32 = 0;
 var initialized = false;
-var fb_phys_start: u32 = 0;
-var fb_num_pages: u32 = 0;
 var fb_size_bytes: u32 = 0;
+
+const CharDevice = char_device.CharDevice;
+
+const FrameBufferCharDevice = struct {
+    char_dev: CharDevice = .{
+        .vtable = &vtable,
+        .device = .{ .major = abi.DeviceMajor.FrameBuffer, .minor = 0 },
+    },
+
+    const vtable = CharDevice.VTable{
+        .read = read,
+        .write = write,
+        .ioctl = ioctl,
+        .bufferSize = bufferSize,
+        .size = size,
+        .seekable = seekable,
+    };
+
+    fn read(_: *CharDevice, offset: u32, dest: []u8) char_device.CharDeviceError!usize {
+        if (!initialized) return error.NoDevice;
+        if (offset >= fb_size_bytes or dest.len == 0) return 0;
+
+        const start: usize = @intCast(offset);
+        const remaining: usize = @intCast(fb_size_bytes - offset);
+        const count = @min(dest.len, remaining);
+        @memcpy(dest[0..count], fb_base[start..][0..count]);
+        return count;
+    }
+
+    fn write(_: *CharDevice, offset: u32, src: []const u8) char_device.CharDeviceError!usize {
+        if (!initialized) return error.NoDevice;
+        if (offset >= fb_size_bytes or src.len == 0) return 0;
+
+        const start: usize = @intCast(offset);
+        const remaining: usize = @intCast(fb_size_bytes - offset);
+        const count = @min(src.len, remaining);
+        @memcpy(fb_base[start..][0..count], src[0..count]);
+        return count;
+    }
+
+    fn ioctl(_: *CharDevice, command: u32, arg: u32) char_device.CharDeviceError!u32 {
+        if ((command >> 24) != @as(u32, @intFromEnum(abi.DeviceMajor.FrameBuffer))) {
+            return error.InvalidArgument;
+        }
+
+        switch (command) {
+            abi.IOCTL_FRAMEBUF_GET_INFO => {
+                const out = try task.getCurrentTask().getUserPtr(abi.FrameBufInfo, arg);
+                try fillInfo(out);
+                return 0;
+            },
+            else => return error.InvalidArgument,
+        }
+    }
+
+    fn bufferSize(_: *const CharDevice) usize {
+        if (!initialized) return 0;
+        return pitchBytes();
+    }
+
+    fn size(_: *const CharDevice) u32 {
+        return fb_size_bytes;
+    }
+
+    fn seekable(_: *const CharDevice) bool {
+        return true;
+    }
+};
+
+var fb_char_device: FrameBufferCharDevice = .{};
 
 fn getBootVideoInfo(boot_video_info_phys: usize) !void {
     // NB: assumes identity mapping!
@@ -132,9 +202,9 @@ pub fn init(boot_video_info_phys: usize) !void {
     bytes_per_pixel = @divTrunc(@as(u32, info.bpp) + 7, 8);
 
     fb_size_bytes = @as(u32, info.pitch_bytes) * @as(u32, info.height);
-    fb_phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
+    const fb_phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
     const phys_end = paging.roundToNext(info.phys_base_ptr + fb_size_bytes, paging.PAGE);
-    fb_num_pages = @divExact(phys_end - fb_phys_start, paging.PAGE);
+    const fb_num_pages = @divExact(phys_end - fb_phys_start, paging.PAGE);
 
     paging.mapContiguousRangeAt(fb_demo_va, fb_phys_start, fb_num_pages, false, true, true);
 
@@ -168,21 +238,21 @@ pub fn pixelPtr(x: u32, y: u32) [*]u8 {
     return fb_base + @as(usize, y) * @as(usize, info.pitch_bytes) + @as(usize, x) * @as(usize, bytes_per_pixel);
 }
 
-/// Returns the number of bytes spanned by the user-visible framebuffer mapping.
-pub fn userMappingSizeBytes() u32 {
-    if (!initialized) return 0;
-    return fb_num_pages * paging.PAGE;
+/// Returns the framebuffer character-device interface when graphics mode is active.
+pub fn getCharDevice() ?*CharDevice {
+    if (!initialized) return null;
+    return &fb_char_device.char_dev;
 }
 
-/// Maps the framebuffer into the current address space at `user_va` and fills a userspace ABI struct.
-pub fn exportUserspaceInfo(user_va: u32, out: *abi.FrameBufInfo) !void {
+/// Fills framebuffer metadata without mapping the framebuffer into userspace.
+pub fn getInfo(out: *abi.FrameBufInfo) !void {
+    try fillInfo(out);
+}
+
+fn fillInfo(out: *abi.FrameBufInfo) !void {
     if (!initialized) return error.NoDevice;
 
-    paging.mapContiguousRangeAt(user_va, fb_phys_start, fb_num_pages, true, true, true);
-
     out.* = .{
-        .mapped_ptr = user_va + (info.phys_base_ptr - fb_phys_start),
-        .mapped_len = fb_size_bytes,
         .width = info.width,
         .height = info.height,
         .pitch_bytes = info.pitch_bytes,
@@ -196,17 +266,4 @@ pub fn exportUserspaceInfo(user_va: u32, out: *abi.FrameBufInfo) !void {
         .blue_mask_size = info.blue_mask_size,
         .blue_position = info.blue_position,
     };
-}
-
-/// Returns whether the current address space contains the framebuffer user mapping at `user_va`.
-pub fn hasUserspaceMapping(user_va: u32) bool {
-    if (!initialized or !paging.hasPde(user_va)) return false;
-    const pte = paging.getPte(user_va);
-    return pte.present and pte.user and pte.getPhysicalPageAddress() == fb_phys_start;
-}
-
-/// Removes the framebuffer user mapping from the current address space.
-pub fn unmapUserspace(user_va: u32) void {
-    if (!initialized) return;
-    paging.unmapSharedRangeAt(user_va, fb_num_pages);
 }

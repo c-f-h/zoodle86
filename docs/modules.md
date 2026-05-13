@@ -7,7 +7,7 @@ Complete listing of every source file and its role.
 - `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, framebuffer metadata records, and the compact key-event layout.
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
-- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, exposes low-level pixel/fill/text helpers for graphics-mode rendering, and can remap the same framebuffer into a userspace task on demand for direct drawing.
+- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, exposes low-level pixel/fill/text helpers for graphics-mode rendering, and provides a `/dev/fb0` character device for raw byte access.
 - `kernel/gfx/window.zig`: instantiable framed console window (`Window` struct): computes window geometry from font and available pixel dimensions, allocates and manages the shadow pixel buffer from the kernel allocator, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer. Module-level `drawBackground()` fills the full-screen desktop background.
 - `kernel/gfx/vconsole.zig`: instantiable framebuffer-backed virtual-console renderer (`VConsole` struct): maps VGA-style character cells through a PSF font and colour palette into the shadow buffer of its `Window`, exposes the full render/scroll/cursor public API consumed by `console.zig`. Multiple independent `VConsole` instances can be live simultaneously for side-by-side console panels.
 - `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
@@ -45,7 +45,7 @@ Complete listing of every source file and its role.
 ## Storage & Filesystem
 
 - `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
-- `kernel/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` buffer-size operations.
+- `kernel/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` operations, including optional seekable byte-offset support.
 - `kernel/fs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
 - `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O. Also provides `IdeBlockDevice`, a concrete `BlockDevice` implementation backed by an ATA drive.
@@ -79,7 +79,7 @@ Complete listing of every source file and its role.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/test_alloc.zig`: heap allocator stress test covering allocate/free/realloc behavior.
 - `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports basic redirection.
-- `userspace/fbdemo.zig`: userspace framebuffer demo that queries the `framebuf` syscall, snapshots the mapped framebuffer, draws a small colour-pattern test image, waits for a keypress, and restores the original pixels.
+- `userspace/fbdemo.zig`: userspace framebuffer demo that opens `/dev/fb0`, queries metadata via ioctl, snapshots the device contents, draws a small colour-pattern test image through fd I/O, waits for a keypress, and restores the original pixels.
 - `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`, including `FrameBufInfo`.
 
 ## Build Configuration

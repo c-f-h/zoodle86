@@ -6,7 +6,6 @@ const shell = @import("shell.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
 const console = @import("console.zig");
-const framebuf = @import("gfx/framebuf.zig");
 const abi = @import("abi");
 const std = @import("std");
 
@@ -341,13 +340,6 @@ fn sys_ioctl(fd: u32, command: u32, arg: u32) !u32 {
     return try filedesc.ioctlFd(task.getCurrentTask(), fd, command, arg);
 }
 
-/// Returns framebuffer metadata and maps the framebuffer into the calling task's address space.
-fn sys_framebuf(info_va: u32) !u32 {
-    const out = try task.getCurrentTask().getUserPtr(abi.FrameBufInfo, info_va);
-    try framebuf.exportUserspaceInfo(kernel.USER_FRAMEBUF_BASE, out);
-    return 0;
-}
-
 fn sys_yield() u32 {
     _ = kernel.kernel_yield();
     return 0;
@@ -385,7 +377,6 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .SetChildReap => sys_set_child_reap(),
         .KShell => sys_kshell(arg1),
         .GetCursor => sys_getcursor(),
-        .FrameBuf => sys_framebuf(arg1),
         .Ioctl => sys_ioctl(arg1, arg2, arg3),
         else => error.InvalidArgument,
     }) catch |err| {

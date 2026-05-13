@@ -323,8 +323,7 @@ fn panicOnError(err: anyerror) noreturn {
 const Task = task.Task;
 
 pub const USER_DATA_START: u32 = 0x1000_0000; // start of userspace data segment
-pub const USER_FRAMEBUF_BASE: u32 = 0x6F00_0000; // reserved userspace framebuffer mapping window
-pub const USER_HEAP_LIMIT: u32 = USER_FRAMEBUF_BASE; // exclusive upper limit for heap/brk growth
+pub const USER_HEAP_LIMIT: u32 = USER_STACK_BOTTOM; // exclusive upper limit for heap/brk growth
 pub const USER_STACK_BOTTOM: u32 = 0x7000_0000; // start of userspace stack
 pub const USER_STACK_TOP: u32 = 0x8000_0000; // end of userspace stack (and end of userspace virtual address space)
 
@@ -410,9 +409,6 @@ fn kernel_enter() !noreturn {
 
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
-        if (USER_FRAMEBUF_BASE + framebuf.userMappingSizeBytes() > USER_STACK_BOTTOM) {
-            @panic("userspace framebuffer mapping exceeds reserved window");
-        }
         // Font size must be known before determining console panel dimensions.
         vconsole.loadFont(alloc, &disk_fs, "/fonts/ter-u14n.psf") catch |err| {
             kernel_console.put(.{ "Failed to load font (", @errorName(err), ").\n" });

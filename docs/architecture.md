@@ -12,8 +12,6 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses 
 
 Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console.
 
-The same module can also remap that boot framebuffer into a fixed userspace window on demand via the `framebuf` syscall, returning a `FrameBufInfo` descriptor with geometry, pitch, bpp, colour-mask, and mapped-pointer details.
-
 In graphics mode the screen is split into two side-by-side panels. Each panel is backed by an independent `VConsole`/`Window` pair; the `Window` allocates its shadow pixel buffer from the page-backed kernel heap arena rooted at `0xE000_0000`. The left panel hosts the primary kernel shell (`console.primary`); the right panel hosts a secondary `Console` instance whose `stdout` is bound to the `hello` process that is launched at boot before the interactive shell starts. Each panel draws a framed pane with a title bar around the largest console grid that fits the active font and half the framebuffer width. The kernel first calls `window.drawBackground()` to paint the full-screen desktop background, then calls `VConsole.drawFrame()` for each panel independently. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `cp850-8x14.psf` from the filesystem; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
 
 ## Virtual Memory Layout
@@ -25,8 +23,7 @@ The kernel uses paging with 1 MB of identity mapping at both 0x0 (low memory) an
 | 0x0000_0000 - 0x0010_0000 | 1 MB | Identity-mapped low memory (boot, real-mode data, stage2) |
 | 0x0040_0000 - 0x1000_0000 | ~252 MB | User-mode text (code) |
 | 0x1000_0000 - 0x4000_0000 | ~768 MB | User-mode rodata/data/heap (per-process) |
-| 0x4000_0000 - 0x6F00_0000 | ~752 MB | Unused |
-| 0x6F00_0000 - 0x7000_0000 | 16 MB | Reserved userspace framebuffer mapping window |
+| 0x4000_0000 - 0x7000_0000 | ~768 MB | Unused |
 | 0x7000_0000 - 0x8000_0000 | 256 MB | User-mode stack reservation (grows downward from 0x80000000) |
 | 0x8000_0000 - 0xC000_0000 | 1 GB | Unused |
 | 0xC000_8000 - 0xC000_A200 | ~8 KB | Stage-2 loader (VA), physically at 0x8000 |
@@ -48,7 +45,11 @@ The kernel initially maps only the first 1 MB of physical RAM (both at 0x0 and 0
 
 ## Memory Management
 
-The kernel reserves an 8 MB heap arena at `0xE000_0000` and backs it with a freeing allocator in `kernel/allocator.zig`. Small allocations use power-of-two size classes with free-list reuse inside page-sized slabs that remain mapped once created. Large allocations are page-backed runs inside the same arena and are fully unmapped on free, returning their physical pages to `pageallocator` while keeping the shared heap page tables in place for all task page directories. The fixed-size task pool starts at `0xE800_0000`. User processes are allocated private memory slices from the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and have independent stack/heap boundaries. Each task has a 4 KB kernel stack page as the first page of its `Task` object, with the current task pointer stored at the stack base; `taskman` leaves one unmapped guard page immediately before that stack page so kernel-stack overflow faults instead of corrupting adjacent task state. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window. `brk` growth stops at the dedicated framebuffer window base (`0x6F00_0000`) so a userspace task can later map the shared boot framebuffer there without overlapping its heap.
+The kernel detects the largest contiguous usable RAM region reported by E820 (typically starting at 1 MB) and manages it via a bitmap-based `pageallocator`.
+
+The kernel reserves an 8 MB general-purpose kernel heap arena at `0xE000_0000` and backs it with a freeing allocator in `kernel/allocator.zig`. Small allocations use power-of-two size classes with free-list reuse inside page-sized slabs that remain mapped once created. Large allocations are page-backed runs inside the same arena and are fully unmapped on free, returning their physical pages to `pageallocator` while keeping the shared heap page tables in place for all task page directories.
+
+The fixed-size task pool starts at `0xE800_0000`. User processes are allocated private memory slices from the page allocator and have independent stack/heap boundaries. Each task has a 8 KB kernel stack page as the first page of its `Task` object, with the current task pointer stored at the stack base; `taskman` leaves unmapped guard pages immediately before that stack page so kernel-stack overflow faults instead of corrupting adjacent task state. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window. `brk` growth stops at the base of that stack reservation so the heap cannot overlap the stack window.
 
 ## Userspace Heap Allocation
 

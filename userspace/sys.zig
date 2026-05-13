@@ -69,6 +69,7 @@ pub const MOD_ALT = abi.MOD_ALT;
 pub const MOD_CTRL = abi.MOD_CTRL;
 pub const KeyEvent = abi.KeyEvent;
 pub const IOCTL_TTY_SET_MODE = abi.IOCTL_TTY_SET_MODE;
+pub const IOCTL_FRAMEBUF_GET_INFO = abi.IOCTL_FRAMEBUF_GET_INFO;
 pub const TTY_MODE_CANONICAL = abi.TTY_MODE_CANONICAL;
 pub const TTY_MODE_RAW = abi.TTY_MODE_RAW;
 
@@ -255,9 +256,9 @@ pub fn getCursor() struct { row: u32, col: u32 } {
     return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
 }
 
-/// Returns the current framebuffer metadata and makes the mapping user-accessible.
-pub fn getFrameBuf(out: *FrameBufInfo) SyscallError!void {
-    _ = try syscall(.FrameBuf, @intFromPtr(out), 0, 0);
+/// Reads framebuffer metadata through a framebuffer file descriptor.
+pub fn getFrameBufInfo(fd: u32, out: *FrameBufInfo) SyscallError!void {
+    _ = try ioctl(fd, IOCTL_FRAMEBUF_GET_INFO, @intFromPtr(out));
 }
 
 /// Applies a device-specific ioctl request to an open file descriptor.

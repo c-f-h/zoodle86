@@ -53,6 +53,8 @@ pub const Tty = struct {
         .write = charDeviceWrite,
         .ioctl = charDeviceIoctl,
         .bufferSize = charDeviceBufferSize,
+        .size = charDeviceSize,
+        .seekable = charDeviceSeekable,
     };
 
     /// Initialize a tty for the given console.
@@ -198,13 +200,15 @@ pub const Tty = struct {
         };
     }
 
-    fn charDeviceRead(dev: *CharDevice, dest: []u8) char_device.CharDeviceError!usize {
+    fn charDeviceRead(dev: *CharDevice, offset: u32, dest: []u8) char_device.CharDeviceError!usize {
         const self: *Tty = @fieldParentPtr("char_dev", dev);
+        if (offset != 0) return error.InvalidSeek;
         return self.read(dest);
     }
 
-    fn charDeviceWrite(dev: *CharDevice, src: []const u8) char_device.CharDeviceError!usize {
+    fn charDeviceWrite(dev: *CharDevice, offset: u32, src: []const u8) char_device.CharDeviceError!usize {
         const self: *Tty = @fieldParentPtr("char_dev", dev);
+        if (offset != 0) return error.InvalidSeek;
         return self.write(src);
     }
 
@@ -216,6 +220,14 @@ pub const Tty = struct {
     fn charDeviceBufferSize(dev: *const CharDevice) usize {
         const self: *const Tty = @fieldParentPtr("char_dev", dev);
         return self.bufferSize();
+    }
+
+    fn charDeviceSize(_: *const CharDevice) u32 {
+        return 0;
+    }
+
+    fn charDeviceSeekable(_: *const CharDevice) bool {
+        return false;
     }
 
     fn handlePrintable(self: *Tty, ch: u8) void {

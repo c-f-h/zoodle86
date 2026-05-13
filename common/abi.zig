@@ -51,7 +51,6 @@ pub const Syscall = enum(u32) {
     SetChildReap = 1002,
     KShell = 1003,
     GetCursor = 1004,
-    FrameBuf = 1005,
     _,
 };
 
@@ -61,6 +60,7 @@ fn mkIoctlRequest(major: DeviceMajor, command: u24) u32 {
 
 /// Ioctl request numbers
 pub const IOCTL_TTY_SET_MODE: u32 = mkIoctlRequest(.Tty, 1);
+pub const IOCTL_FRAMEBUF_GET_INFO: u32 = mkIoctlRequest(.FrameBuffer, 1);
 
 pub const TTY_MODE_CANONICAL: u32 = 0;
 pub const TTY_MODE_RAW: u32 = 1;
@@ -146,6 +146,7 @@ pub const DeviceMajor = enum(u8) {
     Unnamed = 0,
     Ide = 3,
     Tty = 4,
+    FrameBuffer = 29,
 };
 
 pub const Device = extern struct {
@@ -187,10 +188,8 @@ pub const KeyEvent = extern struct {
     ascii: u8,
 };
 
-/// Stable framebuffer metadata returned by the `FrameBuf` syscall.
+/// Stable framebuffer metadata returned by framebuffer device interfaces.
 pub const FrameBufInfo = extern struct {
-    mapped_ptr: u32 = 0,
-    mapped_len: u32 = 0,
     width: u32 = 0,
     height: u32 = 0,
     pitch_bytes: u32 = 0,
@@ -289,7 +288,7 @@ pub const MOD_CTRL: u8 = 0x04;
 comptime {
     std.debug.assert(@sizeOf(KeyEvent) == 4);
     std.debug.assert(@sizeOf(DirEntry) == 32);
-    std.debug.assert(@sizeOf(FrameBufInfo) == 40);
+    std.debug.assert(@sizeOf(FrameBufInfo) == 32);
 }
 
 /// A (dst, src) fd-index pair used to remap descriptors during spawn.

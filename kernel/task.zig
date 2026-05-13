@@ -2,7 +2,6 @@ const gdt = @import("gdt.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const paging = @import("paging.zig");
 const kernel = @import("kernel.zig");
-const framebuf = @import("gfx/framebuf.zig");
 const filedesc = @import("filedesc.zig");
 const console = @import("console.zig");
 const tty = @import("tty.zig");
@@ -173,9 +172,6 @@ pub const Task = struct {
     pub fn cleanup(t: *Task) void {
         t.closeTaskFiles();
         t.kernel_esp = 0;
-        if (framebuf.hasUserspaceMapping(kernel.USER_FRAMEBUF_BASE)) {
-            framebuf.unmapUserspace(kernel.USER_FRAMEBUF_BASE);
-        }
         t.code_mem.freePages();
         t.data_mem.freePages();
         t.stack_mem.freePages();

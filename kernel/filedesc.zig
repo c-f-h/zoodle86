@@ -3,6 +3,7 @@ const std = @import("std");
 const console = @import("console.zig");
 const char_device = @import("char_device.zig");
 const fs = @import("fs.zig");
+const framebuf = @import("gfx/framebuf.zig");
 const task = @import("task.zig");
 const pipe = @import("pipe.zig");
 const kernel = @import("kernel.zig");
@@ -26,7 +27,7 @@ pub const FileDesc = union(enum) {
     empty: void,
     file: u8, // Always refers to a valid index in the global open_files table
     pipe: struct { handle: *pipe.Pipe, writable: bool },
-    char_device: struct { handle: *char_device.CharDevice, readable: bool, writable: bool },
+    char_device: struct { handle: *char_device.CharDevice, readable: bool, writable: bool, offset: u32 = 0 },
 
     /// Closes a descriptor and releases any backing pipe or open-file state.
     pub fn close(self: *FileDesc) error{BadFd}!void {
@@ -111,9 +112,13 @@ pub const FileDesc = union(enum) {
                 }
                 return pp.read(dest);
             },
-            .char_device => |char_info| {
+            .char_device => |*char_info| {
                 if (!char_info.readable) return error.AccessDenied;
-                return char_info.handle.read(dest);
+                const bytes_read = try char_info.handle.read(char_info.offset, dest);
+                if (char_info.handle.seekable()) {
+                    char_info.offset = std.math.add(u32, char_info.offset, @intCast(bytes_read)) catch return error.InvalidSeek;
+                }
+                return bytes_read;
             },
             else => return error.BadFd,
         }
@@ -145,9 +150,13 @@ pub const FileDesc = union(enum) {
                 }
                 return pp.write(src);
             },
-            .char_device => |char_info| {
+            .char_device => |*char_info| {
                 if (!char_info.writable) return error.AccessDenied;
-                return char_info.handle.write(src);
+                const bytes_written = try char_info.handle.write(char_info.offset, src);
+                if (char_info.handle.seekable()) {
+                    char_info.offset = std.math.add(u32, char_info.offset, @intCast(bytes_written)) catch return error.InvalidSeek;
+                }
+                return bytes_written;
             },
             else => return error.BadFd,
         }
@@ -188,7 +197,7 @@ pub const FileDesc = union(enum) {
                 if (char_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
                 break :blk .{
                     .inode = 0,
-                    .size = 0,
+                    .size = char_info.handle.size(),
                     .blocks = 0,
                     .blksize = @intCast(char_info.handle.bufferSize()),
                     .nlink = 1,
@@ -235,12 +244,14 @@ pub fn newPipeReader(pp: *pipe.Pipe) FileDesc {
 }
 
 pub const FiledescError = fs.WriteFileError || error{
+    AccessViolation,
     AccessDenied,
     BadFd,
     FileInUse,
     InvalidArgument,
     InvalidFlags,
     InvalidSeek,
+    NoDevice,
     ProcessFileTableFull,
     SystemFileTableFull,
     OutOfMemory,
@@ -304,9 +315,21 @@ fn openTty(index: u8, access_mode: u32) ?FileDesc {
             .handle = ptty.charDevice(),
             .readable = access_mode != O_WRONLY,
             .writable = access_mode != O_RDONLY,
+            .offset = 0,
         } };
     }
     return null;
+}
+
+fn openFramebuf(minor: u8, access_mode: u32) FiledescError!?FileDesc {
+    if (minor != 0) return error.FileNotFound;
+    const dev = framebuf.getCharDevice() orelse return error.NoDevice;
+    return .{ .char_device = .{
+        .handle = dev,
+        .readable = access_mode != O_WRONLY,
+        .writable = access_mode != O_RDONLY,
+        .offset = 0,
+    } };
 }
 
 /// Open a special device inode and map it to a device descriptor.
@@ -322,6 +345,7 @@ fn tryOpenSpecialInode(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Fi
     return switch (st.kind) {
         .CharDevice => switch (st.device.major) {
             .Tty => openTty(st.device.minor, access_mode) orelse error.FileNotFound,
+            .FrameBuffer => try openFramebuf(st.device.minor, access_mode),
             else => error.InvalidArgument,
         },
         .BlockDevice => error.InvalidArgument,
@@ -502,6 +526,24 @@ pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32
             if (next_offset < 0 or next_offset > std.math.maxInt(u32)) return error.InvalidSeek;
             open_file.offset = @intCast(next_offset);
             break :blk open_file.offset;
+        },
+        .char_device => |*char_info| blk: {
+            if (!char_info.handle.seekable()) return error.BadFd;
+            const whence = switch (whence_raw) {
+                SEEK_SET => SeekWhence.Set,
+                SEEK_CUR => SeekWhence.Cur,
+                SEEK_END => SeekWhence.End,
+                else => return error.InvalidSeek,
+            };
+            const base: i64 = switch (whence) {
+                .Set => 0,
+                .Cur => char_info.offset,
+                .End => char_info.handle.size(),
+            };
+            const next_offset = std.math.add(i64, base, @as(i64, offset)) catch return error.InvalidSeek;
+            if (next_offset < 0 or next_offset > char_info.handle.size()) return error.InvalidSeek;
+            char_info.offset = @intCast(next_offset);
+            break :blk char_info.offset;
         },
         else => error.BadFd,
     };

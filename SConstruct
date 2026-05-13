@@ -58,6 +58,7 @@ FS_HARD_LINKS = [
 FS_SPECIAL_FILES = [
     ("/dev/hda",  1, "0x03", 0),
     ("/dev/hdb",  1, "0x03", 1),
+    ("/dev/fb0",  0, "0x1d", 0),
     ("/dev/tty0", 0, "0x04", 0),
     ("/dev/tty1", 0, "0x04", 1),
 ]

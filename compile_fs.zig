@@ -23,6 +23,7 @@ fn parseDeviceMajor(raw_major: u8) ?abi.DeviceMajor {
         @intFromEnum(abi.DeviceMajor.Unnamed) => .Unnamed,
         @intFromEnum(abi.DeviceMajor.Ide) => .Ide,
         @intFromEnum(abi.DeviceMajor.Tty) => .Tty,
+        @intFromEnum(abi.DeviceMajor.FrameBuffer) => .FrameBuffer,
         else => null,
     };
 }
