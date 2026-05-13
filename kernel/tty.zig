@@ -149,27 +149,36 @@ pub const Tty = struct {
         }
     }
 
-    /// Switch between canonical and raw mode, discarding all buffered contents.
+    /// Switch between canonical and raw mode, discarding buffered contents only when the mode changes.
     pub fn switchMode(self: *Tty, mode: Mode) void {
+        if (self.mode == mode) return;
         self.mode = mode;
         self.cooked.clear();
         self.line_len = 0;
         self.eof_pending = false;
     }
 
-    /// Handles tty-specific ioctl commands and returns 0 on success.
+    /// Handles tty-specific ioctl commands and returns the previous tty mode for mode switches.
     pub fn ioctl(self: *Tty, command: u32, arg: u32) error{InvalidArgument}!u32 {
         switch (command) {
             abi.IOCTL_TTY_SET_MODE => {
+                const original_mode = self.mode;
                 self.switchMode(switch (arg) {
                     abi.TTY_MODE_CANONICAL => Mode.canonical,
                     abi.TTY_MODE_RAW => Mode.raw,
                     else => return error.InvalidArgument,
                 });
-                return 0;
+                return modeToAbi(original_mode);
             },
             else => return error.InvalidArgument,
         }
+    }
+
+    fn modeToAbi(mode: Mode) u32 {
+        return switch (mode) {
+            .canonical => abi.TTY_MODE_CANONICAL,
+            .raw => abi.TTY_MODE_RAW,
+        };
     }
 
     fn handlePrintable(self: *Tty, ch: u8) void {

@@ -51,6 +51,7 @@ pub const Syscall = enum(u32) {
     SetChildReap = 1002,
     KShell = 1003,
     GetCursor = 1004,
+    FrameBuf = 1005,
     _,
 };
 
@@ -73,6 +74,7 @@ pub const Errno = enum(u32) {
     EFAULT = 14,
     EBUSY = 16,
     EEXIST = 17,
+    ENODEV = 19,
     ENOTDIR = 20,
     EISDIR = 21,
     EINVAL = 22,
@@ -181,6 +183,48 @@ pub const KeyEvent = extern struct {
     ascii: u8,
 };
 
+/// Stable framebuffer metadata returned by the `FrameBuf` syscall.
+pub const FrameBufInfo = extern struct {
+    mapped_ptr: u32 = 0,
+    mapped_len: u32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
+    pitch_bytes: u32 = 0,
+    bytes_per_pixel: u32 = 0,
+    bits_per_pixel: u32 = 0,
+    memory_model: u32 = 0,
+    red_mask_size: u8 = 0,
+    red_position: u8 = 0,
+    green_mask_size: u8 = 0,
+    green_position: u8 = 0,
+    blue_mask_size: u8 = 0,
+    blue_position: u8 = 0,
+    reserved: [2]u8 = @splat(0),
+
+    /// Pack an RGB triplet into this framebuffer's native pixel format.
+    pub fn packRgb(self: *const FrameBufInfo, r: u8, g: u8, b: u8) u32 {
+        var value: u32 = 0;
+
+        if (self.red_mask_size != 0) {
+            const max = (@as(u32, 1) << @as(u5, @intCast(self.red_mask_size))) - 1;
+            const chan = (@as(u32, r) * max) / 255;
+            value |= (chan & max) << @as(u5, @intCast(self.red_position));
+        }
+        if (self.green_mask_size != 0) {
+            const max = (@as(u32, 1) << @as(u5, @intCast(self.green_mask_size))) - 1;
+            const chan = (@as(u32, g) * max) / 255;
+            value |= (chan & max) << @as(u5, @intCast(self.green_position));
+        }
+        if (self.blue_mask_size != 0) {
+            const max = (@as(u32, 1) << @as(u5, @intCast(self.blue_mask_size))) - 1;
+            const chan = (@as(u32, b) * max) / 255;
+            value |= (chan & max) << @as(u5, @intCast(self.blue_position));
+        }
+
+        return value;
+    }
+};
+
 // Virtual key codes delivered in KeyEvent.keycode.
 pub const VK_BACKSPACE: u16 = 0x0E;
 pub const VK_TAB: u16 = 0x0F;
@@ -241,6 +285,7 @@ pub const MOD_CTRL: u8 = 0x04;
 comptime {
     std.debug.assert(@sizeOf(KeyEvent) == 4);
     std.debug.assert(@sizeOf(DirEntry) == 32);
+    std.debug.assert(@sizeOf(FrameBufInfo) == 40);
 }
 
 /// A (dst, src) fd-index pair used to remap descriptors during spawn.

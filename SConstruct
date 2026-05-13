@@ -39,6 +39,7 @@ USERSPACE_SOURCES = [
     ROOT / "userspace" / "test_fs.zig",
     ROOT / "userspace" / "test_alloc.zig",
     ROOT / "userspace" / "kshell_test.zig",
+    ROOT / "userspace" / "fbdemo.zig",
     ROOT / "userspace" / "shell.zig",
 ]
 # Hard links to create in the filesystem image: (source_path, link_path) relative to fs root.

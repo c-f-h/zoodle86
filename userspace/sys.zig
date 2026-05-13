@@ -13,6 +13,7 @@ pub const FileOpenFlags = abi.FileOpenFlags;
 pub const SeekWhence = abi.SeekWhence;
 pub const InodeKind = abi.InodeKind;
 pub const DirEntry = abi.DirEntry;
+pub const FrameBufInfo = abi.FrameBufInfo;
 pub const STAT_FLAG_READABLE = abi.STAT_FLAG_READABLE;
 pub const STAT_FLAG_WRITABLE = abi.STAT_FLAG_WRITABLE;
 pub const STAT_FLAG_APPEND = abi.STAT_FLAG_APPEND;
@@ -82,6 +83,7 @@ pub const SyscallError = error{
     EFAULT,
     EBUSY,
     EEXIST,
+    ENODEV,
     ENOTDIR,
     EISDIR,
     EINVAL,
@@ -92,6 +94,7 @@ pub const SyscallError = error{
 };
 
 pub const WriteAllError = SyscallError || error{WriteZero};
+pub const WaitKeyError = SyscallError || error{EOF};
 
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
 pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
@@ -123,6 +126,7 @@ fn mapErrno(errno: Errno) SyscallError {
         .EFAULT => error.EFAULT,
         .EBUSY => error.EBUSY,
         .EEXIST => error.EEXIST,
+        .ENODEV => error.ENODEV,
         .ENOTDIR => error.ENOTDIR,
         .EISDIR => error.EISDIR,
         .EINVAL => error.EINVAL,
@@ -180,6 +184,13 @@ pub fn writeAll(fd: u32, data: []const u8) WriteAllError!void {
 /// Reads bytes from a userspace-visible file descriptor into a buffer.
 pub fn read(fd: u32, buf: []u8) SyscallError!u32 {
     return syscall(.Read, fd, @intFromPtr(buf.ptr), @intCast(buf.len));
+}
+
+fn readKeyEvent(fd: u32) WaitKeyError!KeyEvent {
+    var bytes: [@sizeOf(KeyEvent)]u8 = undefined;
+    const count = try read(fd, &bytes);
+    if (count == 0 or count != bytes.len) return error.EOF;
+    return @bitCast(bytes);
 }
 
 /// Opens a filesystem path with the provided userspace flags.
@@ -244,9 +255,21 @@ pub fn getCursor() struct { row: u32, col: u32 } {
     return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
 }
 
+/// Returns the current framebuffer metadata and makes the mapping user-accessible.
+pub fn getFrameBuf(out: *FrameBufInfo) SyscallError!void {
+    _ = try syscall(.FrameBuf, @intFromPtr(out), 0, 0);
+}
+
 /// Applies a device-specific ioctl request to an open file descriptor.
 pub fn ioctl(fd: u32, command: u32, arg: u32) SyscallError!u32 {
     return syscall(.Ioctl, fd, command, arg);
+}
+
+/// Reads one key event from stdin, temporarily switching the controlling tty to raw mode.
+pub fn waitKey() WaitKeyError!KeyEvent {
+    const original_mode = try ioctl(STDIN, IOCTL_TTY_SET_MODE, TTY_MODE_RAW);
+    defer _ = ioctl(STDIN, IOCTL_TTY_SET_MODE, original_mode) catch {};
+    return readKeyEvent(STDIN);
 }
 
 pub const FdRemap = abi.FdRemap;

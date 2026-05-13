@@ -1,6 +1,7 @@
 const mem = @import("../mem.zig");
 const paging = @import("../paging.zig");
 const psf = @import("psf.zig");
+const abi = @import("abi");
 
 const boot_video_info_magic: u32 = 0x3044_4956; // "VID0"
 const fb_demo_va: u32 = 0xD000_0000;
@@ -29,6 +30,10 @@ const BootVideoInfo = packed struct {
 var info: *align(1) const BootVideoInfo = undefined;
 var fb_base: [*]u8 = undefined;
 var bytes_per_pixel: u32 = 0;
+var initialized = false;
+var fb_phys_start: u32 = 0;
+var fb_num_pages: u32 = 0;
+var fb_size_bytes: u32 = 0;
 
 fn getBootVideoInfo(boot_video_info_phys: usize) !void {
     // NB: assumes identity mapping!
@@ -126,15 +131,16 @@ pub fn init(boot_video_info_phys: usize) !void {
 
     bytes_per_pixel = @divTrunc(@as(u32, info.bpp) + 7, 8);
 
-    const fb_size: u32 = @as(u32, info.pitch_bytes) * @as(u32, info.height);
-    const phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
-    const phys_end = paging.roundToNext(info.phys_base_ptr + fb_size, paging.PAGE);
-    const num_pages: u32 = @divExact(phys_end - phys_start, paging.PAGE);
+    fb_size_bytes = @as(u32, info.pitch_bytes) * @as(u32, info.height);
+    fb_phys_start = paging.roundDown(info.phys_base_ptr, paging.PAGE);
+    const phys_end = paging.roundToNext(info.phys_base_ptr + fb_size_bytes, paging.PAGE);
+    fb_num_pages = @divExact(phys_end - fb_phys_start, paging.PAGE);
 
-    paging.mapContiguousRangeAt(fb_demo_va, phys_start, num_pages, false, true, true);
+    paging.mapContiguousRangeAt(fb_demo_va, fb_phys_start, fb_num_pages, false, true, true);
 
-    const fb_offset = info.phys_base_ptr - phys_start;
+    const fb_offset = info.phys_base_ptr - fb_phys_start;
     fb_base = @ptrFromInt(fb_demo_va + fb_offset);
+    initialized = true;
 }
 
 /// Return the mapped framebuffer width in pixels.
@@ -160,4 +166,47 @@ pub fn bytesPerPixel() usize {
 /// Return a pointer to the framebuffer pixel at the given coordinates.
 pub fn pixelPtr(x: u32, y: u32) [*]u8 {
     return fb_base + @as(usize, y) * @as(usize, info.pitch_bytes) + @as(usize, x) * @as(usize, bytes_per_pixel);
+}
+
+/// Returns the number of bytes spanned by the user-visible framebuffer mapping.
+pub fn userMappingSizeBytes() u32 {
+    if (!initialized) return 0;
+    return fb_num_pages * paging.PAGE;
+}
+
+/// Maps the framebuffer into the current address space at `user_va` and fills a userspace ABI struct.
+pub fn exportUserspaceInfo(user_va: u32, out: *abi.FrameBufInfo) !void {
+    if (!initialized) return error.NoDevice;
+
+    paging.mapContiguousRangeAt(user_va, fb_phys_start, fb_num_pages, true, true, true);
+
+    out.* = .{
+        .mapped_ptr = user_va + (info.phys_base_ptr - fb_phys_start),
+        .mapped_len = fb_size_bytes,
+        .width = info.width,
+        .height = info.height,
+        .pitch_bytes = info.pitch_bytes,
+        .bytes_per_pixel = bytes_per_pixel,
+        .bits_per_pixel = info.bpp,
+        .memory_model = info.memory_model,
+        .red_mask_size = info.red_mask_size,
+        .red_position = info.red_position,
+        .green_mask_size = info.green_mask_size,
+        .green_position = info.green_position,
+        .blue_mask_size = info.blue_mask_size,
+        .blue_position = info.blue_position,
+    };
+}
+
+/// Returns whether the current address space contains the framebuffer user mapping at `user_va`.
+pub fn hasUserspaceMapping(user_va: u32) bool {
+    if (!initialized or !paging.hasPde(user_va)) return false;
+    const pte = paging.getPte(user_va);
+    return pte.present and pte.user and pte.getPhysicalPageAddress() == fb_phys_start;
+}
+
+/// Removes the framebuffer user mapping from the current address space.
+pub fn unmapUserspace(user_va: u32) void {
+    if (!initialized) return;
+    paging.unmapSharedRangeAt(user_va, fb_num_pages);
 }

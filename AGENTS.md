@@ -1,6 +1,6 @@
 # `zoodle86` - Project Overview
 
-A tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in Zig. Builds a bootable disk image with a freestanding kernel and a small command-driven text UI. Supports virtual memory paging, a page-backed freeing kernel heap allocator, timer-driven userspace preemption with non-preemptive kernel execution, scheduler-managed kernel-stack resume points for task switching, a simple inode-based custom filesystem, and basic ACPI functionality.
+A tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in Zig. Builds a bootable disk image with a freestanding kernel and a small command-driven text UI. Supports virtual memory paging, a page-backed freeing kernel heap allocator, timer-driven userspace preemption with non-preemptive kernel execution, scheduler-managed kernel-stack resume points for task switching, a simple inode-based custom filesystem, basic ACPI functionality, and a userspace-accessible framebuffer mapping syscall.
 
 ## Documentation
 
@@ -28,7 +28,7 @@ scons run AUTOEXEC="serial on\nrun hello\nshutdown"
 
 The default value for `AUTOEXEC` is `"run shell\nshutdown"`.
 
-There is no separate unit-test suite. A successful build is the current baseline check. Invoking the `hello 3 3` (PID, spawning, basic syscalls), `test_fs` (syscall-heavy file operations including `lseek`/`ftruncate`/`getdents`), and `test_alloc` (userspace memory manipulation) programs using the `run` command from the kernel shell can serve as additional checks.
+There is no separate unit-test suite. A successful build is the current baseline check. Invoking the `hello 3 3` (PID, spawning, basic syscalls), `test_fs` (syscall-heavy file operations including `lseek`/`ftruncate`/`getdents`), `test_alloc` (userspace memory manipulation), and `fbdemo` (userspace framebuffer mapping and drawing) programs using the `run` command from the kernel shell can serve as additional checks.
 
 Files and directories from `static/` are copied into the filesystem image during the build. SCons regenerates `/dev` on each image build and synthesizes root `_special`/`_links` manifests for generated device nodes and hard links. The graphical frontend loads its PSF font from `/fonts/`.
 

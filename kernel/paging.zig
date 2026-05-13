@@ -339,6 +339,31 @@ pub fn unmapPagesAtKeepTables(addr: u32, num_pages: u32) void {
     }
 }
 
+/// Unmap a contiguous range of already-mapped pages without freeing their physical backing.
+pub fn unmapSharedRangeAt(addr: u32, num_pages: u32) void {
+    if (addr & PAGE_MASK != 0) {
+        @panic("Unmap range must be page-aligned");
+    }
+
+    for (0..num_pages) |i| {
+        const va = addr + @as(u32, @intCast(i)) * PAGE;
+        const pti = pageTableIndex(va);
+        const pte = getPte(va);
+        if (!pte.present) {
+            @panic("Cannot unmap an unmapped page");
+        }
+
+        pte.* = @bitCast(@as(u32, 0));
+        invlpg(va);
+
+        if (pageTableIsEmpty(pti)) {
+            const pde = &mapped_pd[pti];
+            pageallocator.freePage(pde.getPhysicalTableAddress());
+            pde.* = @bitCast(@as(u32, 0));
+        }
+    }
+}
+
 pub const PAGE = 4096;
 pub const PAGE_MASK: u32 = PAGE - 1;
 

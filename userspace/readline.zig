@@ -36,11 +36,11 @@ pub const Readline = struct {
     /// Returns null when the user presses Ctrl-D on an empty line (EOF signal).
     pub fn readLine(self: *Readline) (sys.SyscallError || error{EOF})![]const u8 {
         // Switch tty to raw mode to get raw key events and disable echo
-        _ = try sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_RAW);
+        const original_mode = try sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_RAW);
 
-        // Hide cursor and switch tty back to canonical mode when done with editing
+        // Hide cursor and restore the previous tty mode when done with editing
         defer showCursor(false);
-        defer _ = sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_CANONICAL) catch {};
+        defer _ = sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, original_mode) catch {};
 
         while (true) {
             const ev = try readKey();

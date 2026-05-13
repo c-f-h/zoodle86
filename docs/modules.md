@@ -4,10 +4,10 @@ Complete listing of every source file and its role.
 
 ## Core Kernel Modules
 
-- `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, and the compact key-event layout.
+- `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, framebuffer metadata records, and the compact key-event layout.
 - `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
-- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, and exposes low-level pixel, fill, and text helpers for graphics-mode rendering.
+- `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, exposes low-level pixel/fill/text helpers for graphics-mode rendering, and can remap the same framebuffer into a userspace task on demand for direct drawing.
 - `kernel/gfx/window.zig`: instantiable framed console window (`Window` struct): computes window geometry from font and available pixel dimensions, allocates and manages the shadow pixel buffer from the kernel allocator, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer. Module-level `drawBackground()` fills the full-screen desktop background.
 - `kernel/gfx/vconsole.zig`: instantiable framebuffer-backed virtual-console renderer (`VConsole` struct): maps VGA-style character cells through a PSF font and colour palette into the shadow buffer of its `Window`, exposes the full render/scroll/cursor public API consumed by `console.zig`. Multiple independent `VConsole` instances can be live simultaneously for side-by-side console panels.
 - `kernel/gfx/psf.zig`: PSF parsing and PSF1 metadata types shared by framebuffer-backed text rendering.
@@ -78,7 +78,8 @@ Complete listing of every source file and its role.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/test_alloc.zig`: heap allocator stress test covering allocate/free/realloc behavior.
 - `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports basic redirection.
-- `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`.
+- `userspace/fbdemo.zig`: userspace framebuffer demo that queries the `framebuf` syscall, snapshots the mapped framebuffer, draws a small colour-pattern test image, waits for a keypress, and restores the original pixels.
+- `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`, including `FrameBufInfo`.
 
 ## Build Configuration
 
@@ -99,6 +100,7 @@ Complete listing of every source file and its role.
     - `userspace/fib.zig`
     - `userspace/test_fs.zig`
     - `userspace/test_alloc.zig`
+    - `userspace/fbdemo.zig`
     - `userspace/shell.zig`
 - `build/fsimage.img`: filesystem image compiled from `build/fsimage/` by `compile_fs.zig`, including the directory tree copied from `static/`.
 - `build/image.img`: final disk image combining boot sector, stage-2 loader, and filesystem.
