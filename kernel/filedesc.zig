@@ -353,17 +353,6 @@ fn tryOpenSpecialInode(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Fi
     };
 }
 
-fn tryOpenSpecialFile(path: []const u8, flags: u32) !?FileDesc {
-    const access_mode = try validateOpenFlags(flags);
-    if (std.mem.eql(u8, path, "/dev/tty0")) {
-        return openTty(0, access_mode);
-    } else if (std.mem.eql(u8, path, "/dev/tty1")) {
-        return openTty(1, access_mode);
-    } else {
-        return null;
-    }
-}
-
 /// Opens or creates a filesystem-backed descriptor for a task.
 pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
