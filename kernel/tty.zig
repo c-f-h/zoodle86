@@ -160,6 +160,7 @@ pub const Tty = struct {
 
     /// Handles tty-specific ioctl commands and returns the previous tty mode for mode switches.
     pub fn ioctl(self: *Tty, command: u32, arg: u32) error{InvalidArgument}!u32 {
+        if ((command >> 24) != @as(u32, @intFromEnum(abi.DeviceMajor.Tty))) return error.InvalidArgument;
         switch (command) {
             abi.IOCTL_TTY_SET_MODE => {
                 const original_mode = self.mode;

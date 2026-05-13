@@ -55,8 +55,12 @@ pub const Syscall = enum(u32) {
     _,
 };
 
+fn mkIoctlRequest(major: DeviceMajor, command: u24) u32 {
+    return (@as(u32, @intFromEnum(major)) << 24) | @as(u32, command);
+}
+
 /// Ioctl request numbers
-pub const IOCTL_TTY_SET_MODE: u32 = 1;
+pub const IOCTL_TTY_SET_MODE: u32 = mkIoctlRequest(.Tty, 1);
 
 pub const TTY_MODE_CANONICAL: u32 = 0;
 pub const TTY_MODE_RAW: u32 = 1;
