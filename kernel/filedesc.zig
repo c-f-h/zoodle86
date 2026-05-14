@@ -3,7 +3,6 @@ const std = @import("std");
 const console = @import("console.zig");
 const char_device = @import("char_device.zig");
 const vfs = @import("fs/vfs.zig");
-const fs = @import("fs/zodfs.zig");
 const framebuf = @import("gfx/framebuf.zig");
 const task = @import("task.zig");
 const pipe = @import("pipe.zig");
@@ -22,8 +21,6 @@ pub const SEEK_SET = abi.SEEK_SET;
 pub const SEEK_CUR = abi.SEEK_CUR;
 pub const SEEK_END = abi.SEEK_END;
 
-pub const MAX_OPEN_FILES = 32;
-
 pub const FileDesc = union(enum) {
     empty: void,
     file: u8, // Always refers to a valid index in the global open_files table
@@ -34,7 +31,7 @@ pub const FileDesc = union(enum) {
     pub fn close(self: *FileDesc) error{BadFd}!void {
         switch (self.*) {
             .file => |file_index| {
-                closeOpenFile(file_index);
+                vfs.closeOpenFile(file_index);
             },
             .pipe => |pipe_info| {
                 const pp = pipe_info.handle;
@@ -61,7 +58,7 @@ pub const FileDesc = union(enum) {
         switch (self.*) {
             .empty => return .{ .empty = {} },
             .file => |file_index| {
-                const open_file = getOpenFile(file_index);
+                const open_file = vfs.getOpenFile(file_index);
                 open_file.in_use += 1;
                 if (open_file.in_use == 0) @panic("file reference count overflow");
                 return .{ .file = file_index };
@@ -91,7 +88,7 @@ pub const FileDesc = union(enum) {
     pub fn read(self: *FileDesc, dest: []u8) FiledescError!usize {
         switch (self.*) {
             .file => |file_index| {
-                const open_file = getOpenFile(file_index);
+                const open_file = vfs.getOpenFile(file_index);
                 if (!open_file.readable) return error.AccessDenied;
 
                 const inode = try open_file.disk_fs.readFileInode(open_file.inode_index);
@@ -129,7 +126,7 @@ pub const FileDesc = union(enum) {
     pub fn write(self: *FileDesc, src: []const u8) !usize {
         switch (self.*) {
             .file => |file_index| {
-                const open_file = getOpenFile(file_index);
+                const open_file = vfs.getOpenFile(file_index);
                 if (!open_file.writable) return error.AccessDenied;
 
                 const write_offset = if (open_file.append)
@@ -164,21 +161,21 @@ pub const FileDesc = union(enum) {
     }
 
     /// Returns stat-like metadata for the descriptor.
-    pub fn stat(self: *FileDesc) FiledescError!fs.Stat {
+    pub fn stat(self: *FileDesc) FiledescError!vfs.Stat {
         return switch (self.*) {
             .file => |file_index| blk: {
-                const open_file = getOpenFile(file_index);
+                const open_file = vfs.getOpenFile(file_index);
                 var st = try open_file.disk_fs.statInode(open_file.inode_index);
                 st.flags = buildOpenFileStatFlags(open_file);
                 break :blk st;
             },
             .pipe => |pipe_info| blk: {
                 const pp = pipe_info.handle;
-                var flags = fs.STAT_FLAG_SYNTHETIC;
+                var flags = abi.STAT_FLAG_SYNTHETIC;
                 if (pipe_info.writable) {
-                    flags |= fs.STAT_FLAG_WRITABLE;
+                    flags |= abi.STAT_FLAG_WRITABLE;
                 } else {
-                    flags |= fs.STAT_FLAG_READABLE;
+                    flags |= abi.STAT_FLAG_READABLE;
                 }
                 break :blk .{
                     .inode = 0,
@@ -193,9 +190,9 @@ pub const FileDesc = union(enum) {
                 };
             },
             .char_device => |char_info| blk: {
-                var flags = fs.STAT_FLAG_SYNTHETIC;
-                if (char_info.readable) flags |= fs.STAT_FLAG_READABLE;
-                if (char_info.writable) flags |= fs.STAT_FLAG_WRITABLE;
+                var flags = abi.STAT_FLAG_SYNTHETIC;
+                if (char_info.readable) flags |= abi.STAT_FLAG_READABLE;
+                if (char_info.writable) flags |= abi.STAT_FLAG_WRITABLE;
                 break :blk .{
                     .inode = 0,
                     .size = char_info.handle.size(),
@@ -262,56 +259,8 @@ pub const Stat = abi.Stat;
 const DirEntry = abi.DirEntry;
 const SeekWhence = abi.SeekWhence;
 
-const OpenFile = struct {
-    in_use: u8 = 0, // Reference counter
-    disk_fs: *fs.FileSystem = undefined,
-    inode_index: fs.InodeT = 0,
-    offset: u32 = 0,
-    readable: bool = false,
-    writable: bool = false,
-    append: bool = false,
-
-    fn getSize(self: *const OpenFile) FiledescError!u32 {
-        return try self.disk_fs.getInodeSize(self.inode_index);
-    }
-};
-
-var open_files: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
-
-/// Opens or creates a filesystem-backed descriptor, not bound to a particular task.
-pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) FiledescError!FileDesc {
-    const access_mode = try validateOpenFlags(flags);
-    const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
-    const inode_index = if (path.len == 0 or std.mem.eql(u8, path, "/"))
-        fs.ROOT_INODE_INDEX
-    else
-        // try to find an existing file at this path
-        disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, path) catch |err| switch (err) {
-            error.FileNotFound => blk: {
-                if ((flags & O_CREAT) == 0) return error.FileNotFound;
-
-                // not found, but creation requested: create the file and return its inode index
-                const split = vfs.splitPath(path);
-                const parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
-                break :blk try disk_fs.createFile(parent_inode, split.name);
-            },
-            else => return err,
-        };
-
-    if ((flags & O_TRUNC) != 0) {
-        try disk_fs.resizeInode(inode_index, 0);
-    }
-
-    open_files[open_index] = .{
-        .in_use = 1,
-        .disk_fs = disk_fs,
-        .inode_index = inode_index,
-        .offset = 0,
-        .readable = access_mode != O_WRONLY,
-        .writable = access_mode != O_RDONLY,
-        .append = (flags & O_APPEND) != 0,
-    };
-    return FileDesc{ .file = @truncate(open_index) };
+pub fn openFileDesc(path: []const u8, flags: u32) vfs.FsError!FileDesc {
+    return FileDesc{ .file = try vfs.createOpenFileEntry(path, flags) };
 }
 
 fn openTty(index: u8, access_mode: u32) ?FileDesc {
@@ -326,7 +275,7 @@ fn openTty(index: u8, access_mode: u32) ?FileDesc {
     return null;
 }
 
-fn openFramebuf(minor: u8, access_mode: u32) FiledescError!?FileDesc {
+fn openFramebuf(minor: u8, access_mode: u32) vfs.FsError!?FileDesc {
     if (minor != 0) return error.FileNotFound;
     const dev = framebuf.getCharDevice() orelse return error.NoDevice;
     return .{ .char_device = .{
@@ -338,7 +287,7 @@ fn openFramebuf(minor: u8, access_mode: u32) FiledescError!?FileDesc {
 }
 
 /// Open a special device inode and map it to a device descriptor.
-fn tryOpenSpecialInode(path: []const u8, flags: u32) FiledescError!?FileDesc {
+fn tryOpenSpecialInode(path: []const u8, flags: u32) vfs.FsError!?FileDesc {
     if (path.len == 0 or std.mem.eql(u8, path, "/")) return null;
 
     const access_mode = try validateOpenFlags(flags);
@@ -351,9 +300,9 @@ fn tryOpenSpecialInode(path: []const u8, flags: u32) FiledescError!?FileDesc {
         .CharDevice => switch (st.device.major) {
             .Tty => openTty(st.device.minor, access_mode) orelse error.FileNotFound,
             .FrameBuffer => try openFramebuf(st.device.minor, access_mode),
-            else => error.InvalidArgument,
+            else => error.NoDevice,
         },
-        .BlockDevice => error.InvalidArgument,
+        .BlockDevice => error.NoDevice,
         else => null,
     };
 }
@@ -363,7 +312,7 @@ pub fn openFile(ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const filedesc =
         try tryOpenSpecialInode(path, flags) orelse
-        try openFileDesc(vfs.getRootFs(), path, flags);
+        try openFileDesc(path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
 }
@@ -388,33 +337,7 @@ pub fn readDirEntries(ptask: *task.Task, fd: u32, dest: []DirEntry) FiledescErro
 
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return switch (slot.*) {
-        .file => |file_index| blk: {
-            const open_file = getOpenFile(file_index);
-            const dir_stat = try open_file.disk_fs.statInode(open_file.inode_index);
-            if (dir_stat.kind != .Directory) return error.NotADirectory;
-
-            const raw_entry_size = @sizeOf(fs.DirectoryEntry);
-            if (open_file.offset % raw_entry_size != 0) return error.InvalidSeek;
-
-            var dir_index: usize = @intCast(open_file.offset / raw_entry_size);
-            var out_count: usize = 0;
-
-            while (dir_index < fs.DIRECTORY_ENTRY_COUNT and out_count < dest.len) : (dir_index += 1) {
-                open_file.offset = @intCast((dir_index + 1) * raw_entry_size);
-                const raw_entry = (try open_file.disk_fs.getDirectoryEntry(open_file.inode_index, dir_index)) orelse continue;
-                const inode_stat = try open_file.disk_fs.statInode(raw_entry.inode_index);
-                dest[out_count] = .{
-                    .inode = raw_entry.inode_index,
-                    .size = inode_stat.size,
-                    .kind = inode_stat.kind,
-                    .name_len = raw_entry.name_len,
-                    .name = raw_entry.name,
-                };
-                out_count += 1;
-            }
-
-            break :blk out_count;
-        },
+        .file => |file_index| vfs.readDirEntries(file_index, dest),
         else => error.NotADirectory,
     };
 }
@@ -440,7 +363,7 @@ pub fn seekFile(ptask: *task.Task, fd: u32, offset: i32, whence_raw: u32) Filede
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return switch (slot.*) {
         .file => |file_index| blk: {
-            const open_file = getOpenFile(file_index);
+            const open_file = vfs.getOpenFile(file_index);
             const whence = switch (whence_raw) {
                 SEEK_SET => SeekWhence.Set,
                 SEEK_CUR => SeekWhence.Cur,
@@ -484,7 +407,7 @@ pub fn truncateFile(ptask: *task.Task, fd: u32, size: u32) FiledescError!void {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     switch (slot.*) {
         .file => |file_index| {
-            const open_file = getOpenFile(file_index);
+            const open_file = vfs.getOpenFile(file_index);
             if (!open_file.writable) return error.AccessDenied;
             try open_file.disk_fs.resizeInode(open_file.inode_index, size);
         },
@@ -498,7 +421,7 @@ pub fn closeFile(ptask: *task.Task, fd: u32) FiledescError!void {
     try slot.close(); // will also set the slot to empty
 }
 
-fn validateOpenFlags(flags: u32) FiledescError!u32 {
+pub fn validateOpenFlags(flags: u32) vfs.FsError!u32 {
     const known_flags = O_ACCMODE | O_CREAT | O_TRUNC | O_APPEND;
     if ((flags & ~known_flags) != 0) return error.InvalidFlags;
 
@@ -513,28 +436,6 @@ fn validateOpenFlags(flags: u32) FiledescError!u32 {
     return access_mode;
 }
 
-fn findFreeOpenFileIndex() ?usize {
-    for (&open_files, 0..) |open_file, index| {
-        if (open_file.in_use == 0) return index;
-    }
-    return null;
-}
-
-fn getOpenFile(index: u8) *OpenFile {
-    if (index >= open_files.len) @panic("invalid open file index");
-    if (open_files[index].in_use == 0) @panic("open file index not in use");
-    return &open_files[index];
-}
-
-fn closeOpenFile(index: u8) void {
-    if (index >= open_files.len) @panic("invalid open file index");
-    if (open_files[index].in_use == 0) @panic("open file index not in use");
-    open_files[index].in_use -= 1;
-    if (open_files[index].in_use == 0) {
-        open_files[index] = .{};
-    }
-}
-
 fn syntheticCharStat(access_flags: u32) Stat {
     return .{
         .inode = 0,
@@ -543,24 +444,14 @@ fn syntheticCharStat(access_flags: u32) Stat {
         .blksize = 1,
         .nlink = 1,
         .kind = .CharDevice,
-        .flags = access_flags | fs.STAT_FLAG_SYNTHETIC,
+        .flags = access_flags | abi.STAT_FLAG_SYNTHETIC,
     };
 }
 
-fn buildOpenFileStatFlags(open_file: *const OpenFile) u8 {
+fn buildOpenFileStatFlags(open_file: *const vfs.OpenFile) u8 {
     var flags: u8 = 0;
-    if (open_file.readable) flags |= fs.STAT_FLAG_READABLE;
-    if (open_file.writable) flags |= fs.STAT_FLAG_WRITABLE;
-    if (open_file.append) flags |= fs.STAT_FLAG_APPEND;
+    if (open_file.readable) flags |= abi.STAT_FLAG_READABLE;
+    if (open_file.writable) flags |= abi.STAT_FLAG_WRITABLE;
+    if (open_file.append) flags |= abi.STAT_FLAG_APPEND;
     return flags;
-}
-
-/// Check if any open file references the given inode index.
-pub fn isInodeOpen(inode_index: fs.InodeT) bool {
-    for (&open_files) |open_file| {
-        if (open_file.in_use != 0 and open_file.inode_index == inode_index) {
-            return true;
-        }
-    }
-    return false;
 }

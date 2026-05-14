@@ -239,6 +239,7 @@ fn inodeCountForFsSectors(fs_sector_count: u32) ?u16 {
 pub const FsError = error{
     InvalidSuperblock,
     Corrupt,
+    NoDevice,
     DirectoryFull,
     FileExists,
     FileNotFound,
@@ -248,6 +249,9 @@ pub const FsError = error{
     InvalidName,
     FileInUse,
     NoSpace,
+    InvalidFlags,
+    InvalidSeek,
+    SystemFileTableFull,
 } || block_device.BlockError;
 
 pub const ReadFileError = FsError || error{OutOfMemory};

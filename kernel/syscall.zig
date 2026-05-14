@@ -185,7 +185,7 @@ fn sys_spawn(argv_desc_ofs: u32, opts_ptr: u32) !u32 {
 
     // Read fd remaps from userspace BEFORE loadUserspaceElf (while the parent page dir is active).
     // We copy them into a fixed kernel-side buffer so we can apply them after the ELF is loaded.
-    var remap_buf: [filedesc.MAX_OPEN_FILES]FdRemap = undefined;
+    var remap_buf: [vfs.MAX_OPEN_FILES]FdRemap = undefined;
     var remap_count: usize = 0;
     if (opts_ptr != 0) {
         const opts = try current_task.getUserPtr(SpawnOpts, opts_ptr);
