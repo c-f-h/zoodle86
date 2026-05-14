@@ -74,7 +74,7 @@ Complete listing of every source file and its role.
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
-- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `ls`, `ln`, `rm`, `stat`, `mv`, or `cp` based on the basename of `argv[0]`. Installed as `/bin/busybox` and hard-linked to respective tool names.
+- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `cp`, `echo`, `find`, `ln`, `ls`, `mkdir`, `mv`, `rm`, `rmdir`, or `stat` based on the basename of `argv[0]`. Installed as `/bin/busybox` and hard-linked to respective tool names.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
 - `userspace/test_fs.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
@@ -98,7 +98,7 @@ Complete listing of every source file and its role.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - The following userspace programs are compiled and copied into the image as `/bin/<basename>`, which is on the shell path:
     - `userspace/hello.zig`
-    - `userspace/busybox.zig` → `/bin/busybox` plus hard links `/bin/cat`, `/bin/ls`, `/bin/ln`, `/bin/rm`, `/bin/stat`, `/bin/mv`, `/bin/cp`
+    - `userspace/busybox.zig` → `/bin/busybox` plus hard links `/bin/cat`, `/bin/cp`, `/bin/echo`, `/bin/find`, `/bin/ln`, `/bin/ls`, `/bin/mkdir`, `/bin/mv`, `/bin/rm`, `/bin/rmdir`, `/bin/stat`
     - `userspace/fib.zig`
     - `userspace/test_fs.zig`
     - `userspace/test_alloc.zig`

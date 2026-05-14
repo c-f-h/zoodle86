@@ -54,6 +54,7 @@ FS_HARD_LINKS = [
     ("bin/busybox", "bin/mkdir"),
     ("bin/busybox", "bin/rmdir"),
     ("bin/busybox", "bin/echo"),
+    ("bin/busybox", "bin/find"),
 ]
 FS_SPECIAL_FILES = [
     ("/dev/hda",  1, "0x03", 0),

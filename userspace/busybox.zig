@@ -167,6 +167,71 @@ fn lsMain(argv: []const []const u8) noreturn {
 }
 
 // ---------------------------------------------------------------------------
+// find
+// ---------------------------------------------------------------------------
+
+fn findDisplayPath(path: []const u8) []const u8 {
+    const trimmed = std.mem.trimEnd(u8, path, "/");
+    return if (trimmed.len == 0) "/" else trimmed;
+}
+
+fn findJoinPath(buf: []u8, parent: []const u8, name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, parent, "/")) {
+        return std.fmt.bufPrint(buf, "/{s}", .{name}) catch null;
+    }
+    return std.fmt.bufPrint(buf, "{s}/{s}", .{ parent, name }) catch null;
+}
+
+fn findWalkPath(path: []const u8) bool {
+    const display_path = findDisplayPath(path);
+
+    var stat: sys.Stat = undefined;
+    sys.stat(display_path, &stat) catch {
+        err_toolFailedTo("find", "stat", display_path);
+        return false;
+    };
+
+    sys.writeAll(sys.STDOUT, display_path) catch return false;
+    sys.writeAll(sys.STDOUT, "\n") catch return false;
+
+    if (stat.kind != .Directory) return true;
+
+    const fd = sys.open(display_path, .{}) catch {
+        err_toolFailedTo("find", "open", display_path);
+        return false;
+    };
+    defer sys.close(fd) catch {};
+
+    var entry: sys.DirEntry = undefined;
+    while (sys.readdir(fd, &entry) catch {
+        err_toolFailedTo("find", "read directory", display_path);
+        return false;
+    }) {
+        var child_buf: [512]u8 = undefined;
+        const child_path = findJoinPath(&child_buf, display_path, entry.name[0..entry.name_len]) orelse {
+            sys.writeAll(sys.STDERR, "find: path too long\n") catch {};
+            return false;
+        };
+        if (!findWalkPath(child_path)) return false;
+    }
+
+    return true;
+}
+
+/// Recursively prints each path reachable from the provided starting paths.
+fn findMain(argv: []const []const u8) noreturn {
+    var ok = true;
+    const default_paths = [_][]const u8{"/"};
+    const paths: []const []const u8 = if (argv.len <= 1) default_paths[0..] else argv[1..];
+
+    for (paths) |path| {
+        if (!findWalkPath(path)) ok = false;
+    }
+
+    sys.exit(if (ok) 0 else 1);
+}
+
+// ---------------------------------------------------------------------------
 // ln
 // ---------------------------------------------------------------------------
 
@@ -448,13 +513,14 @@ fn echoMain(argv: []const []const u8) noreturn {
 // busybox dispatch
 // ---------------------------------------------------------------------------
 
-/// Multi-call binary: dispatches to cat, cp, echo, ln, ls, mkdir, mv, rm, rmdir, or stat based on argv[0] basename.
+/// Multi-call binary: dispatches to cat, cp, echo, find, ln, ls, mkdir, mv, rm, rmdir, or stat based on argv[0] basename.
 pub fn main(argv: []const []const u8) noreturn {
     const name = if (argv.len > 0) baseName(argv[0]) else "";
 
     if (std.mem.eql(u8, name, "cat")) catMain(argv);
     if (std.mem.eql(u8, name, "cp")) cpMain(argv);
     if (std.mem.eql(u8, name, "echo")) echoMain(argv);
+    if (std.mem.eql(u8, name, "find")) findMain(argv);
     if (std.mem.eql(u8, name, "ln")) lnMain(argv);
     if (std.mem.eql(u8, name, "ls")) lsMain(argv);
     if (std.mem.eql(u8, name, "mkdir")) mkdirMain(argv);
@@ -465,7 +531,7 @@ pub fn main(argv: []const []const u8) noreturn {
 
     sys.writeAll(
         sys.STDERR,
-        "busybox: available tools: cat, cp, echo, ln, ls, mkdir, mv, rm, rmdir, stat\n" ++
+        "busybox: available tools: cat, cp, echo, find, ln, ls, mkdir, mv, rm, rmdir, stat\n" ++
             "Invoke via a named link.\n",
     ) catch {};
     sys.exit(1);
