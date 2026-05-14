@@ -4,7 +4,7 @@ const app_keylog = @import("app_keylog.zig");
 const app_memmap = @import("app_memmap.zig");
 const console = @import("console.zig");
 const cpuid = @import("cpuid.zig");
-const fs = @import("fs.zig");
+const vfs = @import("fs/vfs.zig");
 const io = @import("io.zig");
 const keyboard = @import("keyboard.zig");
 const kprof = @import("kprof.zig");
@@ -27,7 +27,6 @@ const ArgsIterator = std.mem.TokenIterator(u8, .any);
 
 pub const Shell = struct {
     alloc: std.mem.Allocator,
-    disk_fs: *fs.FileSystem,
     console: *console.Console,
 };
 
@@ -42,7 +41,6 @@ const commands = [_]Command{
     .{ .name = "keylog", .description = "Run the key event logger.", .handler = cmdKeylog },
     .{ .name = "write", .description = "Write a file from console input.", .handler = cmdWrite },
     .{ .name = "cpuid", .description = "Show CPUID clock leaves or query a raw leaf/subleaf.", .handler = cmdCpuid },
-    .{ .name = "mkfs", .description = "Reformat the filesystem.", .handler = cmdMkfs },
     .{ .name = "dumpmem", .description = "Dump memory at a hex address.", .handler = cmdDumpmem },
     .{ .name = "memmap", .description = "Interactive page directory/table memory map viewer.", .handler = cmdMemmap },
     .{ .name = "memstat", .description = "Show page allocator memory statistics.", .handler = cmdMemstat },
@@ -75,10 +73,9 @@ pub fn handleCommand(shell: *Shell, cmdline: []const u8) !void {
 }
 
 /// Run the interactive shell command loop.
-pub fn run(alloc: std.mem.Allocator, disk_fs: *fs.FileSystem) !noreturn {
+pub fn run(alloc: std.mem.Allocator) !noreturn {
     var shell = Shell{
         .alloc = alloc,
-        .disk_fs = disk_fs,
         .console = &console.primary,
     };
 
@@ -103,7 +100,7 @@ fn findCommand(name: []const u8) ?*const Command {
 fn runAutoexec(shell: *Shell) !void {
     if (autoexec_finished) return;
 
-    const script = shell.disk_fs.readFileAt(shell.alloc, fs.ROOT_INODE_INDEX, autoexec_name) catch |err| switch (err) {
+    const script = vfs.getFileContents(shell.alloc, autoexec_name) catch |err| switch (err) {
         error.FileNotFound => {
             autoexec_finished = true;
             return;
@@ -167,7 +164,7 @@ fn cmdHelp(shell: *Shell, args: *ArgsIterator) !void {
 
 fn cmdWrite(shell: *Shell, args: *ArgsIterator) !void {
     if (args.next()) |name| {
-        try writeFileFromConsole(shell, shell.alloc, shell.disk_fs, name);
+        try writeFileFromConsole(shell, shell.alloc, name);
     } else {
         printUsage(shell, "write");
     }
@@ -258,12 +255,6 @@ fn cmdCpuid(shell: *Shell, args: *ArgsIterator) !void {
     } else {
         shell.console.puts("Leaf 00000016 not supported.\n");
     }
-}
-
-fn cmdMkfs(shell: *Shell, args: *ArgsIterator) !void {
-    _ = args;
-    try shell.disk_fs.format();
-    shell.console.puts("Filesystem reformatted.\n");
 }
 
 fn cmdDumpmem(shell: *Shell, args: *ArgsIterator) !void {
@@ -444,7 +435,7 @@ fn resolveProgramPath(shell: *Shell, fname: []const u8) ![]const u8 {
         });
         errdefer shell.alloc.free(candidate);
 
-        if (try shell.disk_fs.pathExists(candidate)) {
+        if (try vfs.pathExists(candidate)) {
             return candidate;
         }
 
@@ -668,7 +659,6 @@ fn readLineInto(shell: *Shell, buf: []u8) ![]u8 {
 fn writeFileFromConsole(
     shell: *Shell,
     alloc: std.mem.Allocator,
-    disk_fs: *fs.FileSystem,
     path: []const u8,
 ) !void {
     var contents: std.ArrayList(u8) = .empty;
@@ -684,7 +674,7 @@ fn writeFileFromConsole(
         try contents.append(alloc, '\n');
     }
 
-    try disk_fs.writeFile(path, contents.items);
+    try vfs.writeFileContents(path, contents.items);
 
     shell.console.puts("Wrote ");
     shell.console.puts(path);

@@ -6,6 +6,7 @@ const shell = @import("shell.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
 const console = @import("console.zig");
+const vfs = @import("fs/vfs.zig");
 const abi = @import("abi");
 const std = @import("std");
 
@@ -49,7 +50,7 @@ fn mapError(err: anyerror) Errno {
 
 fn sys_open(path_ofs: u32, path_len: u32, flags: u32) !u32 {
     const path = try task.getCurrentTask().getUserMem(path_ofs, path_len);
-    return try filedesc.openFile(kernel.getFileSystem(), task.getCurrentTask(), path, flags);
+    return try filedesc.openFile(task.getCurrentTask(), path, flags);
 }
 
 fn sys_close(fd: u32) !u32 {
@@ -60,7 +61,7 @@ fn sys_close(fd: u32) !u32 {
 fn sys_stat(path_slice_va: u32, stat_ofs: u32) !u32 {
     const current_task = task.getCurrentTask();
     const path = try current_task.readUserSlice(u8, path_slice_va);
-    const stat = try filedesc.statPath(kernel.getFileSystem(), path);
+    const stat = try vfs.stat(path);
     const out = try current_task.getUserMem(stat_ofs, @sizeOf(filedesc.Stat));
     @memcpy(out, std.mem.asBytes(&stat));
     return 0;
@@ -76,7 +77,7 @@ fn sys_fstat(fd: u32, stat_ofs: u32) !u32 {
 
 fn sys_unlink(path_ofs: u32, path_len: u32) !u32 {
     const path = try task.getCurrentTask().getUserMem(path_ofs, path_len);
-    try filedesc.unlinkFile(kernel.getFileSystem(), path);
+    try vfs.unlink(path);
     return 0;
 }
 
@@ -92,11 +93,11 @@ fn sys_write(fd: u32, ofs: u32, count: u32) !u32 {
 
 fn sys_lseek(fd: u32, offset_bits: u32, whence: u32) !u32 {
     const offset: i32 = @bitCast(offset_bits);
-    return try filedesc.seekFile(kernel.getFileSystem(), task.getCurrentTask(), fd, offset, whence);
+    return try filedesc.seekFile(task.getCurrentTask(), fd, offset, whence);
 }
 
 fn sys_ftruncate(fd: u32, size: u32) !u32 {
-    try filedesc.truncateFile(kernel.getFileSystem(), task.getCurrentTask(), fd, size);
+    try filedesc.truncateFile(task.getCurrentTask(), fd, size);
     return 0;
 }
 
@@ -276,12 +277,13 @@ fn sys_getdents(fd: u32, entries_slice_va: u32) !u32 {
 
 fn sys_mkdir(path_slice_va: u32) !u32 {
     const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
-    return try kernel.getFileSystem().createDirectory(path);
+    try vfs.createDirectory(path);
+    return 0;
 }
 
 fn sys_rmdir(path_slice_va: u32) !u32 {
     const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
-    try filedesc.removeDirectory(kernel.getFileSystem(), path);
+    try vfs.removeDirectory(path);
     return 0;
 }
 
@@ -289,7 +291,7 @@ fn sys_rename(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
     const current_task = task.getCurrentTask();
     const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
     const new_path = try current_task.readUserSlice(u8, new_path_slice_va);
-    try filedesc.moveFile(kernel.getFileSystem(), old_path, new_path);
+    try vfs.moveFile(old_path, new_path);
     return 0;
 }
 
@@ -297,7 +299,7 @@ fn sys_link(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
     const current_task = task.getCurrentTask();
     const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
     const new_path = try current_task.readUserSlice(u8, new_path_slice_va);
-    try filedesc.linkFile(kernel.getFileSystem(), old_path, new_path);
+    try vfs.linkFile(old_path, new_path);
     return 0;
 }
 
@@ -320,7 +322,6 @@ fn sys_kshell(cmdline_slice_va: u32) !u32 {
     // Create a shell instance with the task's console
     var kshell = shell.Shell{
         .alloc = kernel.getAllocator(),
-        .disk_fs = kernel.getFileSystem(),
         .console = task_console,
     };
 

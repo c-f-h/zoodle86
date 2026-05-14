@@ -46,7 +46,8 @@ Complete listing of every source file and its role.
 
 - `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
 - `kernel/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` operations, including optional seekable byte-offset support.
-- `kernel/fs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction.
+- `kernel/fs/vfs.zig`: virtual filesystem layer providing a unified interface to filesystem operations. Mounts the root filesystem on IDE and forwards operations to the underlying filesystem implementation. Exports public API for path operations, file I/O, directory manipulation, and special-file handling without exposing filesystem-specific details.
+- `kernel/fs/zodfs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction. Implements the ZOD2 format with superblock, block bitmap, inode table, and data region.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
 - `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O. Also provides `IdeBlockDevice`, a concrete `BlockDevice` implementation backed by an ATA drive.
 - `kernel/io.zig`: low-level port I/O helpers (inb, inw, outb, outw).
@@ -61,12 +62,12 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `mkfs`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
-- `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.fs.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `kernel/fs.zig` directly.
+- `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.fs.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `zodfs.zig` directly.
 - `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`), extracts regular files/directories to a host directory, and skips special inodes it cannot materialize on the host.
 - `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`), writes a directory tree of input files into it, and consumes optional root `_special`/`_links` manifests to create device nodes and hard links.
 

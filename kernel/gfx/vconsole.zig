@@ -3,7 +3,7 @@ const framebuf = @import("framebuf.zig");
 const psf = @import("psf.zig");
 const window = @import("window.zig");
 
-const fs = @import("../fs.zig");
+const vfs = @import("../fs/vfs.zig");
 const mem = @import("../mem.zig");
 
 const std = @import("std");
@@ -109,8 +109,8 @@ fn consoleCellHeightRows() usize {
 }
 
 /// Load a PSF font file from the root filesystem and make it the active framebuffer-console font.
-pub fn loadFont(allocator: std.mem.Allocator, disk_fs: *const fs.FileSystem, path: []const u8) !void {
-    const file_data = try disk_fs.readFile(allocator, path);
+pub fn loadFont(allocator: std.mem.Allocator, path: []const u8) !void {
+    const file_data = try vfs.getFileContents(allocator, path);
     defer allocator.free(file_data);
 
     active_font = try psf.loadFromBytes(allocator, file_data, '?');

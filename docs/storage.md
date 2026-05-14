@@ -1,5 +1,16 @@
 # Storage & Filesystem
 
+## Virtual Filesystem Layer
+
+The kernel provides a unified virtual filesystem (VFS) layer via `kernel/fs/vfs.zig` that abstracts the underlying filesystem implementation. The VFS layer:
+- Manages mounting of the root filesystem at boot time on the IDE master drive
+- Provides a public API for filesystem operations (open, read, write, stat, mkdir, etc.) without exposing filesystem-specific details
+- Forwards operations to the underlying `zodfs.FileSystem` instance
+- Handles special device files (character and block devices) via the `filedesc` layer
+- Allows path-based operations to work uniformly across all file types
+
+This abstraction makes it possible to support multiple filesystem implementations or replace the current implementation in the future without changing kernel and userspace code that depends on filesystem operations.
+
 ## Disk Image Layout
 
 Sector 0 is the boot sector. Sectors 1–16 are reserved for the stage-2 loader (kernel/stage2.zig). The custom filesystem begins at sector 17. The filesystem layout is a one-sector superblock followed by a block bitmap, inode table, and data region. The root directory lives in the data region as a fixed-size inode-backed directory file containing 64 entries.

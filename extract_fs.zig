@@ -1,4 +1,4 @@
-const fs = @import("kernel/fs.zig");
+const fs = @import("kernel/fs/zodfs.zig");
 const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
 const std = @import("std");
@@ -29,7 +29,7 @@ fn extractDirectory(
 
         switch (entry.kind) {
             .Regular => {
-                const data = try disk_fs.readFileAt(init.gpa, dir_inode_index, name);
+                const data = try disk_fs.getFileInodeContents(init.gpa, entry.inode_index);
                 defer init.gpa.free(data);
 
                 try stdout.print("  Extracting file: {s} ({d} bytes)\n", .{ child_relative_path, data.len });

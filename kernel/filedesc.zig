@@ -2,7 +2,8 @@ const std = @import("std");
 
 const console = @import("console.zig");
 const char_device = @import("char_device.zig");
-const fs = @import("fs.zig");
+const vfs = @import("fs/vfs.zig");
+const fs = @import("fs/zodfs.zig");
 const framebuf = @import("gfx/framebuf.zig");
 const task = @import("task.zig");
 const pipe = @import("pipe.zig");
@@ -243,7 +244,7 @@ pub fn newPipeReader(pp: *pipe.Pipe) FileDesc {
     return FileDesc{ .pipe = .{ .handle = pp, .writable = false } };
 }
 
-pub const FiledescError = fs.WriteFileError || error{
+pub const FiledescError = vfs.FsError || error{
     AccessViolation,
     AccessDenied,
     BadFd,
@@ -269,6 +270,10 @@ const OpenFile = struct {
     readable: bool = false,
     writable: bool = false,
     append: bool = false,
+
+    fn getSize(self: *const OpenFile) FiledescError!u32 {
+        return try self.disk_fs.getInodeSize(self.inode_index);
+    }
 };
 
 var open_files: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
@@ -286,7 +291,7 @@ pub fn openFileDesc(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Filed
                 if ((flags & O_CREAT) == 0) return error.FileNotFound;
 
                 // not found, but creation requested: create the file and return its inode index
-                const split = fs.splitPath(path);
+                const split = vfs.splitPath(path);
                 const parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
                 break :blk try disk_fs.createFile(parent_inode, split.name);
             },
@@ -333,11 +338,11 @@ fn openFramebuf(minor: u8, access_mode: u32) FiledescError!?FileDesc {
 }
 
 /// Open a special device inode and map it to a device descriptor.
-fn tryOpenSpecialInode(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) FiledescError!?FileDesc {
+fn tryOpenSpecialInode(path: []const u8, flags: u32) FiledescError!?FileDesc {
     if (path.len == 0 or std.mem.eql(u8, path, "/")) return null;
 
     const access_mode = try validateOpenFlags(flags);
-    const st = disk_fs.statPath(path) catch |err| switch (err) {
+    const st = vfs.stat(path) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
@@ -354,83 +359,19 @@ fn tryOpenSpecialInode(disk_fs: *fs.FileSystem, path: []const u8, flags: u32) Fi
 }
 
 /// Opens or creates a filesystem-backed descriptor for a task.
-pub fn openFile(disk_fs: *fs.FileSystem, ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
+pub fn openFile(ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
     const filedesc =
-        try tryOpenSpecialInode(disk_fs, path, flags) orelse
-        try openFileDesc(disk_fs, path, flags);
+        try tryOpenSpecialInode(path, flags) orelse
+        try openFileDesc(vfs.getRootFs(), path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
-}
-
-/// Returns stat-like metadata for a filesystem path.
-pub fn statPath(disk_fs: *const fs.FileSystem, path: []const u8) FiledescError!Stat {
-    return try disk_fs.statPath(path);
 }
 
 /// Returns stat-like metadata for a task-owned file descriptor.
 pub fn statFd(ptask: *task.Task, fd: u32) FiledescError!Stat {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return slot.stat();
-}
-
-/// Unlinks a filesystem path unless it is still referenced by an open descriptor.
-pub fn unlinkFile(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
-    const parent_inode, const index, const entry = try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, path);
-
-    if (isInodeOpen(entry.inode_index)) return error.FileInUse;
-    try disk_fs.deleteFile(parent_inode, index);
-}
-
-/// Creates a new hard link to an existing regular file.
-pub fn linkFile(disk_fs: *fs.FileSystem, old_path: []const u8, new_path: []const u8) FiledescError!void {
-    const target_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, old_path);
-    const split = fs.splitPath(new_path);
-    const parent_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir);
-    try disk_fs.createLink(parent_inode_index, split.name, target_inode_index);
-}
-
-/// Moves (renames) old_path to new_path, atomically replacing any existing regular file at
-/// new_path. Directories cannot be moved. If new_path names an existing regular file it is
-/// replaced, but only when no task has it open.
-pub fn moveFile(disk_fs: *fs.FileSystem, old_path: []const u8, new_path: []const u8) FiledescError!void {
-    if (std.mem.eql(u8, old_path, new_path)) return;
-
-    // Resolve source; it must be a regular file.
-    const src_inode_index = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, old_path);
-    const src_stat = try disk_fs.statInode(src_inode_index);
-    if (src_stat.kind == .Directory) return error.NotAFile;
-
-    // Resolve destination parent directory (must exist).
-    const new_split = fs.splitPath(new_path);
-    const dst_parent_inode = try disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, new_split.dir);
-
-    // If destination already exists remove it, provided it is a non-open file.
-    if (disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, new_path)) |dst_inode_index| {
-        const dst_stat = try disk_fs.statInode(dst_inode_index);
-        if (dst_stat.kind == .Directory) return error.NotAFile;
-        const dst_par, const dst_idx, const dst_entry =
-            try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, new_path);
-        if (isInodeOpen(dst_entry.inode_index)) return error.FileInUse;
-        try disk_fs.deleteFile(dst_par, dst_idx);
-    } else |err| switch (err) {
-        error.FileNotFound => {},
-        else => return err,
-    }
-
-    // Add the new directory entry, then remove the old one.
-    try disk_fs.createLink(dst_parent_inode, new_split.name, src_inode_index);
-    const src_par, const src_idx, _ =
-        try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, old_path);
-    try disk_fs.deleteFile(src_par, src_idx);
-}
-
-/// Removes a directory unless it is still referenced by an open descriptor or is not empty.
-pub fn removeDirectory(disk_fs: *fs.FileSystem, path: []const u8) FiledescError!void {
-    const parent_inode, const index, const entry = try disk_fs.walkPathToDirEntry(fs.ROOT_INODE_INDEX, path);
-
-    if (isInodeOpen(entry.inode_index)) return error.FileInUse;
-    try disk_fs.deleteDirectory(parent_inode, index);
 }
 
 /// Reads from a task-owned descriptor into a user buffer.
@@ -495,7 +436,7 @@ pub fn ioctlFd(ptask: *task.Task, fd: u32, command: u32, arg: u32) FiledescError
 }
 
 /// Repositions a task-owned file descriptor and returns the resulting byte offset.
-pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32, whence_raw: u32) FiledescError!u32 {
+pub fn seekFile(ptask: *task.Task, fd: u32, offset: i32, whence_raw: u32) FiledescError!u32 {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return switch (slot.*) {
         .file => |file_index| blk: {
@@ -509,7 +450,7 @@ pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32
             const base: i64 = switch (whence) {
                 .Set => 0,
                 .Cur => open_file.offset,
-                .End => try disk_fs.getInodeSize(open_file.inode_index),
+                .End => try open_file.getSize(),
             };
             const next_offset = std.math.add(i64, base, @as(i64, offset)) catch return error.InvalidSeek;
             if (next_offset < 0 or next_offset > std.math.maxInt(u32)) return error.InvalidSeek;
@@ -539,13 +480,13 @@ pub fn seekFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, offset: i32
 }
 
 /// Resizes a task-owned filesystem-backed descriptor without changing its current offset.
-pub fn truncateFile(disk_fs: *fs.FileSystem, ptask: *task.Task, fd: u32, size: u32) FiledescError!void {
+pub fn truncateFile(ptask: *task.Task, fd: u32, size: u32) FiledescError!void {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     switch (slot.*) {
         .file => |file_index| {
             const open_file = getOpenFile(file_index);
             if (!open_file.writable) return error.AccessDenied;
-            try disk_fs.resizeInode(open_file.inode_index, size);
+            try open_file.disk_fs.resizeInode(open_file.inode_index, size);
         },
         else => return error.BadFd,
     }
@@ -614,7 +555,8 @@ fn buildOpenFileStatFlags(open_file: *const OpenFile) u8 {
     return flags;
 }
 
-fn isInodeOpen(inode_index: fs.InodeT) bool {
+/// Check if any open file references the given inode index.
+pub fn isInodeOpen(inode_index: fs.InodeT) bool {
     for (&open_files) |open_file| {
         if (open_file.in_use != 0 and open_file.inode_index == inode_index) {
             return true;

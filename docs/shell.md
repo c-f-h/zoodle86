@@ -8,7 +8,6 @@ The kernel provides an interactive shell with the following commands:
 | **keylog** | (none) | Run the key event logger. |
 | **write** | `<name>` | Write a file from console input. (Single `.` line saves.) |
 | **cpuid** | `[<leaf> [<subleaf>]]` | Show vendor/clock-related CPUID leaves, or dump a specific raw leaf/subleaf. |
-| **mkfs** | (none) | Reformat the filesystem. |
 | **dumpmem** | `<hex-address>` | Dump memory at a hex address. |
 | **memmap** | (none) | Interactive full-screen page directory/table viewer. |
 | **memstat** | (none) | Show page allocator memory statistics. |

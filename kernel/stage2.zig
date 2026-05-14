@@ -3,7 +3,7 @@
 /// and VA 0xC0000000), mount the filesystem, load kernel.elf from the filesystem,
 /// and jump into the kernel via kernel_init(page_dir_phys).
 const elf32 = @import("elf32.zig");
-const fs = @import("fs.zig");
+const fs = @import("fs/zodfs.zig");
 const ide = @import("ide.zig");
 const idt = @import("idt.zig");
 const paging = @import("paging.zig");

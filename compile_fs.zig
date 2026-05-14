@@ -1,5 +1,5 @@
 const abi = @import("abi");
-const fs = @import("kernel/fs.zig");
+const fs = @import("kernel/fs/zodfs.zig");
 const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
 const std = @import("std");

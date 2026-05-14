@@ -1,4 +1,6 @@
-const block_device = @import("block_device.zig");
+// ZODFS v2: a simple inode-based filesystem for Zoodle86.
+
+const block_device = @import("../block_device.zig");
 const BlockDevice = block_device.BlockDevice;
 const abi = @import("abi");
 const std = @import("std");
@@ -235,6 +237,7 @@ fn inodeCountForFsSectors(fs_sector_count: u32) ?u16 {
 }
 
 pub const FsError = error{
+    InvalidSuperblock,
     Corrupt,
     DirectoryFull,
     FileExists,
@@ -243,12 +246,11 @@ pub const FsError = error{
     NotADirectory,
     DirNotEmpty,
     InvalidName,
-    InvalidSuperblock,
+    FileInUse,
     NoSpace,
 } || block_device.BlockError;
 
 pub const ReadFileError = FsError || error{OutOfMemory};
-pub const WriteFileError = FsError || error{OutOfMemory};
 
 const MAX_FILE_BLOCK_COUNT: usize = DIRECT_BLOCK_COUNT + POINTERS_PER_INDIRECT_BLOCK + POINTERS_PER_INDIRECT_BLOCK * POINTERS_PER_INDIRECT_BLOCK;
 
@@ -486,15 +488,13 @@ pub const FileSystem = struct {
     //////////// FILE READING ////////////
 
     /// Reads an entire regular file, given by its full path, into allocator-owned memory.
-    pub fn readFile(self: *const FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
+    pub fn getFileContents(self: *const FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
         const inode_index = try self.walkPathToInode(ROOT_INODE_INDEX, path);
-        const inode = try self.readFileInode(inode_index);
-        return self.readInodeContents(allocator, &inode);
+        return self.getFileInodeContents(allocator, inode_index);
     }
 
-    /// Reads an entire regular file from the given directory into allocator-owned memory.
-    pub fn readFileAt(self: *const FileSystem, allocator: std.mem.Allocator, dir_inode_index: InodeT, name: []const u8) ReadFileError![]u8 {
-        const inode_index = try self.findFileInodeIndex(dir_inode_index, name) orelse return error.FileNotFound;
+    /// Reads an entire regular file with the given inode index into allocator-owned memory.
+    pub fn getFileInodeContents(self: *const FileSystem, allocator: std.mem.Allocator, inode_index: InodeT) ReadFileError![]u8 {
         const inode = try self.readFileInode(inode_index);
         return self.readInodeContents(allocator, &inode);
     }
@@ -537,8 +537,8 @@ pub const FileSystem = struct {
 
     //////////// FILE WRITING ////////////
 
-    /// Creates or overwrites a file in the given directory with the provided full contents.
-    pub fn writeFile(self: *FileSystem, path: []const u8, data: []const u8) WriteFileError!void {
+    /// Creates or overwrites a file with the given path with the provided full contents.
+    pub fn writeFileContents(self: *FileSystem, path: []const u8, data: []const u8) FsError!void {
         const split = splitPath(path);
         const dir_inode_index = try self.walkPathToInode(ROOT_INODE_INDEX, split.dir);
         try self.writeFileAt(dir_inode_index, split.name, data);
@@ -556,7 +556,7 @@ pub const FileSystem = struct {
     }
 
     /// Writes bytes to a file identified directly by inode number, growing as needed.
-    pub fn writeInodeAt(self: *FileSystem, inode_index: InodeT, offset: u32, data: []const u8) WriteFileError!usize {
+    pub fn writeInodeAt(self: *FileSystem, inode_index: InodeT, offset: u32, data: []const u8) FsError!usize {
         if (data.len == 0) return 0;
 
         var inode = try self.readFileInode(inode_index);
@@ -602,7 +602,7 @@ pub const FileSystem = struct {
     }
 
     /// Returns true if a file or directory exists at the given path, false if not found.
-    pub fn pathExists(self: *const FileSystem, path: []const u8) !bool {
+    pub fn pathExists(self: *const FileSystem, path: []const u8) FsError!bool {
         _ = self.walkPathToInode(ROOT_INODE_INDEX, path) catch |err| switch (err) {
             error.FileNotFound => return false,
             else => return err,
@@ -1289,6 +1289,8 @@ fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsErro
     if (!validateName(entry.name[0..entry.name_len])) return error.Corrupt;
 }
 
+/// Split a file path into directory and filename components.
+/// Should live in vfs, but remains here for now for compile_fs.zig.
 pub fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } {
     const trimmed = std.mem.trimEnd(u8, path, "/");
     const last_slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');

@@ -11,7 +11,7 @@ const interrupt_frame = @import("interrupt_frame.zig");
 const keyboard = @import("keyboard.zig");
 const kprof = @import("kprof.zig");
 const ide = @import("ide.zig");
-const fs = @import("fs.zig");
+const vfs = @import("fs/vfs.zig");
 const gdt = @import("gdt.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
@@ -107,8 +107,6 @@ pub fn clearKeyboardHandler() void {
 }
 
 var alloc: std.mem.Allocator = undefined;
-var disk_fs: fs.FileSystem = undefined;
-var disk_block_device: ide.IdeBlockDevice = undefined;
 
 // VConsole instances and secondary console for the two-panel framebuffer layout.
 var primary_vconsole: vconsole.VConsole = .{};
@@ -118,11 +116,6 @@ pub var secondary_console: console.Console = .{};
 /// Returns the kernel allocator used for filesystem-backed syscall scratch buffers.
 pub fn getAllocator() std.mem.Allocator {
     return alloc;
-}
-
-/// Returns the mounted filesystem instance.
-pub fn getFileSystem() *fs.FileSystem {
-    return &disk_fs;
 }
 
 /// Return the tty for the given console index, if available.
@@ -403,14 +396,14 @@ fn kernel_enter() !noreturn {
     apic.startTimer(100000);
     asm volatile ("sti");
 
-    try mountFs();
+    try vfs.mountRootFs();
     try primary_tty.init(alloc, &console.primary, 0);
     foreground_tty = &primary_tty;
 
     if (graphical) {
         try framebuf.init(video_info_phys_addr);
         // Font size must be known before determining console panel dimensions.
-        vconsole.loadFont(alloc, &disk_fs, "/fonts/ter-u14n.psf") catch |err| {
+        vconsole.loadFont(alloc, "/fonts/ter-u14n.psf") catch |err| {
             kernel_console.put(.{ "Failed to load font (", @errorName(err), ").\n" });
         };
 
@@ -455,7 +448,7 @@ pub inline fn getRegister(comptime reg: [3]u8) u32 {
 }
 
 fn runKernelShell() noreturn {
-    shell.run(alloc, &disk_fs) catch |err| {
+    shell.run(alloc) catch |err| {
         panicOnError(err);
     };
 }
@@ -616,7 +609,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     }
 
     kernel_console.put(.{ "Loading ", fname, "...\n" });
-    const elf_data = try disk_fs.readFile(alloc, fname);
+    const elf_data = try vfs.getFileContents(alloc, fname);
     defer alloc.free(elf_data);
 
     const ehdr = try elf32.getHeader(elf_data);
@@ -687,24 +680,6 @@ pub fn discardTask(ptask: *task.Task) void {
     ptask.loadPageDir();
     ptask.terminate();
     paging.loadPageDir(page_dir_phys);
-}
-
-fn mountFs() !void {
-    const kernel_console = &console.primary;
-    const drive = ide.Drive.master;
-    ide.selectDrive(drive);
-
-    const drive_info = try ide.identifyDrive(drive);
-    kernel_console.puts("Drive model:     ");
-    kernel_console.puts(&drive_info.model);
-    kernel_console.puts("\nDrive serial:    ");
-    kernel_console.puts(&drive_info.serial);
-    kernel_console.puts("\nSectors (LBA28): ");
-    kernel_console.putDecU32(drive_info.max_lba28);
-    kernel_console.newline();
-
-    disk_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
-    disk_fs = try fs.FileSystem.mountOrFormat(&disk_block_device.block_dev);
 }
 
 pub fn panic(message: []const u8, trace: ?*anyopaque, return_address: ?usize) noreturn {
