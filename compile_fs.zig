@@ -148,6 +148,38 @@ fn processLinksManifest(
     }
 }
 
+const SpecialDeviceEntry = struct {
+    target_path: []const u8,
+    kind: abi.InodeKind,
+    major: abi.DeviceMajor,
+    minor: u8,
+};
+
+fn parseSpecialDeviceEntry(raw_line: []const u8) !?SpecialDeviceEntry {
+    const line = std.mem.trim(u8, raw_line, " \t\r");
+    if (line.len == 0 or line[0] == '#') return null;
+
+    var result: SpecialDeviceEntry = undefined;
+
+    var parts = std.mem.tokenizeAny(u8, line, " \t");
+    result.target_path = parts.next() orelse return CompileError.InvalidSpecialEntry;
+    const block_text = parts.next() orelse return CompileError.InvalidSpecialEntry;
+    const major_text = parts.next() orelse return CompileError.InvalidSpecialEntry;
+    const minor_text = parts.next() orelse return CompileError.InvalidSpecialEntry;
+    if (parts.next() != null) return CompileError.InvalidSpecialEntry;
+
+    const block_flag = try std.fmt.parseInt(u8, block_text, 10);
+    result.kind = switch (block_flag) {
+        0 => .CharDevice,
+        1 => .BlockDevice,
+        else => return CompileError.InvalidSpecialEntry,
+    };
+    const raw_major = try std.fmt.parseInt(u8, major_text, 0);
+    result.major = parseDeviceMajor(raw_major) orelse return CompileError.InvalidSpecialEntry;
+    result.minor = try std.fmt.parseInt(u8, minor_text, 0);
+    return result;
+}
+
 /// Reads the optional `_special` manifest from the root input directory and creates
 /// character or block device inodes in the filesystem image. Each non-blank,
 /// non-comment line must contain exactly four whitespace-separated fields:
@@ -173,69 +205,23 @@ fn processSpecialManifest(
 
     var lines = std.mem.splitScalar(u8, content, '\n');
     while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
-
-        var parts = std.mem.tokenizeAny(u8, line, " \t");
-        const target_path = parts.next() orelse {
-            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
+        const entry = parseSpecialDeviceEntry(raw_line) catch {
+            stdout.print("  Error: malformed special entry: {s}\n", .{raw_line}) catch {};
             return CompileError.InvalidSpecialEntry;
-        };
-        const block_text = parts.next() orelse {
-            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-        const major_text = parts.next() orelse {
-            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-        const minor_text = parts.next() orelse {
-            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-        if (parts.next() != null) {
-            try stdout.print("  Error: malformed special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        }
-
-        const block_flag = std.fmt.parseInt(u8, block_text, 10) catch {
-            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-        const kind: abi.InodeKind = switch (block_flag) {
-            0 => .CharDevice,
-            1 => .BlockDevice,
-            else => {
-                try stdout.print("  Error: invalid special entry: {s}\n", .{line});
-                return CompileError.InvalidSpecialEntry;
-            },
-        };
-        const raw_major = std.fmt.parseInt(u8, major_text, 0) catch {
-            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-        const major = parseDeviceMajor(raw_major) orelse {
-            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-        const minor = std.fmt.parseInt(u8, minor_text, 0) catch {
-            try stdout.print("  Error: invalid special entry: {s}\n", .{line});
-            return CompileError.InvalidSpecialEntry;
-        };
-
-        const split = fs.splitPath(target_path);
+        } orelse continue;
+        const split = fs.splitPath(entry.target_path);
         const dir_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir) catch |err| {
             try stdout.print("  Error: special-file directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;
         };
 
         try stdout.print(
-            "  Creating special file: {s} (block={d}, major={d}, minor={d})\n",
-            .{ target_path, block_flag, raw_major, minor },
+            "  Creating special file: {s} (kind={d}, major={d}, minor={d})\n",
+            .{ entry.target_path, @intFromEnum(entry.kind), entry.major, entry.minor },
         );
-        _ = try disk_fs.createSpecialFile(dir_inode, split.name, kind, .{
-            .major = major,
-            .minor = minor,
+        _ = try disk_fs.createSpecialFile(dir_inode, split.name, entry.kind, .{
+            .major = entry.major,
+            .minor = entry.minor,
         });
         counts.specials += 1;
     }
@@ -281,8 +267,9 @@ pub fn main(init: std.process.Init) !void {
     try image_file.setLength(init.io, @as(u64, image_size_sectors) * block_device.BLOCK_SIZE);
 
     var fbd = file_block_device.FileBlockDevice.init(image_file, init.io, image_size_sectors);
-    // The image is blank (all zeros), so mountOrFormat formats a fresh filesystem.
-    var disk_fs = try fs.FileSystem.mountOrFormat(&fbd.block_dev);
+    try fs.FileSystem.format(&fbd.block_dev);
+    var disk_fs = try fs.FileSystem.mount(&fbd.block_dev, init.gpa);
+    defer disk_fs.unmount();
 
     try stdout.print("Writing filesystem contents...\n", .{});
     var counts: ImportCounts = .{};
