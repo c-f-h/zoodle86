@@ -5,7 +5,7 @@ Complete listing of every source file and its role.
 ## Core Kernel Modules
 
 - `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, framebuffer metadata records, and the compact key-event layout.
-- `kernel/stage2.zig`: minimal loader which loads the `kernel` ELF binary from the filesystem and runs it.
+- `kernel/stage2.zig`: protected-mode half of the minimal stage-2 loader; sets up paging, mounts the filesystem, loads the `kernel` ELF binary, and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, exposes low-level pixel/fill/text helpers for graphics-mode rendering, and provides a `/dev/fb0` character device for raw byte access.
 - `kernel/gfx/window.zig`: instantiable framed console window (`Window` struct): computes window geometry from font and available pixel dimensions, allocates and manages the shadow pixel buffer from the kernel allocator, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer. Module-level `drawBackground()` fills the full-screen desktop background.
@@ -54,8 +54,8 @@ Complete listing of every source file and its role.
 
 ## Assembly & Low-Level
 
-- `boot.asm`: boot sector and stage-2 loader.
-- `kernel/stage2_video_rm.asm`: real-mode thunk used by stage 2 to query VBE modes, switch to the best linear-framebuffer mode, and export boot video metadata.
+- `boot.asm`: real-mode boot sector; gathers the E820 map, loads the flat stage-2 payload, and jumps to its entry point.
+- `kernel/stage2_init.asm`: real-mode stage-2 bootstrap; queries VBE modes, switches to the best linear-framebuffer mode, exports boot video metadata, enables A20, enters protected mode, and jumps into `kernel/stage2.zig`.
 - `interrupts.asm`: low-level exception/IRQ entry stubs plus the `kernel_yield_trampoline` assembly scheduler bridge that dispatch through `kernel.interrupt_dispatch()` and resume tasks.
 
 ## Shell & Applications
@@ -93,7 +93,7 @@ Complete listing of every source file and its role.
 
 ## Build Pipeline Artifacts
 
-- `build/stage2.elf`: linked from `kernel/stage2.zig` and `kernel/stage2_video_rm.asm`.
+- `build/stage2.elf`: linked from `kernel/stage2.zig` and `kernel/stage2_init.asm`.
 - `build/stage2.bin`: flattened from `build/stage2.elf` by `flatten_elf.zig`.
 - `build/kernel.elf`: the kernel, linked from `kernel/kernel.zig` with `kernel.ld` at `0xC0010000`; copied into the filesystem image as `kernel`.
 - The following userspace programs are compiled and copied into the image as `/bin/<basename>`, which is on the shell path:

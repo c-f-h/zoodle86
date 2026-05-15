@@ -1,6 +1,6 @@
 # `zoodle86` - Project Overview
 
-A tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in Zig. Builds a bootable disk image with a freestanding kernel and a small command-driven text UI. Supports virtual memory paging, a page-backed freeing kernel heap allocator, timer-driven userspace preemption with non-preemptive kernel execution, scheduler-managed kernel-stack resume points for task switching, a simple inode-based custom filesystem, basic ACPI functionality, and a userspace-accessible framebuffer mapping syscall.
+A tiny x86 boot loader/OS kernel (32-bit protected mode) toy project in Zig. Builds a bootable disk image with a freestanding kernel and a small command-driven text UI. The boot sector stays in real mode long enough to load stage2, and the stage2 entry stub handles VBE probing plus the transition into 32-bit protected mode before entering Zig. Supports virtual memory paging, a page-backed freeing kernel heap allocator, timer-driven userspace preemption with non-preemptive kernel execution, scheduler-managed kernel-stack resume points for task switching, a simple inode-based custom filesystem, basic ACPI functionality, and a userspace-accessible framebuffer mapping syscall.
 
 ## Documentation
 

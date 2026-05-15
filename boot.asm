@@ -10,9 +10,6 @@ FLOPPY_HEADS_PER_CYLINDER equ 2
 ;   STAGE2_SECTORS          how many sectors to load for stage 2
 ;   STAGE2_ENTRY_OFFSET     the entrypoint into stage 2
 
-CODE_SEL equ 0x08
-DATA_SEL equ 0x10
-
 start:
     xor ax, ax
     mov ds, ax
@@ -83,18 +80,8 @@ load_stage2_lba:
     jc general_error
 
 stage2_loaded:
-
-    ; Do not carry real-mode interrupt state into protected mode. Until stage 2
-    ; installs a valid IDT, any hardware IRQ would triple-fault and reboot.
-    cli
-    call enable_a20
-    lgdt [gdt_descriptor]
-
-    mov eax, cr0
-    or eax, 0x1
-    mov cr0, eax
-
-    jmp CODE_SEL:protected_mode_entry
+    mov bx, STAGE2_LOAD_OFFSET + STAGE2_ENTRY_OFFSET
+    jmp bx
 
 general_error:
     mov si, error_message
@@ -115,12 +102,6 @@ print_string:
     jmp print_string
 
 .done:
-    ret
-
-enable_a20:
-    in al, 0x92
-    or al, 0x02
-    out 0x92, al
     ret
 
 load_stage2_chs:
@@ -170,46 +151,6 @@ load_stage2_chs:
     pop cx
     stc
     ret
-
-gdt_start:
-    ; --- Descriptor 0x00: null descriptor (required by spec) ---
-    dq 0x0000000000000000
-
-    ; --- Descriptor 0x08: kernel code segment ---
-    ;   base=0, limit=0xFFFFF (× 4KB = 4 GB), ring 0, 32-bit, executable
-    dq 0x00CF9A000000FFFF
-
-    ; --- Descriptor 0x10: kernel data segment ---
-    ;   base=0, limit=0xFFFFF (× 4KB = 4 GB), ring 0, 32-bit, read/write
-    dq 0x00CF92000000FFFF
-gdt_end:
-
-gdt_descriptor:
-    dw gdt_end - gdt_start - 1      ; GDT num bytes minus 1
-    dd gdt_start                    ; GDT address
-
-[bits 32]
-protected_mode_entry:
-    mov ax, DATA_SEL
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
-    mov esp, 0x80000    ; stack lives at end of conventional memory area (480k bytes from 0x7E00)
-    cld
-
-    ; Required before any SSE/xmm usage
-    mov eax, cr0
-    and eax, ~(1 << 2)   ; Clear EM (emulation)
-    or  eax, (1 << 1)    ; Set MP (monitor coprocessor)
-    mov cr0, eax
-
-    mov eax, cr4
-    or  eax, (1 << 9)    ; Set OSFXSR
-    or  eax, (1 << 10)   ; Set OSXMMEXCPT (optional but recommended)
-    mov cr4, eax
-
-    mov eax, STAGE2_LOAD_OFFSET + STAGE2_ENTRY_OFFSET
-    jmp eax
 
 boot_drive db 0
 disk_sector db 0

@@ -12,9 +12,8 @@ const vgatext = @import("vgatext.zig");
 
 const std = @import("std");
 
-extern fn stage2_video_probe_and_set() callconv(.c) u32;
-
 const graphical = true;
+pub export var stage2_graphical_enabled: u8 = if (graphical) 1 else 0;
 
 extern const _bss_start: u8;
 extern const _bss_end: u8;
@@ -134,10 +133,6 @@ fn mountFs() !void {
 }
 
 fn loader_main() noreturn {
-    if (graphical) {
-        _ = stage2_video_probe_and_set();
-    }
-
     // Physical 0–1MB is mapped at VA 0, with the recursive page directory entry at PD[1023],
     // so that kernel.elf (linked at 0xC0010000 = physical 0x10000) is reachable after paging
     // is enabled.
@@ -171,9 +166,8 @@ fn loader_main() noreturn {
     loadKernelElfAndJump();
 }
 
-/// Loader entry point called by the bootloader at physical 0x8000.
-/// Sets up 1MB identity paging and calls loader_main.
-export fn _start() void {
+/// Protected-mode stage2 entry called by the assembly bootstrap at physical 0x8000.
+export fn stage2_main() callconv(.c) noreturn {
     loader_main();
 }
 

@@ -2,7 +2,7 @@
 
 ## Boot & Real-Mode Setup
 
-The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stage-2 image at `0x8000`, and switches to 32-bit protected mode before jumping into Zig code. On hard-disk boots it uses BIOS extended LBA reads for stage 2; the older CHS path is only used for floppy-style boots.
+The boot sector collects the BIOS E820 memory map at `0x7E00`, loads a flat stage-2 image at `0x8000`, and then jumps to stage2 while still in real mode. On hard-disk boots it uses BIOS extended LBA reads for stage 2; the older CHS path is only used for floppy-style boots. The stage2 entry stub owns the VBE bootstrap, enables A20, installs a temporary GDT, and switches to 32-bit protected mode before transferring control into Zig code.
 
 ## Kernel Loading
 
@@ -10,7 +10,7 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem, parses 
 
 ## Graphical subsystem
 
-Before enabling paging, stage 2 can temporarily thunk back to real mode to scan VBE modes, switch to the best linear-framebuffer, sub-1000 rows mode it finds, and write boot video metadata at physical `0x0600` for the kernel. It also passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console.
+Before enabling paging, the real-mode stage2 entry scans VBE modes, switches to the best linear-framebuffer, sub-1000 rows mode it finds, and writes boot video metadata at physical `0x0600` for the kernel. It then enters protected mode and jumps into the Zig half of stage2, which passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console.
 
 In graphics mode the screen is split into two side-by-side panels. Each panel is backed by an independent `VConsole`/`Window` pair; the `Window` allocates its shadow pixel buffer from the page-backed kernel heap arena rooted at `0xE000_0000`. The left panel hosts the primary kernel shell (`console.primary`); the right panel hosts a secondary `Console` instance whose `stdout` is bound to the `hello` process that is launched at boot before the interactive shell starts. Each panel draws a framed pane with a title bar around the largest console grid that fits the active font and half the framebuffer width. The kernel first calls `window.drawBackground()` to paint the full-screen desktop background, then calls `VConsole.drawFrame()` for each panel independently. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `cp850-8x14.psf` from the filesystem; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
 
