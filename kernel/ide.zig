@@ -303,11 +303,27 @@ pub const IdeBlockDevice = struct {
         .writeBlock = writeBlock,
     };
 
+    const vtable_readOnly = BlockDevice.VTable{
+        .readBlock = readBlock,
+        .writeBlock = undefined,
+    };
+
     /// Initializes an IdeBlockDevice for `drive` with `sector_count` total blocks.
     pub fn init(drive: Drive, sector_count: u32) IdeBlockDevice {
         return .{
             .block_dev = .{
                 .vtable = &vtable,
+                .block_count = sector_count,
+                .device = .{ .major = abi.DeviceMajor.Ide, .minor = if (drive == .master) 0 else 1 },
+            },
+            .drive = drive,
+        };
+    }
+
+    pub fn initReadOnly(drive: Drive, sector_count: u32) IdeBlockDevice {
+        return .{
+            .block_dev = .{
+                .vtable = &vtable_readOnly,
                 .block_count = sector_count,
                 .device = .{ .major = abi.DeviceMajor.Ide, .minor = if (drive == .master) 0 else 1 },
             },

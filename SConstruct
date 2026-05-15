@@ -214,6 +214,8 @@ def build_stage2(target, source, env):
             *COMMON_ZIG_OPTS,
             "-fentry=_start",
             "-fno-compiler-rt",
+            "-fno-unwind-tables",
+            "--no-eh-frame-hdr",
             "-fno-strip",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",

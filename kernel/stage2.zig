@@ -129,8 +129,8 @@ fn mountFs() !void {
     const drive = ide.Drive.master;
     ide.selectDrive(drive);
     const drive_info = try ide.identifyDrive(drive);
-    disk_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
-    disk_fs = try fs.FileSystem.mountOrFormat(&disk_block_device.block_dev);
+    disk_block_device = ide.IdeBlockDevice.initReadOnly(drive, drive_info.max_lba28);
+    disk_fs = try fs.FileSystem.mount(&disk_block_device.block_dev);
 }
 
 fn loader_main() noreturn {
