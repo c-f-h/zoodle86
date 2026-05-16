@@ -89,9 +89,11 @@ pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
 
     // Add the new directory entry, then remove the old one.
     try root_fs.createLink(dst_parent_inode, new_split.name, src_inode);
+    const root_inode = root_fs.getRootInode();
+    defer root_fs.drop(root_inode);
     const src_parent_inode, const src_idx, _ =
-        try root_fs.walkPathToDirEntry(root_fs.getRootInode(), old_path);
-    defer root_fs.drop(src_parent_inode);
+        try root_fs.walkPathToDirEntry(root_inode, old_path);
+    defer if (src_parent_inode != root_inode) root_fs.drop(src_parent_inode);
     try root_fs.deleteFile(src_parent_inode, src_idx);
 }
 
@@ -108,14 +110,17 @@ pub fn linkFile(old_path: []const u8, new_path: []const u8) FsError!void {
 }
 
 pub fn createDirectory(path: []const u8) FsError!void {
-    _ = try root_fs.createDirectory(path);
+    const inode = try root_fs.createDirectory(path);
+    root_fs.drop(inode);
 }
 
 /// Removes a directory unless it is still referenced by an open descriptor or is not empty.
 pub fn removeDirectory(path: []const u8) FsError!void {
+    const root_inode = root_fs.getRootInode();
+    defer root_fs.drop(root_inode);
     const parent_inode, const index, const entry =
-        try root_fs.walkPathToDirEntry(root_fs.getRootInode(), path);
-    defer root_fs.drop(parent_inode);
+        try root_fs.walkPathToDirEntry(root_inode, path);
+    defer if (parent_inode != root_inode) root_fs.drop(parent_inode);
 
     if (root_fs.isInodeOpen(entry.inode_index)) return error.FileInUse;
     try root_fs.deleteDirectory(parent_inode, index);
@@ -123,9 +128,11 @@ pub fn removeDirectory(path: []const u8) FsError!void {
 
 /// Unlinks a filesystem path unless it is still referenced by an open descriptor.
 pub fn unlink(path: []const u8) FsError!void {
+    const root_inode = root_fs.getRootInode();
+    defer root_fs.drop(root_inode);
     const parent_inode, const index, const entry =
-        try root_fs.walkPathToDirEntry(root_fs.getRootInode(), path);
-    defer root_fs.drop(parent_inode);
+        try root_fs.walkPathToDirEntry(root_inode, path);
+    defer if (parent_inode != root_inode) root_fs.drop(parent_inode);
 
     // TODO: should no longer be necessary once we have inode cache
     if (root_fs.isInodeOpen(entry.inode_index)) return error.FileInUse;
@@ -171,7 +178,7 @@ pub fn createOpenFileEntry(path: []const u8, flags: u32) FsError!u8 {
     const access_mode = try filedesc.validateOpenFlags(flags);
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
     const inode = if (path.len == 0 or std.mem.eql(u8, path, "/"))
-        root_fs.dup(root_fs.getRootInode())
+        root_fs.getRootInode()
     else
         // try to find an existing file at this path
         root_fs.getInodeAtPath(path) catch |err| switch (err) {
@@ -186,7 +193,6 @@ pub fn createOpenFileEntry(path: []const u8, flags: u32) FsError!u8 {
             },
             else => return err,
         };
-    defer root_fs.drop(inode);
 
     if ((flags & abi.O_TRUNC) != 0) {
         try root_fs.resizeInodeToSize(inode, 0);

@@ -621,7 +621,9 @@ pub const FileSystem = struct {
     //////////// FILE WRITING ////////////
 
     pub fn getInodeAtPath(self: *FileSystem, path: []const u8) FsError!*DiskInode {
-        const inode_index = try self.walkPathToInodeIndex(self.getRootInode(), path);
+        const root_inode = self.getRootInode();
+        defer self.drop(root_inode);
+        const inode_index = try self.walkPathToInodeIndex(root_inode, path);
         return self.inode_cache.get(self, inode_index);
     }
 
@@ -669,13 +671,19 @@ pub const FileSystem = struct {
         while (path_iter.next()) |component| {
             if (component.len == 0) continue;
 
-            const index, const entry = try self.findDirEntryAndIndex(current_dir, component) orelse return error.FileNotFound;
+            const index, const entry = try self.findDirEntryAndIndex(current_dir, component) orelse {
+                if (current_dir != dir_inode) self.drop(current_dir);
+                return error.FileNotFound;
+            };
             if (path_iter.peek() == null) {
                 // At end of path - return the entry
                 return .{ current_dir, index, entry };
             } else {
                 // Not at end of path - must be a directory to continue traversal
-                if (entry.kind != .Directory) return error.FileNotFound;
+                if (entry.kind != .Directory) {
+                    if (current_dir != dir_inode) self.drop(current_dir);
+                    return error.FileNotFound;
+                }
             }
 
             const new_dir = try self.getDirectoryInode(entry.inode_index);
@@ -696,13 +704,15 @@ pub const FileSystem = struct {
         if (path.len == 0) return InodeCache.getEntryForInode(dir_inode).inode_index;
         if (path.len == 1 and path[0] == '/') return ROOT_INODE_INDEX;
         const parent_inode, _, const entry = try self.walkPathToDirEntry(dir_inode, path);
-        self.drop(parent_inode);
+        if (parent_inode != dir_inode) self.drop(parent_inode);
         return entry.inode_index;
     }
 
     /// Returns true if a file or directory exists at the given path, false if not found.
     pub fn pathExists(self: *FileSystem, path: []const u8) FsError!bool {
-        _ = self.walkPathToInodeIndex(self.getRootInode(), path) catch |err| switch (err) {
+        const root_inode = self.getRootInode();
+        defer self.drop(root_inode);
+        _ = self.walkPathToInodeIndex(root_inode, path) catch |err| switch (err) {
             error.FileNotFound => return false,
             else => return err,
         };
@@ -748,7 +758,7 @@ pub const FileSystem = struct {
             else => return error.NotAFile,
         }
 
-        const inode = try self.getDirectoryInode(entry.inode_index);
+        const inode = try self.getFileInode(entry.inode_index);
         defer self.drop(inode);
 
         var cleared: DirectoryEntry = .{};
