@@ -13,14 +13,16 @@ fn extractDirectory(
     init: std.process.Init,
     stdout: anytype,
     disk_fs: *fs.FileSystem,
-    dir_inode_index: u16,
+    dir_inode: *fs.DiskInode,
     output_dir_path: []const u8,
     relative_path: []const u8,
     counts: *ExtractCounts,
 ) !void {
     var index: usize = 0;
     while (index < fs.DIRECTORY_ENTRY_COUNT) : (index += 1) {
-        const entry = (try disk_fs.getDirectoryEntry(dir_inode_index, index)) orelse continue;
+        const entry = try disk_fs.readDirEntry(dir_inode, index);
+        if (entry.kind == .Free) continue;
+
         const name = entry.name[0..@as(usize, entry.name_len)];
         const child_output_path = try std.fs.path.join(init.gpa, &.{ output_dir_path, name });
         defer init.gpa.free(child_output_path);
@@ -29,7 +31,10 @@ fn extractDirectory(
 
         switch (entry.kind) {
             .Regular => {
-                const data = try disk_fs.getFileInodeContents(init.gpa, entry.inode_index);
+                const inode = try disk_fs.getInode(entry.inode_index);
+                defer disk_fs.drop(inode);
+
+                const data = try disk_fs.readInodeContents(init.gpa, inode);
                 defer init.gpa.free(data);
 
                 try stdout.print("  Extracting file: {s} ({d} bytes)\n", .{ child_relative_path, data.len });
@@ -43,7 +48,9 @@ fn extractDirectory(
                 try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
                 try std.Io.Dir.cwd().createDirPath(init.io, child_output_path);
                 counts.directories += 1;
-                try extractDirectory(init, stdout, disk_fs, entry.inode_index, child_output_path, child_relative_path, counts);
+                const inode = try disk_fs.getInode(entry.inode_index);
+                defer disk_fs.drop(inode);
+                try extractDirectory(init, stdout, disk_fs, inode, child_output_path, child_relative_path, counts);
             },
             .CharDevice, .BlockDevice => {
                 counts.specials_skipped += 1;
@@ -79,7 +86,9 @@ pub fn main(init: std.process.Init) !void {
 
     const file_size = try image_file.length(init.io);
     var fbd = file_block_device.FileBlockDevice.init(image_file, init.io, @intCast(file_size / block_device.BLOCK_SIZE));
-    var disk_fs = try fs.FileSystem.mount(&fbd.block_dev);
+    var disk_fs = try fs.FileSystem.mount(&fbd.block_dev, init.gpa);
+    defer disk_fs.unmount();
+    try disk_fs.initCache();
 
     //try stdout.print("Filesystem info:\n", .{});
     //try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});
@@ -88,7 +97,7 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("Extracting files to: {s}\n", .{output_path});
 
     var counts: ExtractCounts = .{};
-    try extractDirectory(init, stdout, &disk_fs, fs.ROOT_INODE_INDEX, output_path, "", &counts);
+    try extractDirectory(init, stdout, &disk_fs, disk_fs.getRootInode(), output_path, "", &counts);
 
     try stdout.print(
         "\nDone. Extracted {d} files, {d} directories, and skipped {d} special files.\n",

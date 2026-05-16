@@ -87,15 +87,7 @@ pub const FileDesc = union(enum) {
     /// Reads bytes from a descriptor into the provided buffer.
     pub fn read(self: *FileDesc, dest: []u8) FiledescError!usize {
         switch (self.*) {
-            .file => |file_index| {
-                const open_file = vfs.getOpenFile(file_index);
-                if (!open_file.readable) return error.AccessDenied;
-
-                const inode = try open_file.disk_fs.readFileInode(open_file.inode_index);
-                const bytes_read = try open_file.disk_fs.readInodeAt(&inode, open_file.offset, dest);
-                open_file.offset = std.math.add(u32, open_file.offset, bytes_read) catch return error.NoSpace;
-                return bytes_read;
-            },
+            .file => |file_index| return vfs.readOpenFile(file_index, dest),
             .pipe => |pipe_info| {
                 const pp = pipe_info.handle;
                 const is_writer = pipe_info.writable;
@@ -125,18 +117,7 @@ pub const FileDesc = union(enum) {
     /// Writes bytes from the provided buffer to a descriptor.
     pub fn write(self: *FileDesc, src: []const u8) !usize {
         switch (self.*) {
-            .file => |file_index| {
-                const open_file = vfs.getOpenFile(file_index);
-                if (!open_file.writable) return error.AccessDenied;
-
-                const write_offset = if (open_file.append)
-                    try open_file.disk_fs.getInodeSize(open_file.inode_index)
-                else
-                    open_file.offset;
-                const written = try open_file.disk_fs.writeInodeAt(open_file.inode_index, write_offset, src);
-                open_file.offset = std.math.add(u32, write_offset, written) catch return error.NoSpace;
-                return written;
-            },
+            .file => |file_index| return vfs.writeOpenFile(file_index, src),
             .pipe => |pipe_info| {
                 const pp = pipe_info.handle;
                 const is_writer = pipe_info.writable;
@@ -165,7 +146,7 @@ pub const FileDesc = union(enum) {
         return switch (self.*) {
             .file => |file_index| blk: {
                 const open_file = vfs.getOpenFile(file_index);
-                var st = try open_file.disk_fs.statInode(open_file.inode_index);
+                var st = try open_file.disk_fs.statInode(open_file.inode);
                 st.flags = buildOpenFileStatFlags(open_file);
                 break :blk st;
             },
@@ -373,7 +354,7 @@ pub fn seekFile(ptask: *task.Task, fd: u32, offset: i32, whence_raw: u32) Filede
             const base: i64 = switch (whence) {
                 .Set => 0,
                 .Cur => open_file.offset,
-                .End => try open_file.getSize(),
+                .End => open_file.getSize(),
             };
             const next_offset = std.math.add(i64, base, @as(i64, offset)) catch return error.InvalidSeek;
             if (next_offset < 0 or next_offset > std.math.maxInt(u32)) return error.InvalidSeek;

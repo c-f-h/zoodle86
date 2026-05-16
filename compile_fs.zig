@@ -33,7 +33,7 @@ fn importDirectory(
     stdout: anytype,
     disk_fs: *fs.FileSystem,
     host_dir_path: []const u8,
-    fs_dir_inode: u16,
+    fs_dir_inode: *fs.DiskInode,
     relative_path: []const u8,
     counts: *ImportCounts,
 ) !void {
@@ -56,6 +56,8 @@ fn importDirectory(
 
                 try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
                 const child_inode = try disk_fs.createDirectoryAt(fs_dir_inode, entry.name);
+                defer disk_fs.drop(child_inode);
+
                 counts.directories += 1;
                 try importDirectory(init, stdout, disk_fs, child_host_path, child_inode, child_relative_path, counts);
             },
@@ -82,6 +84,7 @@ fn importDirectory(
                 _ = try input_file.readPositionalAll(init.io, file_data, 0);
 
                 try disk_fs.writeFileAt(fs_dir_inode, entry.name, file_data);
+
                 counts.files += 1;
             },
             else => {},
@@ -131,16 +134,18 @@ fn processLinksManifest(
             return CompileError.InvalidLinkEntry;
         }
 
-        const source_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, source_path) catch |err| {
+        const source_inode = disk_fs.getInodeAtPath(source_path) catch |err| {
             try stdout.print("  Error: link source not found: {s} ({s})\n", .{ source_path, @errorName(err) });
             return err;
         };
+        defer disk_fs.drop(source_inode);
 
         const split = fs.splitPath(target_path);
-        const dir_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir) catch |err| {
+        const dir_inode = disk_fs.getInodeAtPath(split.dir) catch |err| {
             try stdout.print("  Error: link target directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;
         };
+        defer disk_fs.drop(dir_inode);
 
         try stdout.print("  Creating link: {s} -> {s}\n", .{ target_path, source_path });
         try disk_fs.createLink(dir_inode, split.name, source_inode);
@@ -210,19 +215,21 @@ fn processSpecialManifest(
             return CompileError.InvalidSpecialEntry;
         } orelse continue;
         const split = fs.splitPath(entry.target_path);
-        const dir_inode = disk_fs.walkPathToInode(fs.ROOT_INODE_INDEX, split.dir) catch |err| {
+        const dir_inode = disk_fs.getInodeAtPath(split.dir) catch |err| {
             try stdout.print("  Error: special-file directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;
         };
+        defer disk_fs.drop(dir_inode);
 
         try stdout.print(
             "  Creating special file: {s} (kind={d}, major={d}, minor={d})\n",
             .{ entry.target_path, @intFromEnum(entry.kind), entry.major, entry.minor },
         );
-        _ = try disk_fs.createSpecialFile(dir_inode, split.name, entry.kind, .{
+        const inode = try disk_fs.createSpecialFile(dir_inode, split.name, entry.kind, .{
             .major = entry.major,
             .minor = entry.minor,
         });
+        disk_fs.drop(inode);
         counts.specials += 1;
     }
 }
@@ -270,10 +277,11 @@ pub fn main(init: std.process.Init) !void {
     try fs.FileSystem.format(&fbd.block_dev);
     var disk_fs = try fs.FileSystem.mount(&fbd.block_dev, init.gpa);
     defer disk_fs.unmount();
+    try disk_fs.initCache();
 
     try stdout.print("Writing filesystem contents...\n", .{});
     var counts: ImportCounts = .{};
-    try importDirectory(init, stdout, &disk_fs, input_dir_path, fs.ROOT_INODE_INDEX, "", &counts);
+    try importDirectory(init, stdout, &disk_fs, input_dir_path, disk_fs.getRootInode(), "", &counts);
     try processSpecialManifest(init, stdout, &disk_fs, input_dir_path, &counts);
     try processLinksManifest(init, stdout, &disk_fs, input_dir_path, &counts);
 

@@ -25,6 +25,10 @@ const boot_video_info_phys: u32 = 0x0600;
 
 var disk_fs: fs.FileSystem = undefined;
 var disk_block_device: ide.IdeBlockDevice = undefined;
+/// Backing storage for the inode cache allocator. Kept global so the FixedBufferAllocator
+/// (and the allocator pointing into it) remain valid across the entire boot sequence.
+var inode_cache_buf: [1024]u8 = undefined;
+var inode_cache_fba: std.heap.FixedBufferAllocator = undefined;
 
 /// Display an error message in red and halt the CPU. Used before console is available.
 fn earlyBootFail(message: []const u8) noreturn {
@@ -64,15 +68,15 @@ fn ensureStage2BssFitsBootstrapPageTables() void {
 /// Read the "kernel" ELF from the filesystem and jump to its entry point.
 /// Each PT_LOAD segment is read directly to its link-time virtual address (already mapped).
 fn loadKernelElfAndJump() noreturn {
-    const kernel_inode = (disk_fs.findFileInodeIndex(fs.ROOT_INODE_INDEX, "kernel") catch
-        earlyBootFail("FS error: cannot find kernel")) orelse
+    const root_inode = disk_fs.getRootInode();
+    const kernel_inode = disk_fs.findDirEntryInode(root_inode, "kernel") catch
+        earlyBootFail("FS error: cannot find kernel") orelse
         earlyBootFail("FS error: cannot find kernel");
+    disk_fs.drop(root_inode);
 
     // Read the 52-byte ELF header
     var ehdr_buf: [@sizeOf(elf32.Elf32_Ehdr)]u8 = undefined;
-    const inode = disk_fs.readFileInode(kernel_inode) catch
-        earlyBootFail("FS error: cannot find kernel");
-    const n = disk_fs.readInodeAt(&inode, 0, &ehdr_buf) catch
+    const n = disk_fs.readInodeAt(kernel_inode, 0, &ehdr_buf) catch
         earlyBootFail("kernel: not an x86 ELF");
     if (n < @sizeOf(elf32.Elf32_Ehdr)) earlyBootFail("kernel: not an x86 ELF");
 
@@ -93,7 +97,7 @@ fn loadKernelElfAndJump() noreturn {
     while (i < ehdr.e_phnum) : (i += 1) {
         var phdr_buf: [@sizeOf(elf32.Elf32_Phdr)]u8 = undefined;
         const phdr_off = ehdr.e_phoff + i * ehdr.e_phentsize;
-        _ = disk_fs.readInodeAt(&inode, phdr_off, &phdr_buf) catch
+        _ = disk_fs.readInodeAt(kernel_inode, phdr_off, &phdr_buf) catch
             earlyBootFail("FS read error");
         const phdr: *align(1) elf32.Elf32_Phdr = @ptrCast(&phdr_buf);
         if (phdr.p_type != elf32.PT_LOAD) continue;
@@ -115,7 +119,7 @@ fn loadKernelElfAndJump() noreturn {
             earlyBootFail("kernel segment overlaps bootstrap page tables");
 
         const dest: [*]u8 = @ptrFromInt(phdr.p_vaddr);
-        _ = disk_fs.readInodeAt(&inode, phdr.p_offset, dest[0..phdr.p_filesz]) catch
+        _ = disk_fs.readInodeAt(kernel_inode, phdr.p_offset, dest[0..phdr.p_filesz]) catch
             earlyBootFail("FS read error");
         @memset(dest[phdr.p_filesz..phdr.p_memsz], 0);
     }
@@ -129,7 +133,9 @@ fn mountFs() !void {
     ide.selectDrive(drive);
     const drive_info = try ide.identifyDrive(drive);
     disk_block_device = ide.IdeBlockDevice.initReadOnly(drive, drive_info.max_lba28);
-    disk_fs = try fs.FileSystem.mount(&disk_block_device.block_dev);
+
+    inode_cache_fba = std.heap.FixedBufferAllocator.init(&inode_cache_buf);
+    disk_fs = try fs.FileSystem.mount(&disk_block_device.block_dev, inode_cache_fba.allocator());
 }
 
 fn loader_main() noreturn {

@@ -212,7 +212,7 @@ def build_stage2(target, source, env):
             "build-exe",
             *COMMON_ZIG_OPTS,
             "-fentry=_start",
-            "-fno-compiler-rt",
+            #"-fno-compiler-rt",        # TODO: remove rt once we have 32bit hash table
             "-fno-unwind-tables",
             "--no-eh-frame-hdr",
             "-fno-strip",
@@ -266,7 +266,7 @@ def build_kernel(target, source, env):
             *zig_module_args(source_path),
             "-ofmt=elf",
             "-fentry=kernel_init",
-            "-fno-compiler-rt",
+            #"-fno-compiler-rt",        # TODO: remove rt once we have 32bit hash table
             "-fno-strip",
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
