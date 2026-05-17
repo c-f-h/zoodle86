@@ -7,6 +7,7 @@ const executable_search_path = [_][]const u8{
     "/bin",
 };
 const MAX_SHELL_TOKENS = sys.MAX_ARGV_COUNT * 2 + 8;
+const MAX_SHELL_STAGES = MAX_SHELL_TOKENS;
 const SHELL_HISTORY_PATH = "/var/history";
 const SHELL_HISTORY_MAX = 32;
 const SHELL_HISTORY_LINE_MAX = readline.MAX_LINE;
@@ -77,7 +78,95 @@ const ShellHistory = struct {
     }
 };
 
-/// Runs an interactive userspace shell with basic `>` and `|` redirection.
+const RedirectionKind = enum {
+    stdin_file,
+    stdout_file,
+    stdout_append,
+
+    fn destinationFd(self: RedirectionKind) u32 {
+        return switch (self) {
+            .stdin_file => sys.STDIN,
+            .stdout_file, .stdout_append => sys.STDOUT,
+        };
+    }
+
+    fn openFlags(self: RedirectionKind) sys.FileOpenFlags {
+        return switch (self) {
+            .stdin_file => .{},
+            .stdout_file => .{
+                .open_mode = .WriteOnly,
+                .create = true,
+                .truncate = true,
+            },
+            .stdout_append => .{
+                .open_mode = .WriteOnly,
+                .create = true,
+                .append = true,
+            },
+        };
+    }
+
+    fn errorPrefix(self: RedirectionKind) []const u8 {
+        return switch (self) {
+            .stdin_file => "shell: failed to redirect stdin from ",
+            .stdout_file, .stdout_append => "shell: failed to redirect stdout to ",
+        };
+    }
+};
+
+const Operator = enum {
+    pipe,
+    redirect_stdin,
+    redirect_stdout,
+    redirect_stdout_append,
+
+    fn fromToken(token: []const u8) ?Operator {
+        if (std.mem.eql(u8, token, "|")) return .pipe;
+        if (std.mem.eql(u8, token, "<")) return .redirect_stdin;
+        if (std.mem.eql(u8, token, ">")) return .redirect_stdout;
+        if (std.mem.eql(u8, token, ">>")) return .redirect_stdout_append;
+        return null;
+    }
+
+    fn redirectionKind(self: Operator) ?RedirectionKind {
+        return switch (self) {
+            .pipe => null,
+            .redirect_stdin => .stdin_file,
+            .redirect_stdout => .stdout_file,
+            .redirect_stdout_append => .stdout_append,
+        };
+    }
+};
+
+const Redirection = struct {
+    kind: RedirectionKind,
+    path: []const u8,
+};
+
+const CommandStage = struct {
+    argv: []const []const u8,
+    redirections: []const Redirection,
+};
+
+const ParsedCommandLine = struct {
+    stages: []const CommandStage,
+};
+
+const PipeFds = struct {
+    read: u32,
+    write: u32,
+};
+
+const ParseError = error{
+    TooManyStages,
+    TooManyArgs,
+    TooManyRedirections,
+    MissingCommand,
+    MissingRedirectionTarget,
+    UnexpectedPipe,
+};
+
+/// Runs an interactive userspace shell with pipelines and file redirections.
 pub fn main(_: []const []const u8) !void {
     const alloc = heap.getAllocator();
 
@@ -139,100 +228,204 @@ fn runCommandLine(alloc: std.mem.Allocator, line: []const u8) !void {
     };
     if (tokens.len == 0) return;
 
-    var lhs_buf: [sys.MAX_ARGV_COUNT][]const u8 = undefined;
-    var rhs_buf: [sys.MAX_ARGV_COUNT][]const u8 = undefined;
-    var cur: usize = 0;
-
-    // Get first command
-    const lhs_argv = collectInvocation(tokens, &cur, &lhs_buf) orelse {
-        writeUsage();
+    var stage_buf: [MAX_SHELL_STAGES]CommandStage = undefined;
+    var argv_buf: [MAX_SHELL_TOKENS][]const u8 = undefined;
+    var redirection_buf: [MAX_SHELL_TOKENS]Redirection = undefined;
+    const parsed = parseCommandLine(tokens, &stage_buf, &argv_buf, &redirection_buf) catch |err| {
+        handleParseError(err);
         return;
     };
+    try runParsedCommandLine(alloc, parsed);
+}
 
-    // If at end of command line, run it
-    if (cur == tokens.len) {
-        return runSingleInvocation(alloc, lhs_argv);
-    }
+fn parseCommandLine(
+    tokens: []const []const u8,
+    stage_buf: *[MAX_SHELL_STAGES]CommandStage,
+    argv_buf: *[MAX_SHELL_TOKENS][]const u8,
+    redirection_buf: *[MAX_SHELL_TOKENS]Redirection,
+) ParseError!ParsedCommandLine {
+    var token_index: usize = 0;
+    var stage_count: usize = 0;
+    var argv_count: usize = 0;
+    var redirection_count: usize = 0;
 
-    const operator = tokens[cur];
-    cur += 1;
+    while (token_index < tokens.len) {
+        if (stage_count >= stage_buf.len) return error.TooManyStages;
 
-    // Redirect stdout to file
-    if (std.mem.eql(u8, operator, ">")) {
-        const output_path = tokens[cur..];
-        if (output_path.len != 1 or isRedirectionToken(output_path[0])) {
-            writeUsage();
-            return;
+        const argv_start = argv_count;
+        const redirection_start = redirection_count;
+
+        while (token_index < tokens.len and Operator.fromToken(tokens[token_index]) != .pipe) {
+            if (Operator.fromToken(tokens[token_index])) |operator| {
+                const kind = operator.redirectionKind().?;
+                token_index += 1;
+                if (token_index >= tokens.len or Operator.fromToken(tokens[token_index]) != null) {
+                    return error.MissingRedirectionTarget;
+                }
+                if (redirection_count >= redirection_buf.len) return error.TooManyRedirections;
+                redirection_buf[redirection_count] = .{
+                    .kind = kind,
+                    .path = tokens[token_index],
+                };
+                redirection_count += 1;
+                token_index += 1;
+                continue;
+            }
+
+            if (argv_count - argv_start >= sys.MAX_ARGV_COUNT) return error.TooManyArgs;
+            argv_buf[argv_count] = tokens[token_index];
+            argv_count += 1;
+            token_index += 1;
         }
 
-        try redirectStdoutToFile(alloc, lhs_argv, output_path[0]);
+        if (argv_count == argv_start) return error.MissingCommand;
+        stage_buf[stage_count] = .{
+            .argv = argv_buf[argv_start..argv_count],
+            .redirections = redirection_buf[redirection_start..redirection_count],
+        };
+        stage_count += 1;
+
+        if (token_index == tokens.len) break;
+        token_index += 1;
+        if (token_index == tokens.len) return error.UnexpectedPipe;
+    }
+
+    if (stage_count == 0) return error.MissingCommand;
+    return .{ .stages = stage_buf[0..stage_count] };
+}
+
+fn runParsedCommandLine(alloc: std.mem.Allocator, parsed: ParsedCommandLine) !void {
+    var pipes: [MAX_SHELL_STAGES]PipeFds = undefined;
+    var pipe_count: usize = 0;
+    while (pipe_count + 1 < parsed.stages.len) : (pipe_count += 1) {
+        const read_fd, const write_fd = sys.pipe() catch {
+            closePipeList(pipes[0..pipe_count]);
+            writeLine("shell: failed to create pipe\n");
+            return;
+        };
+        pipes[pipe_count] = .{ .read = read_fd, .write = write_fd };
+    }
+
+    var child_pids: [MAX_SHELL_STAGES]u32 = undefined;
+    var child_count: usize = 0;
+    for (parsed.stages, 0..) |stage, stage_index| {
+        const pid = spawnStage(alloc, stage, pipes[0..pipe_count], stage_index, parsed.stages.len) catch |err| {
+            closePipeList(pipes[0..pipe_count]);
+            waitForChildren(child_pids[0..child_count]);
+            return err;
+        };
+        if (pid) |child_pid| {
+            child_pids[child_count] = child_pid;
+            child_count += 1;
+            continue;
+        }
+
+        closePipeList(pipes[0..pipe_count]);
+        waitForChildren(child_pids[0..child_count]);
         return;
     }
 
-    // Otherwise, should be pipe operator
-    if (!std.mem.eql(u8, operator, "|")) {
-        writeUsage();
-        return;
+    closePipeList(pipes[0..pipe_count]);
+    waitForChildren(child_pids[0..child_count]);
+}
+
+fn spawnStage(
+    alloc: std.mem.Allocator,
+    stage: CommandStage,
+    pipes: []const PipeFds,
+    stage_index: usize,
+    stage_count: usize,
+) !?u32 {
+    var fd_remaps: [MAX_SHELL_TOKENS]sys.FdRemap = undefined;
+    var fd_remap_count: usize = 0;
+
+    if (stage_index > 0) {
+        fd_remaps[fd_remap_count] = .{
+            .dst = sys.STDIN,
+            .src = pipes[stage_index - 1].read,
+        };
+        fd_remap_count += 1;
+    }
+    if (stage_index + 1 < stage_count) {
+        fd_remaps[fd_remap_count] = .{
+            .dst = sys.STDOUT,
+            .src = pipes[stage_index].write,
+        };
+        fd_remap_count += 1;
     }
 
-    const rhs_argv = collectInvocation(tokens, &cur, &rhs_buf) orelse {
-        writeUsage();
-        return;
-    };
-    if (cur != tokens.len) {
-        writeLine("shell: basic redirection supports only one operator\n");
-        return;
+    var opened_fds: [MAX_SHELL_TOKENS]u32 = undefined;
+    var opened_count: usize = 0;
+    defer closeFdList(opened_fds[0..opened_count]);
+
+    for (stage.redirections) |redirection| {
+        const redirection_fd = openRedirectionTarget(redirection) orelse return null;
+        opened_fds[opened_count] = redirection_fd;
+        opened_count += 1;
+        setFdRemap(
+            &fd_remaps,
+            &fd_remap_count,
+            redirection.kind.destinationFd(),
+            redirection_fd,
+        );
     }
 
-    try runPipeline(alloc, lhs_argv, rhs_argv);
+    return spawnInvocation(alloc, stage.argv, fd_remaps[0..fd_remap_count]);
 }
 
-fn runSingleInvocation(alloc: std.mem.Allocator, argv: []const []const u8) !void {
-    const pid = (try spawnInvocation(alloc, argv, &.{})) orelse return;
-    _ = waitForChild(pid);
+fn setFdRemap(
+    fd_remaps: *[MAX_SHELL_TOKENS]sys.FdRemap,
+    fd_remap_count: *usize,
+    dst: u32,
+    src: u32,
+) void {
+    var i: usize = 0;
+    while (i < fd_remap_count.*) : (i += 1) {
+        if (fd_remaps[i].dst == dst) {
+            fd_remaps[i].src = src;
+            return;
+        }
+    }
+
+    fd_remaps[fd_remap_count.*] = .{ .dst = dst, .src = src };
+    fd_remap_count.* += 1;
 }
 
-fn redirectStdoutToFile(alloc: std.mem.Allocator, argv: []const []const u8, path: []const u8) !void {
-    const output_fd = sys.open(path, .{
-        .open_mode = .WriteOnly,
-        .create = true,
-        .truncate = true,
-    }) catch {
-        writeError("shell: failed to redirect stdout to ", path);
-        return;
+fn openRedirectionTarget(redirection: Redirection) ?u32 {
+    return sys.open(redirection.path, redirection.kind.openFlags()) catch {
+        writeError(redirection.kind.errorPrefix(), redirection.path);
+        return null;
     };
-    defer sys.close(output_fd) catch {};
-
-    const fd_remaps = [_]sys.FdRemap{
-        .{ .dst = sys.STDOUT, .src = output_fd },
-    };
-    const pid = (try spawnInvocation(alloc, argv, &fd_remaps)) orelse return;
-    _ = waitForChild(pid);
 }
 
-fn runPipeline(alloc: std.mem.Allocator, lhs_argv: []const []const u8, rhs_argv: []const []const u8) !void {
-    const read_fd, const write_fd = sys.pipe() catch {
-        writeLine("shell: failed to create pipe\n");
-        return;
-    };
-    defer sys.close(read_fd) catch {};
-    defer sys.close(write_fd) catch {};
+fn closePipeList(pipes: []const PipeFds) void {
+    for (pipes) |pipe| {
+        sys.close(pipe.read) catch {};
+        sys.close(pipe.write) catch {};
+    }
+}
 
-    const consumer_remaps = [_]sys.FdRemap{
-        .{ .dst = sys.STDIN, .src = read_fd },
-    };
-    const consumer_pid = (try spawnInvocation(alloc, rhs_argv, &consumer_remaps)) orelse return;
+fn closeFdList(fds: []const u32) void {
+    for (fds) |fd| {
+        sys.close(fd) catch {};
+    }
+}
 
-    const producer_remaps = [_]sys.FdRemap{
-        .{ .dst = sys.STDOUT, .src = write_fd },
-    };
-    const producer_pid = (try spawnInvocation(alloc, lhs_argv, &producer_remaps)) orelse {
-        _ = waitForChild(consumer_pid);
-        return;
-    };
+fn waitForChildren(pids: []const u32) void {
+    for (pids) |pid| {
+        _ = waitForChild(pid);
+    }
+}
 
-    _ = waitForChild(producer_pid);
-    _ = waitForChild(consumer_pid);
+fn handleParseError(err: ParseError) void {
+    switch (err) {
+        error.TooManyStages, error.TooManyArgs, error.TooManyRedirections => {
+            writeLine("shell: too many arguments\n");
+        },
+        error.MissingCommand, error.MissingRedirectionTarget, error.UnexpectedPipe => {
+            writeUsage();
+        },
+    }
 }
 
 fn spawnInvocation(alloc: std.mem.Allocator, argv: []const []const u8, fd_remaps: []const sys.FdRemap) !?u32 {
@@ -308,8 +501,16 @@ fn nextToken(cmdline: []const u8, cursor: *usize) ?[]const u8 {
 
     const start = cursor.*;
     const ch = cmdline[cursor.*];
-    if (ch == '|' or ch == '>' or ch == '<') {
+    if (ch == '|') {
         cursor.* += 1;
+        return cmdline[start..cursor.*];
+    }
+    if (ch == '<') {
+        cursor.* += 1;
+        return cmdline[start..cursor.*];
+    }
+    if (ch == '>') {
+        cursor.* += if (cursor.* + 1 < cmdline.len and cmdline[cursor.* + 1] == '>') 2 else 1;
         return cmdline[start..cursor.*];
     }
 
@@ -321,30 +522,9 @@ fn nextToken(cmdline: []const u8, cursor: *usize) ?[]const u8 {
     return cmdline[start..cursor.*];
 }
 
-fn isRedirectionToken(token: []const u8) bool {
-    return token.len == 1 and (token[0] == '|' or token[0] == '>' or token[0] == '<');
-}
-
-/// Collect tokens until the next redirection operator or end of tokens.
-fn collectInvocation(
-    tokens: []const []const u8,
-    token_index: *usize,
-    buf: *[sys.MAX_ARGV_COUNT][]const u8,
-) ?[]const []const u8 {
-    var argc: usize = 0;
-    while (token_index.* < tokens.len and !isRedirectionToken(tokens[token_index.*])) : (token_index.* += 1) {
-        if (argc >= buf.len) return null;
-        buf[argc] = tokens[token_index.*];
-        argc += 1;
-    }
-    if (argc == 0) return null;
-    return buf[0..argc];
-}
-
 fn writeUsage() void {
-    writeLine("Usage: <command> [<arg> ...]\n");
-    writeLine("       <command> [<arg> ...] > <file>\n");
-    writeLine("       <command> [<arg> ...] | <command> [<arg> ...]\n");
+    writeLine("Usage: <command> [<arg> | < <file> | > <file> | >> <file> ...]\n");
+    writeLine("       [| <command> [<arg> | < <file> | > <file> | >> <file> ...] ...]\n");
     writeLine("       !<kernel command> [<arg> ...]\n");
 }
 

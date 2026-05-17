@@ -79,7 +79,7 @@ Complete listing of every source file and its role.
 - `userspace/test_fs.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/test_alloc.zig`: heap allocator stress test covering allocate/free/realloc behavior.
-- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports basic redirection.
+- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports multi-stage pipelines plus left-to-right `<`, `>`, and `>>` redirections.
 - `userspace/fbdemo.zig`: userspace framebuffer demo that opens `/dev/fb0`, queries metadata via ioctl, snapshots the device contents, draws a small colour-pattern test image through fd I/O, waits for a keypress, and restores the original pixels.
 - `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`, including `FrameBufInfo`.
 

@@ -39,9 +39,17 @@ pub const FileDesc = union(enum) {
                 if (is_writer) {
                     if (pp.num_writers == 0) @panic("invalid pipe state: no writers");
                     pp.num_writers -= 1;
+                    if (pp.num_writers == 0) {
+                        // Give readers the chance to detect EOF
+                        _ = pp.read_waiters.wakeAll(0);
+                    }
                 } else {
                     if (pp.num_readers == 0) @panic("invalid pipe state: no readers");
                     pp.num_readers -= 1;
+                    if (pp.num_readers == 0) {
+                        // Give writers the chance to detect BrokenPipe
+                        _ = pp.write_waiters.wakeAll(0);
+                    }
                 }
                 if (pp.num_readers == 0 and pp.num_writers == 0) {
                     pp.deinit(kernel.getAllocator());
@@ -92,13 +100,12 @@ pub const FileDesc = union(enum) {
                 const pp = pipe_info.handle;
                 const is_writer = pipe_info.writable;
                 if (is_writer) return error.AccessDenied;
-                if (pp.empty()) {
+                while (pp.empty()) {
                     if (pp.num_writers == 0) {
                         return 0; // EOF
-                    } else {
-                        try task.getCurrentTask().waitInQueue(&pp.read_waiters);
-                        _ = kernel.kernel_yield();
                     }
+                    try task.getCurrentTask().waitInQueue(&pp.read_waiters);
+                    _ = kernel.kernel_yield();
                 }
                 return pp.read(dest);
             },
@@ -122,11 +129,12 @@ pub const FileDesc = union(enum) {
                 const pp = pipe_info.handle;
                 const is_writer = pipe_info.writable;
                 if (!is_writer) return error.AccessDenied;
-                if (pp.num_readers == 0) return error.BrokenPipe;
-                if (pp.full()) {
+                while (pp.full()) {
+                    if (pp.num_readers == 0) return error.BrokenPipe;
                     try task.getCurrentTask().waitInQueue(&pp.write_waiters);
                     _ = kernel.kernel_yield();
                 }
+                if (pp.num_readers == 0) return error.BrokenPipe;
                 return pp.write(src);
             },
             .char_device => |*char_info| {

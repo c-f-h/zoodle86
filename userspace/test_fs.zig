@@ -529,6 +529,37 @@ fn testPipe() !void {
     _ = try expectSyscall(sys.close(read_fd), "testPipe: close read end", @src());
 }
 
+const SpawnedCatPipes = struct {
+    pid: u32,
+    stdin_write: u32,
+    stdout_read: u32,
+};
+
+fn spawnCatPipePair() !SpawnedCatPipes {
+    const stdin_read, const stdin_write = try checkSyscall(sys.pipe(), "spawnCatPipePair: create stdin pipe", @src());
+    errdefer sys.close(stdin_read) catch {};
+    errdefer sys.close(stdin_write) catch {};
+
+    const stdout_read, const stdout_write = try checkSyscall(sys.pipe(), "spawnCatPipePair: create stdout pipe", @src());
+    errdefer sys.close(stdout_read) catch {};
+    errdefer sys.close(stdout_write) catch {};
+
+    const fd_remaps = [_]sys.FdRemap{
+        .{ .dst = sys.STDIN, .src = stdin_read },
+        .{ .dst = sys.STDOUT, .src = stdout_write },
+    };
+    const pid = try checkSyscall(sys.spawnOpts("/bin/cat", &.{}, &fd_remaps), "spawnCatPipePair: spawn cat", @src());
+
+    _ = try expectSyscall(sys.close(stdin_read), "spawnCatPipePair: close stdin read in parent", @src());
+    _ = try expectSyscall(sys.close(stdout_write), "spawnCatPipePair: close stdout write in parent", @src());
+
+    return .{
+        .pid = pid,
+        .stdin_write = stdin_write,
+        .stdout_read = stdout_read,
+    };
+}
+
 fn testStat() !void {
     sys.unlink(stat_link) catch {};
     sys.unlink(stat_file) catch {};
@@ -685,36 +716,35 @@ fn testGetDents() !void {
 }
 
 fn testPipeSpawn() !void {
-    // Create two pipes: one for feeding cat's stdin, one for capturing cat's stdout.
-    const stdin_read, const stdin_write = try checkSyscall(sys.pipe(), "testPipeSpawn: create stdin pipe", @src());
-    const stdout_read, const stdout_write = try checkSyscall(sys.pipe(), "testPipeSpawn: create stdout pipe", @src());
-
-    // Remap child's stdin (fd 0) to the read end of the stdin pipe,
-    // and child's stdout (fd 1) to the write end of the stdout pipe.
-    const fd_remaps = [_]sys.FdRemap{
-        .{ .dst = sys.STDIN, .src = stdin_read },
-        .{ .dst = sys.STDOUT, .src = stdout_write },
-    };
-    const pid = try checkSyscall(sys.spawnOpts("/bin/cat", &.{}, &fd_remaps), "testPipeSpawn: spawn cat", @src());
-
-    // Parent no longer needs the child-side ends of the pipes.
-    _ = try expectSyscall(sys.close(stdin_read), "testPipeSpawn: close stdin read in parent", @src());
-    _ = try expectSyscall(sys.close(stdout_write), "testPipeSpawn: close stdout write in parent", @src());
+    const pipes = try spawnCatPipePair();
+    errdefer sys.close(pipes.stdin_write) catch {};
+    errdefer sys.close(pipes.stdout_read) catch {};
 
     // Feed known input to cat and signal EOF.
     const input = "pipe spawn ok\n";
-    try writeAll(stdin_write, input);
+    try writeAll(pipes.stdin_write, input);
     // Closing cat's stdin should cause it to detect EOF and exit.
-    _ = try expectSyscall(sys.close(stdin_write), "testPipeSpawn: close stdin write in parent", @src());
+    _ = try expectSyscall(sys.close(pipes.stdin_write), "testPipeSpawn: close stdin write in parent", @src());
 
     // Read cat's output and verify it matches the input.
     var buf: [64]u8 = undefined;
-    try readExact(stdout_read, buf[0..input.len]);
-    try expectEof(stdout_read);
+    try readExact(pipes.stdout_read, buf[0..input.len]);
+    try expectEof(pipes.stdout_read);
     try expectBytes(buf[0..input.len], input);
-    _ = try expectSyscall(sys.close(stdout_read), "testPipeSpawn: close stdout read in parent", @src());
+    _ = try expectSyscall(sys.close(pipes.stdout_read), "testPipeSpawn: close stdout read in parent", @src());
 
-    _ = try expectSyscall(sys.waitpid(pid), "testPipeSpawn: wait for cat", @src());
+    _ = try expectSyscall(sys.waitpid(pipes.pid), "testPipeSpawn: wait for cat", @src());
+}
+
+fn testPipeSpawnWriterCloseWakeup() !void {
+    const pipes = try spawnCatPipePair();
+    errdefer sys.close(pipes.stdin_write) catch {};
+    errdefer sys.close(pipes.stdout_read) catch {};
+
+    _ = try expectSyscall(sys.close(pipes.stdin_write), "testPipeSpawnWriterCloseWakeup: close stdin write in parent", @src());
+    try expectEof(pipes.stdout_read);
+    _ = try expectSyscall(sys.close(pipes.stdout_read), "testPipeSpawnWriterCloseWakeup: close stdout read in parent", @src());
+    _ = try expectSyscall(sys.waitpid(pipes.pid), "testPipeSpawnWriterCloseWakeup: wait for cat", @src());
 }
 
 fn testBrokenPipe() !void {
@@ -788,6 +818,7 @@ pub fn main(argv: []const []const u8) !void {
     try testPipe();
     try testBrokenPipe();
     try testPipeSpawn();
+    try testPipeSpawnWriterCloseWakeup();
 
     _ = try expectSyscall(sys.close(sys.STDIN), "main: close stdin", @src());
     _ = try expectSyscall(sys.close(sys.STDERR), "main: close stderr", @src());
