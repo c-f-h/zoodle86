@@ -347,6 +347,7 @@ pub const FileSystem = struct {
     block_dev: *BlockDevice,
     superblock: Superblock = undefined,
     inode_cache: InodeCache = .{},
+    root_inode: ?*DiskInode = null,
 
     /// Formats the filesystem on the given block device, preparing it for use.
     pub fn format(bd: *BlockDevice) FsError!void {
@@ -372,6 +373,13 @@ pub const FileSystem = struct {
     }
 
     pub fn unmount(self: *FileSystem) void {
+        if (self.root_inode) |inode| {
+            if (InodeCache.getEntryForInode(inode).ref_count != 1) {
+                @panic("Unmounting filesystem with leaked root inode");
+            }
+            self.drop(inode);
+            self.root_inode = null;
+        }
         self.inode_cache.deinit();
     }
 
@@ -446,10 +454,13 @@ pub const FileSystem = struct {
         return false;
     }
 
+    /// Return the root directory inode. Should not be dropped by the caller.
     pub fn getRootInode(self: *FileSystem) *DiskInode {
-        // TODO: root inode should always be kept in the cache
-        // TODO: This should not increase the refcount
-        return self.inode_cache.get(self, ROOT_INODE_INDEX) catch @panic("root inode inaccessible");
+        if (self.root_inode) |inode| {
+            return inode;
+        }
+        self.root_inode = self.inode_cache.get(self, ROOT_INODE_INDEX) catch @panic("root inode inaccessible");
+        return self.root_inode.?;
     }
 
     pub fn getInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
@@ -561,18 +572,6 @@ pub const FileSystem = struct {
         return self.createFileInternal(dir_inode, name, kind, 0, device);
     }
 
-    /// Resizes a file identified directly by inode number, zero-filling any newly exposed range.
-    pub fn resizeInode(self: *FileSystem, inode_index: InodeT, new_size: u32) FsError!void {
-        const inode = try self.getFileInode(inode_index);
-        defer self.inode_cache.drop(inode_index);
-        try self.resizeInodeToSize(inode, new_size);
-    }
-
-    /// Truncates a file identified directly by inode number to zero bytes.
-    pub fn truncateInode(self: *FileSystem, inode_index: InodeT) FsError!void {
-        try self.resizeInode(inode_index, 0);
-    }
-
     //////////// FILE READING ////////////
 
     /// Reads an entire regular file, given by its full path, into allocator-owned memory.
@@ -620,10 +619,12 @@ pub const FileSystem = struct {
 
     //////////// FILE WRITING ////////////
 
+    /// Returns a new reference to the inode for a file given by its full path.
     pub fn getInodeAtPath(self: *FileSystem, path: []const u8) FsError!*DiskInode {
-        const root_inode = self.getRootInode();
-        defer self.drop(root_inode);
-        const inode_index = try self.walkPathToInodeIndex(root_inode, path);
+        if (path.len == 1 and path[0] == '/') {
+            return self.dup(self.getRootInode());
+        }
+        const inode_index = try self.walkPathToInodeIndex(self.getRootInode(), path);
         return self.inode_cache.get(self, inode_index);
     }
 
@@ -657,14 +658,16 @@ pub const FileSystem = struct {
     //////////// PATH WALKING ////////////
 
     /// Walk a full file path, starting from the given directory inode index.
-    /// Returns { parent_dir_inode_index, dir_entry_index, dir_entry } or error.FileNotFound.
+    /// Returns { parent_dir_inode, dir_entry_index, dir_entry } or error.FileNotFound.
     pub fn walkPathToDirEntry(self: *FileSystem, dir_inode: *DiskInode, path: []const u8) FsError!struct { *DiskInode, u32, DirectoryEntry } {
-        var current_dir = dir_inode;
+        // Invariant: current_dir always holds a temporary reference to a directory
+        // used during path walking, which we need to drop when returning.
+        var current_dir = self.dup(dir_inode);
+        defer self.drop(current_dir);
+
         if (current_dir.kind != .Directory) return error.NotADirectory;
 
         var path_iter = std.mem.splitScalar(u8, path, '/');
-
-        // TODO: check the logic here - can we leak opened inodes in the cache?
 
         // TODO: proper handling of absolute vs relative paths
         // TODO: handle "." and ".." components
@@ -672,30 +675,22 @@ pub const FileSystem = struct {
             if (component.len == 0) continue;
 
             const index, const entry = try self.findDirEntryAndIndex(current_dir, component) orelse {
-                if (current_dir != dir_inode) self.drop(current_dir);
                 return error.FileNotFound;
             };
             if (path_iter.peek() == null) {
                 // At end of path - return the entry
-                return .{ current_dir, index, entry };
+                return .{ self.dup(current_dir), index, entry };
             } else {
                 // Not at end of path - must be a directory to continue traversal
-                if (entry.kind != .Directory) {
-                    if (current_dir != dir_inode) self.drop(current_dir);
-                    return error.FileNotFound;
-                }
+                if (entry.kind != .Directory) return error.FileNotFound;
             }
 
             const new_dir = try self.getDirectoryInode(entry.inode_index);
-
-            if (current_dir != dir_inode) {
-                // If it is an inode we opened during walking, drop it
-                self.drop(current_dir);
-            }
+            self.drop(current_dir);
             current_dir = new_dir;
         }
         // TODO: this is reachable if the path is empty or "/"
-        unreachable;
+        @panic("walkPathToDirEntry called with invalid path");
     }
 
     /// Walk a full file path, starting from the given directory inode index.
@@ -704,15 +699,13 @@ pub const FileSystem = struct {
         if (path.len == 0) return InodeCache.getEntryForInode(dir_inode).inode_index;
         if (path.len == 1 and path[0] == '/') return ROOT_INODE_INDEX;
         const parent_inode, _, const entry = try self.walkPathToDirEntry(dir_inode, path);
-        if (parent_inode != dir_inode) self.drop(parent_inode);
+        self.drop(parent_inode);
         return entry.inode_index;
     }
 
     /// Returns true if a file or directory exists at the given path, false if not found.
     pub fn pathExists(self: *FileSystem, path: []const u8) FsError!bool {
-        const root_inode = self.getRootInode();
-        defer self.drop(root_inode);
-        _ = self.walkPathToInodeIndex(root_inode, path) catch |err| switch (err) {
+        _ = self.walkPathToInodeIndex(self.getRootInode(), path) catch |err| switch (err) {
             error.FileNotFound => return false,
             else => return err,
         };
@@ -1015,7 +1008,7 @@ pub const FileSystem = struct {
 
         const old_total_blocks = fileBlocksForSize(old_size);
         if (new_size > old_size) {
-            try self.resizeInodeToSize(inode, new_size);
+            try self.resizeInode(inode, new_size);
         }
 
         const first_block = ofs / BLOCK_SIZE;
@@ -1048,13 +1041,13 @@ pub const FileSystem = struct {
         }
 
         if (truncate and new_size < old_size) {
-            try self.resizeInodeToSize(inode, new_size);
+            try self.resizeInode(inode, new_size);
         }
     }
 
     /// Change the size of an inode, allocating or freeing blocks as needed.
     /// If the inode is being grown, any newly exposed regions will be zero-filled.
-    pub fn resizeInodeToSize(self: *FileSystem, inode: *DiskInode, new_size: u32) FsError!void {
+    pub fn resizeInode(self: *FileSystem, inode: *DiskInode, new_size: u32) FsError!void {
         const old_size = inode.size_bytes;
         if (new_size == old_size) return;
 

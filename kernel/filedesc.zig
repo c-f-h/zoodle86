@@ -390,7 +390,7 @@ pub fn truncateFile(ptask: *task.Task, fd: u32, size: u32) FiledescError!void {
         .file => |file_index| {
             const open_file = vfs.getOpenFile(file_index);
             if (!open_file.writable) return error.AccessDenied;
-            try open_file.disk_fs.resizeInode(open_file.inode_index, size);
+            try open_file.disk_fs.resizeInode(open_file.inode, size);
         },
         else => return error.BadFd,
     }
