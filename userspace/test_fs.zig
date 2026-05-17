@@ -230,23 +230,52 @@ fn testUnlink() !void {
         .create = true,
         .truncate = true,
     }), "testUnlink: open unlink file", @src());
+    errdefer sys.close(fd) catch {};
 
     try writeAll(fd, "temporary contents");
+    var original_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(fd, &original_stat), "testUnlink: fstat before unlink", @src());
+    try expectOffset(original_stat.nlink, 1);
 
-    var unlinked_open_file = true;
-    sys.unlink(unlink_file) catch {
-        unlinked_open_file = false;
-    };
-    if (unlinked_open_file) {
-        _ = sys.write(sys.STDOUT, "unexpectedly unlinked open file\n") catch {};
-        sys.close(fd) catch {};
-        return error.SyscallFailed;
-    }
+    _ = try expectSyscall(sys.unlink(unlink_file), "testUnlink: unlink open file", @src());
+    _ = try syscallShouldFail(sys.open(unlink_file, .{}), "testUnlink: path removed after unlink", @src());
 
-    _ = try expectSyscall(sys.close(fd), "testUnlink: close before unlink", @src());
-    _ = try expectSyscall(sys.unlink(unlink_file), "testUnlink: unlink closed file", @src());
+    var unlinked_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(fd, &unlinked_stat), "testUnlink: fstat after unlink", @src());
+    if (unlinked_stat.inode != original_stat.inode) return error.InodeMismatch;
+    try expectOffset(unlinked_stat.nlink, 0);
 
-    _ = try syscallShouldFail(sys.open(unlink_file, .{}), "testUnlink: open unlinked file", @src());
+    try writeAll(fd, "!");
+    try expectOffset(try expectSyscall(sys.lseek(fd, 0, .Set), "testUnlink: rewind unlinked fd", @src()), 0);
+
+    var old_contents: ["temporary contents!".len]u8 = undefined;
+    try readExact(fd, &old_contents);
+    try expectEof(fd);
+    try expectBytes(&old_contents, "temporary contents!");
+
+    const replacement_fd = try expectSyscall(sys.open(unlink_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testUnlink: recreate path after unlink", @src());
+    errdefer sys.close(replacement_fd) catch {};
+    try writeAll(replacement_fd, "replacement");
+
+    var replacement_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(replacement_fd, &replacement_stat), "testUnlink: fstat replacement file", @src());
+    if (replacement_stat.inode == original_stat.inode) return error.InodeMismatch;
+    try expectOffset(replacement_stat.nlink, 1);
+
+    try expectOffset(try expectSyscall(sys.lseek(replacement_fd, 0, .Set), "testUnlink: rewind replacement fd", @src()), 0);
+    var replacement_contents: ["replacement".len]u8 = undefined;
+    try readExact(replacement_fd, &replacement_contents);
+    try expectEof(replacement_fd);
+    try expectBytes(&replacement_contents, "replacement");
+
+    _ = try expectSyscall(sys.close(fd), "testUnlink: close unlinked file", @src());
+    _ = try expectSyscall(sys.close(replacement_fd), "testUnlink: close replacement file", @src());
+    _ = try expectSyscall(sys.unlink(unlink_file), "testUnlink: unlink replacement path", @src());
+    _ = try syscallShouldFail(sys.open(unlink_file, .{}), "testUnlink: open missing file", @src());
     _ = try syscallShouldFail(sys.unlink(unlink_file), "testUnlink: unlink missing file", @src());
 }
 
@@ -371,13 +400,16 @@ fn testRename() !void {
     _ = try syscallShouldFail(sys.rename(rename_src, "/no_such_dir/file.txt"), "testRename: bad dst parent", @src());
     _ = try expectSyscall(sys.unlink(rename_src), "testRename: cleanup src (bad-parent)", @src());
 
-    // 7. Rename fails when the destination file is currently open.
+    // 7. Rename over an open destination replaces the path, while the old descriptor keeps the
+    //    replaced inode alive until close.
     const src4_fd = try expectSyscall(sys.open(rename_src, .{
         .open_mode = .ReadWrite,
         .create = true,
         .truncate = true,
     }), "testRename: create src for open-dst test", @src());
     try writeAll(src4_fd, "data");
+    var src4_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(src4_fd, &src4_stat), "testRename: fstat src for open-dst test", @src());
     _ = try expectSyscall(sys.close(src4_fd), "testRename: close src for open-dst test", @src());
 
     const open_dst_fd = try expectSyscall(sys.open(rename_dst, .{
@@ -385,11 +417,38 @@ fn testRename() !void {
         .create = true,
         .truncate = true,
     }), "testRename: create open dst", @src());
+    errdefer sys.close(open_dst_fd) catch {};
     try writeAll(open_dst_fd, "open");
-    _ = try syscallShouldFail(sys.rename(rename_src, rename_dst), "testRename: rename onto open dst", @src());
+    var old_dst_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(open_dst_fd, &old_dst_stat), "testRename: fstat open dst before rename", @src());
+
+    _ = try expectSyscall(sys.rename(rename_src, rename_dst), "testRename: rename onto open dst", @src());
+    _ = try syscallShouldFail(sys.open(rename_src, .{}), "testRename: src gone after open-dst rename", @src());
+
+    var replaced_dst_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(open_dst_fd, &replaced_dst_stat), "testRename: fstat replaced dst", @src());
+    if (replaced_dst_stat.inode != old_dst_stat.inode) return error.InodeMismatch;
+    try expectOffset(replaced_dst_stat.nlink, 0);
+    try expectOffset(try expectSyscall(sys.lseek(open_dst_fd, 0, .Set), "testRename: rewind replaced dst", @src()), 0);
+    var old_dst_contents: ["open".len]u8 = undefined;
+    try readExact(open_dst_fd, &old_dst_contents);
+    try expectEof(open_dst_fd);
+    try expectBytes(&old_dst_contents, "open");
+
+    const renamed_fd = try expectSyscall(sys.open(rename_dst, .{}), "testRename: open renamed dst", @src());
+    errdefer sys.close(renamed_fd) catch {};
+    var renamed_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(renamed_fd, &renamed_stat), "testRename: fstat renamed dst", @src());
+    if (renamed_stat.inode != src4_stat.inode) return error.InodeMismatch;
+    if (renamed_stat.inode == old_dst_stat.inode) return error.InodeMismatch;
+    var renamed_contents: ["data".len]u8 = undefined;
+    try readExact(renamed_fd, &renamed_contents);
+    try expectEof(renamed_fd);
+    try expectBytes(&renamed_contents, "data");
+    _ = try expectSyscall(sys.close(renamed_fd), "testRename: close renamed dst", @src());
+
     _ = try expectSyscall(sys.close(open_dst_fd), "testRename: close open dst", @src());
-    _ = try expectSyscall(sys.unlink(rename_src), "testRename: cleanup src (open-dst)", @src());
-    _ = try expectSyscall(sys.unlink(rename_dst), "testRename: cleanup open dst", @src());
+    _ = try expectSyscall(sys.unlink(rename_dst), "testRename: cleanup renamed dst", @src());
 }
 
 fn testTruncate() !void {

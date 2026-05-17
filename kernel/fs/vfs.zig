@@ -33,7 +33,6 @@ pub fn mountRootFs() !void {
 
     root_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
     root_fs = try zodfs.FileSystem.mount(&root_block_device.block_dev, kernel.getAllocator());
-    try root_fs.initCache();
 }
 
 pub fn getRootFs() *zodfs.FileSystem {
@@ -63,8 +62,8 @@ pub fn writeFileContents(path: []const u8, data: []const u8) FsError!void {
 }
 
 /// Moves (renames) old_path to new_path, atomically replacing any existing regular file at
-/// new_path. Directories cannot be moved. If new_path names an existing regular file it is
-/// replaced, but only when no task has it open.
+/// new_path. Directories cannot be moved. Open descriptors keep the replaced inode alive
+/// until the final close, but the destination path switches to the source inode immediately.
 pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
     if (std.mem.eql(u8, old_path, new_path)) return;
 
@@ -83,7 +82,6 @@ pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
     if (existing) |existing_index_and_direntry| {
         const ex_index, const ex_direntry = existing_index_and_direntry;
         if (ex_direntry.kind == .Directory) return error.NotAFile;
-        if (root_fs.isInodeOpen(ex_direntry.inode_index)) return error.FileInUse;
         try root_fs.deleteFile(dst_parent_inode, ex_index);
     }
 
@@ -112,24 +110,21 @@ pub fn createDirectory(path: []const u8) FsError!void {
     root_fs.drop(inode);
 }
 
-/// Removes a directory unless it is still referenced by an open descriptor or is not empty.
+/// Removes an empty directory.
 pub fn removeDirectory(path: []const u8) FsError!void {
-    const parent_inode, const index, const entry =
+    const parent_inode, const index, _ =
         try root_fs.walkPathToDirEntry(root_fs.getRootInode(), path);
     defer root_fs.drop(parent_inode);
 
-    if (root_fs.isInodeOpen(entry.inode_index)) return error.FileInUse;
     try root_fs.deleteDirectory(parent_inode, index);
 }
 
-/// Unlinks a filesystem path unless it is still referenced by an open descriptor.
+/// Unlinks a filesystem path. Open descriptors keep the inode alive until the final close.
 pub fn unlink(path: []const u8) FsError!void {
-    const parent_inode, const index, const entry =
+    const parent_inode, const index, _ =
         try root_fs.walkPathToDirEntry(root_fs.getRootInode(), path);
     defer root_fs.drop(parent_inode);
 
-    // TODO: should no longer be necessary once we have inode cache
-    if (root_fs.isInodeOpen(entry.inode_index)) return error.FileInUse;
     try root_fs.deleteFile(parent_inode, index);
 }
 

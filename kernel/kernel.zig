@@ -313,6 +313,12 @@ fn panicOnError(err: anyerror) noreturn {
     @panic(getErrorDesc(err));
 }
 
+pub fn log(comptime fmt: []const u8, args: anytype) void {
+    var buf: [128]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch "<log message too long>";
+    console.primary.put(.{ "LOG: ", msg, "\n" });
+}
+
 const Task = task.Task;
 
 pub const USER_DATA_START: u32 = 0x1000_0000; // start of userspace data segment

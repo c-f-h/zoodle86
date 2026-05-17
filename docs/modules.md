@@ -5,7 +5,7 @@ Complete listing of every source file and its role.
 ## Core Kernel Modules
 
 - `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, framebuffer metadata records, and the compact key-event layout.
-- `kernel/stage2.zig`: protected-mode half of the minimal stage-2 loader; sets up paging, mounts the filesystem, loads the `kernel` ELF binary, and runs it.
+- `kernel/stage2.zig`: protected-mode half of the minimal stage-2 loader; sets up paging, mounts the filesystem through a loader-only read path, loads the `kernel` ELF binary, and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, exposes low-level pixel/fill/text helpers for graphics-mode rendering, and provides a `/dev/fb0` character device for raw byte access.
 - `kernel/gfx/window.zig`: instantiable framed console window (`Window` struct): computes window geometry from font and available pixel dimensions, allocates and manages the shadow pixel buffer from the kernel allocator, draws the window chrome (border, title bar), and blits shadow-buffer regions to the framebuffer. Module-level `drawBackground()` fills the full-screen desktop background.

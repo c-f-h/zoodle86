@@ -35,7 +35,7 @@ pub const ROOT_DIRECTORY_SECTORS: u32 = sectorsForBytes(ROOT_DIRECTORY_BYTES); /
 pub const DiskInode = extern struct {
     kind: InodeKind = InodeKind.Free,
     reserved0: u8 = 0,
-    link_count: u16 = 0,
+    link_count: u16 = 0, // How many directory entries reference this inode
     size_bytes: u32 = 0,
     direct_blocks: [DIRECT_BLOCK_COUNT]u32 = @splat(BLOCK_POINTER_NONE),
     indirect_block: u32 = BLOCK_POINTER_NONE,
@@ -56,7 +56,7 @@ const InodeCacheContext = struct {
 const InodeCache = struct {
     pub const InodeCacheEntry = struct {
         inode_index: InodeT,
-        ref_count: u16,
+        ref_count: u16, // How many active handles to this inode exist in memory
         inode: DiskInode,
     };
 
@@ -111,6 +111,9 @@ const InodeCache = struct {
     fn drop(self: *InodeCache, inode_index: InodeT) void {
         const entry = self.hashmap.getPtr(inode_index);
         if (entry) |e| {
+            if (e.ref_count == 0) {
+                @panic("double drop of inode cache entry");
+            }
             e.ref_count -= 1;
             // TODO: eviction heuristics; for now keep
             //if (e.ref_count == 0) {
@@ -365,11 +368,18 @@ pub const FileSystem = struct {
         try fs.readSuperblock();
         try fs.validateRootDirectory();
         try fs.inode_cache.init(allocator);
+        try fs.inode_cache.hashmap.ensureTotalCapacity(fs.inode_cache.allocator, 128);
         return fs;
     }
 
-    pub fn initCache(self: *FileSystem) error{OutOfMemory}!void {
-        try self.inode_cache.hashmap.ensureTotalCapacity(self.inode_cache.allocator, 128);
+    /// Mounts an existing inode-based filesystem for read-only use without an inode cache.
+    pub fn mountReadOnly(bd: *BlockDevice) FsError!FileSystem {
+        var fs = FileSystem{
+            .block_dev = bd,
+        };
+        try fs.readSuperblock();
+        try fs.validateRootDirectory();
+        return fs;
     }
 
     pub fn unmount(self: *FileSystem) void {
@@ -447,13 +457,6 @@ pub const FileSystem = struct {
         };
     }
 
-    pub fn isInodeOpen(self: *FileSystem, inode_index: InodeT) bool {
-        if (self.inode_cache.check(inode_index)) |inode| {
-            return InodeCache.getEntryForInode(inode).ref_count > 0;
-        }
-        return false;
-    }
-
     /// Return the root directory inode. Should not be dropped by the caller.
     pub fn getRootInode(self: *FileSystem) *DiskInode {
         if (self.root_inode) |inode| {
@@ -463,11 +466,28 @@ pub const FileSystem = struct {
         return self.root_inode.?;
     }
 
+    /// Returns the root directory inode by value without touching the inode cache.
+    pub fn readRootInode(self: *const FileSystem) FsError!DiskInode {
+        return self.readDirectoryInode(ROOT_INODE_INDEX);
+    }
+
     pub fn getInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
         return self.inode_cache.get(self, inode_index);
     }
 
     pub fn drop(self: *FileSystem, inode: *DiskInode) void {
+        const entry = InodeCache.getEntryForInode(inode);
+        if (entry.ref_count == 1) {
+            if (inode.link_count == 0) {
+                // Inode is unlinked and has no more references; destroy it
+                self.destroyInode(inode) catch {
+                    // TODO: The inode's blocks may now be (partially) orphaned. Should at least log this.
+                };
+                self.inode_cache.flush(self, inode) catch {
+                    // TODO
+                };
+            }
+        }
         self.inode_cache.dropPtr(inode);
     }
 
@@ -732,10 +752,7 @@ pub const FileSystem = struct {
         if (self.superblock.file_count == 0) return error.Corrupt;
 
         inode.link_count -= 1;
-
-        if (inode.link_count == 0) {
-            try self.destroyInode(inode);
-        }
+        // We don't destroy the inode contents here - that happens when the last reference is dropped
         try self.inode_cache.flush(self, inode);
 
         self.superblock.file_count -= 1;
@@ -757,7 +774,7 @@ pub const FileSystem = struct {
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(dir_inode, index, &cleared);
 
-        try unlinkInode(self, inode);
+        try self.unlinkInode(inode);
     }
 
     /// Deletes an empty directory from the given directory and frees its inode and blocks.
@@ -774,7 +791,7 @@ pub const FileSystem = struct {
         var cleared: DirectoryEntry = .{};
         try self.writeDirEntry(dir_inode, index, &cleared);
 
-        try unlinkInode(self, inode);
+        try self.unlinkInode(inode);
     }
 
     fn isDirectoryEmpty(self: *FileSystem, dir_inode: *DiskInode) FsError!bool {
@@ -832,7 +849,7 @@ pub const FileSystem = struct {
     }
 
     /// Looks up a named entry in the given directory; returns its slot index and the entry itself.
-    pub fn findDirEntryAndIndex(self: *const FileSystem, dir_inode: *DiskInode, name: []const u8) FsError!?struct { u32, DirectoryEntry } {
+    pub fn findDirEntryAndIndex(self: *const FileSystem, dir_inode: *const DiskInode, name: []const u8) FsError!?struct { u32, DirectoryEntry } {
         if (!validateName(name)) return error.InvalidName;
 
         var index: usize = 0;
@@ -849,7 +866,7 @@ pub const FileSystem = struct {
     }
 
     /// Looks up a named entry in the given directory.
-    fn findDirEntry(self: *const FileSystem, dir_inode: *DiskInode, name: []const u8) FsError!?DirectoryEntry {
+    fn findDirEntry(self: *const FileSystem, dir_inode: *const DiskInode, name: []const u8) FsError!?DirectoryEntry {
         if (try self.findDirEntryAndIndex(dir_inode, name)) |result| {
             return result.@"1";
         } else {
@@ -860,6 +877,18 @@ pub const FileSystem = struct {
     pub fn findDirEntryInode(self: *FileSystem, dir_inode: *DiskInode, name: []const u8) FsError!?*DiskInode {
         if (try self.findDirEntry(dir_inode, name)) |entry| {
             return self.inode_cache.get(self, entry.inode_index);
+        } else {
+            return null;
+        }
+    }
+
+    /// Looks up a named entry and returns its validated inode by value without using the inode cache.
+    pub fn findDirEntryInodeReadOnly(self: *const FileSystem, dir_inode: *const DiskInode, name: []const u8) FsError!?DiskInode {
+        if (try self.findDirEntry(dir_inode, name)) |entry| {
+            var inode = try self.readInode(entry.inode_index);
+            try self.validateInode(&inode);
+            if (inode.kind != entry.kind) return error.Corrupt;
+            return inode;
         } else {
             return null;
         }
@@ -902,7 +931,7 @@ pub const FileSystem = struct {
 
     fn getFileInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
         const inode = try self.inode_cache.get(self, inode_index);
-        errdefer self.inode_cache.drop(inode_index);
+        errdefer self.drop(inode);
 
         switch (inode.kind) {
             .Regular, .CharDevice, .BlockDevice => return inode,
@@ -920,7 +949,7 @@ pub const FileSystem = struct {
 
     fn getDirectoryInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
         const inode = try self.inode_cache.get(self, inode_index);
-        errdefer self.inode_cache.drop(inode_index);
+        errdefer self.drop(inode);
 
         if (inode.kind != .Directory) return error.NotADirectory;
         return inode;
@@ -1099,9 +1128,10 @@ pub const FileSystem = struct {
         }
     }
 
+    /// Free all data blocks used by the inode and reset it to free state
     fn destroyInode(self: *FileSystem, inode: *DiskInode) FsError!void {
         try self.allocBlockTree(inode, 0);
-        inode.* = .{};
+        inode.* = .{}; // Reset the inode to the default free state
     }
 
     fn readInode(self: *const FileSystem, inode_index: InodeT) FsError!DiskInode {

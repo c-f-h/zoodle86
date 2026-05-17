@@ -88,7 +88,6 @@ pub fn main(init: std.process.Init) !void {
     var fbd = file_block_device.FileBlockDevice.init(image_file, init.io, @intCast(file_size / block_device.BLOCK_SIZE));
     var disk_fs = try fs.FileSystem.mount(&fbd.block_dev, init.gpa);
     defer disk_fs.unmount();
-    try disk_fs.initCache();
 
     //try stdout.print("Filesystem info:\n", .{});
     //try stdout.print("  File count: {d}\n", .{disk_fs.fileCount()});

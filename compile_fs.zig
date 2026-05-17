@@ -277,7 +277,6 @@ pub fn main(init: std.process.Init) !void {
     try fs.FileSystem.format(&fbd.block_dev);
     var disk_fs = try fs.FileSystem.mount(&fbd.block_dev, init.gpa);
     defer disk_fs.unmount();
-    try disk_fs.initCache();
 
     try stdout.print("Writing filesystem contents...\n", .{});
     var counts: ImportCounts = .{};
