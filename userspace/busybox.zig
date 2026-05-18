@@ -85,7 +85,28 @@ fn catMain(argv: []const []const u8) noreturn {
 // ---------------------------------------------------------------------------
 
 fn lsEntryTag(kind: sys.InodeKind) []const u8 {
-    return if (kind == .Directory) "(DIR)" else ".....";
+    return switch (kind) {
+        .Directory => "DIR",
+        .CharDevice => "CHAR",
+        .BlockDevice => "BLOCK",
+        .Pipe => "PIPE",
+        .Symlink => "LINK",
+        else => "FILE",
+    };
+}
+
+const ansi_reset = "\x1B[0m";
+const ansi_bold = "\x1B[1m";
+
+fn lsEntryColor(kind: sys.InodeKind) []const u8 {
+    return switch (kind) {
+        .Directory => "\x1B[94m",
+        .CharDevice => "\x1B[96m",
+        .BlockDevice => "\x1B[93m",
+        .Pipe => "\x1B[95m",
+        .Symlink => "\x1B[95m",
+        else => ansi_reset,
+    };
 }
 
 fn lsDisplayName(path: []const u8) []const u8 {
@@ -103,13 +124,22 @@ fn lsBaseName(path: []const u8) []const u8 {
 }
 
 fn lsPrintEntry(name: []const u8, kind: sys.InodeKind, size: u32) bool {
-    var buf: [96]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, " {s:<16} {s:5} {d:>7}\n", .{
-        name,
+    sys.writeAll(sys.STDOUT, " ") catch return false;
+    sys.writeAll(sys.STDOUT, lsEntryColor(kind)) catch return false;
+    sys.writeAll(sys.STDOUT, name) catch return false;
+    sys.writeAll(sys.STDOUT, ansi_reset) catch return false;
+
+    const padding: [16]u8 = @splat(' ');
+    if (name.len < 16) {
+        sys.writeAll(sys.STDOUT, padding[0 .. 16 - name.len]) catch return false;
+    }
+
+    var buf: [48]u8 = undefined;
+    const suffix = std.fmt.bufPrint(&buf, " {s:5} {d:>7}\n", .{
         lsEntryTag(kind),
         size,
     }) catch return false;
-    sys.writeAll(sys.STDOUT, line) catch return false;
+    sys.writeAll(sys.STDOUT, suffix) catch return false;
     return true;
 }
 
@@ -153,10 +183,13 @@ fn lsMain(argv: []const []const u8) noreturn {
             if (index != 0) sys.writeAll(sys.STDOUT, "\n") catch {
                 ok = false;
             };
+            sys.writeAll(sys.STDOUT, ansi_bold) catch {
+                ok = false;
+            };
             sys.writeAll(sys.STDOUT, lsDisplayName(path)) catch {
                 ok = false;
             };
-            sys.writeAll(sys.STDOUT, ":\n") catch {
+            sys.writeAll(sys.STDOUT, ansi_reset ++ ":\n") catch {
                 ok = false;
             };
         }

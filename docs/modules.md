@@ -28,15 +28,15 @@ Complete listing of every source file and its role.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
 - `kernel/waitqueue.zig`: intrusive singly-linked WaitQueue; tasks blocked on an event are added as heap-allocated nodes and freed when woken via `wakeOne`/`wakeAll`.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek`/`moveFile` descriptor semantics layered over filesystem files, generic character devices, and pipe endpoints.
-- `kernel/tty.zig`: console-backed canonical tty devices with cooked line input, echo/backspace handling, and an embedded `CharDevice` interface for fd I/O.
-- `kernel/ansi.zig`: decodes ANSI escape sequences and translates them into console commands.
+- `kernel/tty.zig`: console-backed canonical tty devices with cooked line input, ANSI-capable output, simple echo/backspace handling, and an embedded `CharDevice` interface for fd I/O.
+- `kernel/ansi.zig`: low-level incremental ANSI/VT100 escape parser that tokenizes ESC/CSI sequences for higher-level consumers such as `console.zig`.
 - `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
 - `kernel/ringbuf.zig`: fixed-capacity byte ring buffer used by the pipe implementation.
 - `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode.
 
 ## Console & Input/Output
 
-- `kernel/console.zig`: instantiable high-level console (`Console` struct) with scrolling, cursor management, hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering. Module-level wrapper functions (`console.puts()`, etc.) delegate to the `console.primary` instance so existing callers are undisturbed. Each `Console` holds an optional `vconsole_instance` pointer so multiple independent consoles can render to separate `VConsole`/`Window` panel pairs on the framebuffer.
+- `kernel/console.zig`: instantiable high-level console (`Console` struct) with scrolling, cursor management, terminal-action handling for parsed ANSI/VT100 sequences (cursor movement, erase, visibility, and basic SGR colours), hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering. Module-level wrapper functions (`console.puts()`, etc.) delegate to the `console.primary` instance so existing callers are undisturbed. Each `Console` holds an optional `vconsole_instance` pointer so multiple independent consoles can render to separate `VConsole`/`Window` panel pairs on the framebuffer.
 - `kernel/serial.zig`: COM1 serial driver for debug output and exception logging to the host via Bochs.
 - `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write and hardware cursor control for the text-mode console backend.
 - `kernel/keyboard.zig`: scancode-to-keycode conversion, extended key support, modifier tracking, ASCII conversion.

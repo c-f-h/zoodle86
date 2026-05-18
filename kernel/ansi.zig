@@ -1,111 +1,123 @@
-const console = @import("console.zig");
+const EscState = enum {
+    normal,
+    esc,
+    csi,
+};
 
-const EscState = enum { normal, esc, csi };
+/// Parsed CSI sequence containing the final byte and numeric parameters.
+pub const Csi = struct {
+    private: bool = false,
+    params: [8]u32 = .{ 0, 0, 0, 0, 0, 0, 0, 0 },
+    param_count: u8 = 1,
+    final: u8 = 0,
 
-pub const Ansi = struct {
-    // ANSI escape sequence parser state
+    /// Returns the number of parsed CSI parameters, treating an empty list as a single zero.
+    pub fn count(self: *const Csi) usize {
+        return self.param_count;
+    }
+
+    /// Returns the CSI parameter at `index`, or `fallback` when it was not present.
+    pub fn param(self: *const Csi, index: usize, fallback: u32) u32 {
+        if (index >= self.param_count) return fallback;
+        return self.params[index];
+    }
+};
+
+/// Completed ANSI escape sequence emitted by the incremental parser.
+pub const Sequence = union(enum) {
+    save_cursor,
+    restore_cursor,
+    csi: Csi,
+};
+
+/// Incremental ANSI/VT100 parser for ESC and CSI sequences.
+pub const Parser = struct {
     esc_state: EscState = .normal,
     csi_private: bool = false,
-    csi_params: [4]u32 = .{ 0, 0, 0, 0 },
+    csi_params: [8]u32 = .{ 0, 0, 0, 0, 0, 0, 0, 0 },
     csi_param_count: u8 = 0,
     csi_cur: u32 = 0,
-    console: *console.Console,
 
-    /// Write bytes to the tty, interpreting ANSI escape sequences to update the console.
-    pub fn puts(self: *Ansi, src: []const u8) usize {
-        var i: usize = 0;
-        while (i < src.len) {
-            // Write everything up to the next escape byte in one chunk (performance)
-            if (self.esc_state == .normal and src[i] != 0x1B) {
-                const start = i;
-                while (i < src.len and src[i] != 0x1B) : (i += 1) {}
-                self.console.puts(src[start..i]);
-                continue;
-            }
-
-            self.putch(src[i]);
-            i += 1;
-        }
-        return src.len;
+    /// Resets the parser to its initial state, discarding any partial sequence.
+    pub fn reset(self: *Parser) void {
+        self.esc_state = .normal;
+        self.csi_private = false;
+        self.csi_params = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
+        self.csi_param_count = 0;
+        self.csi_cur = 0;
     }
 
-    fn putch(self: *Ansi, ch: u8) void {
-        if (self.esc_state != .normal or ch == 0x1B) {
-            self.processEscapeByte(ch);
-            return;
-        }
-        self.console.putch(ch);
+    /// Returns whether the parser is currently in the middle of an escape sequence.
+    pub fn isActive(self: *const Parser) bool {
+        return self.esc_state != .normal;
     }
 
-    /// Processes one byte of an ANSI/VT100 escape sequence, updating parser state.
-    fn processEscapeByte(self: *Ansi, ch: u8) void {
+    /// Consumes one byte and returns a completed escape sequence when one finishes.
+    pub fn processByte(self: *Parser, ch: u8) ?Sequence {
         switch (self.esc_state) {
             .normal => {
-                // ch == 0x1B (ESC) guaranteed by caller
-                self.esc_state = .esc;
+                if (ch == 0x1B) {
+                    self.esc_state = .esc;
+                }
+                return null;
             },
-            .esc => {
-                if (ch == '[') {
+            .esc => switch (ch) {
+                '[' => {
                     self.esc_state = .csi;
                     self.csi_private = false;
-                    self.csi_params = .{ 0, 0, 0, 0 };
+                    self.csi_params = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
                     self.csi_param_count = 0;
                     self.csi_cur = 0;
-                } else {
-                    self.esc_state = .normal; // unknown sequence; reset
-                }
+                    return null;
+                },
+                '7' => {
+                    self.reset();
+                    return .save_cursor;
+                },
+                '8' => {
+                    self.reset();
+                    return .restore_cursor;
+                },
+                else => {
+                    self.reset();
+                    return null;
+                },
             },
             .csi => {
                 if (ch >= '0' and ch <= '9') {
                     self.csi_cur = self.csi_cur * 10 + (ch - '0');
-                } else if (ch == ';') {
+                    return null;
+                }
+
+                if (ch == ';') {
                     if (self.csi_param_count < self.csi_params.len) {
                         self.csi_params[self.csi_param_count] = self.csi_cur;
                         self.csi_param_count += 1;
                     }
                     self.csi_cur = 0;
-                } else if (ch == '?') {
+                    return null;
+                }
+
+                if (ch == '?') {
                     self.csi_private = true;
-                } else {
-                    // Final byte: dispatch and reset
-                    self.dispatchCsi(ch);
-                    self.esc_state = .normal;
-                    self.csi_private = false;
+                    return null;
                 }
-            },
-        }
-    }
 
-    /// Handles the final byte of a CSI sequence (e.g. 'H', 'l', 'h').
-    fn dispatchCsi(self: *Ansi, ch: u8) void {
-        // Save the last accumulated parameter
-        if (self.csi_param_count < self.csi_params.len) {
-            self.csi_params[self.csi_param_count] = self.csi_cur;
-        }
-        const p0 = self.csi_params[0];
-        const p1 = self.csi_params[1];
-        const nparams: u32 = self.csi_param_count + 1;
+                if (self.csi_param_count < self.csi_params.len) {
+                    self.csi_params[self.csi_param_count] = self.csi_cur;
+                }
 
-        switch (ch) {
-            'H', 'f' => {
-                // CUP / HVP: ESC[row;colH — 1-indexed, 0 treated as 1
-                const r: u32 = if (p0 > 0) p0 - 1 else 0;
-                const c: u32 = if (nparams >= 2 and p1 > 0) p1 - 1 else 0;
-                self.console.setCursor(r, c);
+                const seq = Sequence{
+                    .csi = .{
+                        .private = self.csi_private,
+                        .params = self.csi_params,
+                        .param_count = @intCast(@min(self.csi_param_count + 1, self.csi_params.len)),
+                        .final = ch,
+                    },
+                };
+                self.reset();
+                return seq;
             },
-            'l' => {
-                // DEC private mode reset: ESC[?25l → hide cursor
-                if (self.csi_private and p0 == 25) {
-                    self.console.setCursorVisible(false);
-                }
-            },
-            'h' => {
-                // DEC private mode set: ESC[?25h → show cursor
-                if (self.csi_private and p0 == 25) {
-                    self.console.setCursorVisible(true);
-                }
-            },
-            else => {},
         }
     }
 };

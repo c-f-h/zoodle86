@@ -1,7 +1,6 @@
 const abi = @import("abi");
 const char_device = @import("char_device.zig");
 const console = @import("console.zig");
-const ansi = @import("ansi.zig");
 const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");
 const ringbuf = @import("ringbuf.zig");
@@ -12,16 +11,13 @@ const CharDevice = char_device.CharDevice;
 
 pub const CANON_LINE_MAX = 256;
 const COOKED_BUF_SIZE = 4096;
+const esc_show_cursor = "\x1B[?25h";
+const esc_hide_cursor = "\x1B[?25l";
 
 /// Tty operating mode.
 pub const Mode = enum {
     canonical,
     raw,
-};
-
-const CursorPos = struct {
-    row: u32,
-    col: u32,
 };
 
 /// A tty bound to one console, operating in canonical or raw mode.
@@ -43,10 +39,6 @@ pub const Tty = struct {
     line_buf: [CANON_LINE_MAX]u8 = undefined,
     // Length of the current line in `line_buf`
     line_len: usize = 0,
-    // Stores the screen position directly after typing each individual character in line_buf
-    echo_positions: [CANON_LINE_MAX + 1]CursorPos = undefined,
-    // ANSI sequence parser
-    ansi: ansi.Ansi = undefined,
 
     const vtable = CharDevice.VTable{
         .read = charDeviceRead,
@@ -68,10 +60,6 @@ pub const Tty = struct {
             .cooked = try ringbuf.RingBuf.init(allocator, COOKED_BUF_SIZE),
             .read_waiters = waitqueue.WaitQueue.init(allocator),
             .available = true,
-        };
-        self.echo_positions[0] = self.cursorPos();
-        self.ansi = ansi.Ansi{
-            .console = con,
         };
     }
 
@@ -102,7 +90,7 @@ pub const Tty = struct {
                 },
             }
             // No data available; show cursor and wait for user input
-            self.console.setCursorVisible(true);
+            _ = self.console.write(esc_show_cursor);
             try task.getCurrentTask().waitInQueue(&self.read_waiters);
             _ = kernel.kernel_yield();
         }
@@ -110,7 +98,7 @@ pub const Tty = struct {
 
     /// Write bytes to the tty, interpreting ANSI escape sequences to update the console.
     pub fn write(self: *Tty, src: []const u8) usize {
-        return self.ansi.puts(src);
+        return self.console.write(src);
     }
 
     /// Return the cooked-buffer capacity used for stat metadata.
@@ -152,9 +140,8 @@ pub const Tty = struct {
 
                 switch (ev.keycode) {
                     keyboard.VK_ENTER => {
-                        self.echoNewline();
                         self.commitLine(true);
-                        self.console.setCursorVisible(false);
+                        _ = self.console.write(esc_hide_cursor ++ "\n");
                     },
                     keyboard.VK_BACKSPACE => self.handleBackspace(),
                     else => {
@@ -232,28 +219,16 @@ pub const Tty = struct {
 
     fn handlePrintable(self: *Tty, ch: u8) void {
         if (self.line_len >= CANON_LINE_MAX) return;
-        if (self.line_len == 0) {
-            self.echo_positions[0] = self.cursorPos();
-        }
-
         self.line_buf[self.line_len] = ch;
         self.line_len += 1;
-        self.console.putch(ch);
-        self.echo_positions[self.line_len] = self.cursorPos();
+        var out = [1]u8{ch};
+        _ = self.console.write(&out);
     }
 
     fn handleBackspace(self: *Tty) void {
         if (self.line_len == 0) return;
-
         self.line_len -= 1;
-        // Find cursor position after the previous character
-        const pos = self.echo_positions[self.line_len];
-        self.console.putCharAt(pos.row, pos.col, ' ', self.console.attr);
-        self.console.setCursor(pos.row, pos.col);
-    }
-
-    fn echoNewline(self: *Tty) void {
-        self.console.newline();
+        _ = self.console.write("\x08 \x08");
     }
 
     fn commitLine(self: *Tty, include_newline: bool) void {
@@ -264,12 +239,6 @@ pub const Tty = struct {
         if (include_newline) {
             _ = self.cooked.write("\n");
         }
-        self.echo_positions[0] = self.cursorPos();
         _ = self.read_waiters.wakeOne(0);
-    }
-
-    fn cursorPos(self: *const Tty) CursorPos {
-        const row, const col = self.console.getCursorPos();
-        return .{ .row = row, .col = col };
     }
 };

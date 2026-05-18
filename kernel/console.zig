@@ -1,3 +1,4 @@
+const ansi = @import("ansi.zig");
 const paging = @import("paging.zig");
 const serial = @import("serial.zig");
 const vconsole = @import("gfx/vconsole.zig");
@@ -31,6 +32,7 @@ pub const Console = struct {
     row: u32 = 0,
     col: u32 = 0,
     attr: u8 = 0x07,
+    default_attr: u8 = 0x07,
     serial_mirror_enabled: bool = false,
     cursor_visible: bool = true,
     backend: Backend = .vga,
@@ -38,9 +40,16 @@ pub const Console = struct {
     cells: [*]u16 = undefined, // points to VGA memory or a cell buffer depending on backend
     cell_buffer: []Cell = &.{}, // allocated when switching to framebuf backend
     vconsole_instance: ?*vconsole.VConsole = null,
+    saved_row: u32 = 0,
+    saved_col: u32 = 0,
+    ansi_parser: ansi.Parser = .{},
 
     inline fn cellIndex(self: *const Console, row: u32, col: u32) usize {
         return row * self.width + col;
+    }
+
+    fn resetAnsiParser(self: *Console) void {
+        self.ansi_parser.reset();
     }
 
     /// If required by the backend, redraw the full console grid.
@@ -118,9 +127,13 @@ pub const Console = struct {
         self.height = VGA_TEXT_HEIGHT;
         self.cell_count = self.width * self.height;
         self.attr = attr;
+        self.default_attr = attr;
         self.row = 0;
         self.col = 0;
+        self.saved_row = 0;
+        self.saved_col = 0;
         self.cursor_visible = true;
+        self.resetAnsiParser();
         self.clearCells(attr);
     }
 
@@ -147,6 +160,43 @@ pub const Console = struct {
 
     pub fn setAttr(self: *Console, attr: u8) void {
         self.attr = attr;
+    }
+
+    fn setFgAttr(self: *Console, attr: u8) void {
+        self.attr = (self.attr & 0xF0) | (attr & 0x0F);
+    }
+
+    fn setBgAttr(self: *Console, attr: u8) void {
+        self.attr = (self.attr & 0x0F) | ((attr & 0x0F) << 4);
+    }
+
+    fn ansiColorToAttr(color: u32, bright: bool) u8 {
+        const ansi_to_vga = [_]u8{
+            0, // black
+            4, // red
+            2, // green
+            6, // yellow/brown
+            1, // blue
+            5, // magenta
+            3, // cyan
+            7, // white
+        };
+        return ansi_to_vga[color & 0x7] | if (bright) @as(u8, 0x08) else 0;
+    }
+
+    fn applySgrParam(self: *Console, param: u32) void {
+        switch (param) {
+            0 => self.attr = self.default_attr,
+            1 => self.setFgAttr((self.attr & 0x0F) | 0x08),
+            22 => self.setFgAttr(self.attr & 0x07),
+            30...37 => self.setFgAttr(ansiColorToAttr(param - 30, false)),
+            39 => self.setFgAttr(self.default_attr & 0x0F),
+            40...47 => self.setBgAttr(ansiColorToAttr(param - 40, false)),
+            49 => self.setBgAttr((self.default_attr >> 4) & 0x0F),
+            90...97 => self.setFgAttr(ansiColorToAttr(param - 90, true)),
+            100...107 => self.setBgAttr(ansiColorToAttr(param - 100, true)),
+            else => {},
+        }
     }
 
     /// Show or hide the active console cursor.
@@ -254,6 +304,7 @@ pub const Console = struct {
         self.cells = self.cell_buffer.ptr;
         if (self.row >= self.height) self.row = self.height - 1;
         if (self.col >= self.width) self.col = self.width - 1;
+        self.resetAnsiParser();
     }
 
     /// Initialise as a fresh framebuffer-backed console
@@ -269,7 +320,11 @@ pub const Console = struct {
         self.cells = self.cell_buffer.ptr;
         self.row = 0;
         self.col = 0;
+        self.saved_row = 0;
+        self.saved_col = 0;
         self.cursor_visible = false;
+        self.default_attr = self.attr;
+        self.resetAnsiParser();
     }
 
     pub fn deinit(self: *Console, allocator: std.mem.Allocator) void {
@@ -285,6 +340,7 @@ pub const Console = struct {
         @memset(bootstrap_buffer[0..], makeCell(' ', self.attr));
         self.backend = .buffered;
         self.cells = &bootstrap_buffer;
+        self.resetAnsiParser();
     }
 
     fn newlineInternal(self: *Console, sync_cursor: bool) void {
@@ -313,6 +369,19 @@ pub const Console = struct {
                 if (sync_cursor) self.syncCursor();
                 return;
             },
+            '\x08' => {
+                if (self.serial_mirror_enabled and serial.isInitialized()) {
+                    serial.putch(ch);
+                }
+                if (self.col > 0) {
+                    self.col -= 1;
+                } else if (self.row > 0) {
+                    self.row -= 1;
+                    self.col = self.width - 1;
+                }
+                if (sync_cursor) self.syncCursor();
+                return;
+            },
             else => {},
         }
 
@@ -327,11 +396,7 @@ pub const Console = struct {
         if (sync_cursor) self.syncCursor();
     }
 
-    pub fn putch(self: *Console, ch: u8) void {
-        self.putchInternal(ch, true);
-    }
-
-    pub fn puts(self: *Console, s: []const u8) void {
+    fn putsRaw(self: *Console, s: []const u8) void {
         if (self.backend == .framebuf and s.len > 1) {
             // Hide the cursor while rendering a string, then restore it at the end (performance)
             const old_cursor_visible = self.cursor_visible;
@@ -348,6 +413,139 @@ pub const Console = struct {
         }
         for (s) |ch| {
             self.putchInternal(ch, true);
+        }
+    }
+
+    pub fn putch(self: *Console, ch: u8) void {
+        if (self.ansi_parser.isActive() or ch == 0x1B) {
+            if (self.ansi_parser.processByte(ch)) |seq| {
+                self.dispatchSequence(seq);
+            }
+            return;
+        }
+        self.putchInternal(ch, true);
+    }
+
+    /// Write bytes to the console while interpreting ANSI escape sequences inline.
+    pub fn write(self: *Console, s: []const u8) usize {
+        var i: usize = 0;
+        while (i < s.len) {
+            if (!self.ansi_parser.isActive() and s[i] != 0x1B) {
+                const start = i;
+                while (i < s.len and s[i] != 0x1B) : (i += 1) {}
+                self.putsRaw(s[start..i]);
+                continue;
+            }
+
+            self.putch(s[i]);
+            i += 1;
+        }
+        return s.len;
+    }
+
+    pub fn puts(self: *Console, s: []const u8) void {
+        _ = self.write(s);
+    }
+
+    fn dispatchSequence(self: *Console, seq: ansi.Sequence) void {
+        switch (seq) {
+            .save_cursor => {
+                self.saved_row = self.row;
+                self.saved_col = self.col;
+            },
+            .restore_cursor => self.setCursor(self.saved_row, self.saved_col),
+            .csi => |csi| self.dispatchCsi(&csi),
+        }
+    }
+
+    fn clearCellRange(self: *Console, start: usize, end: usize) void {
+        if (start >= end or start >= self.cell_count) return;
+        const safe_end = @min(end, self.cell_count);
+        @memset(self.cells[start..safe_end], makeCell(' ', self.attr));
+        if (self.backend == .framebuf) {
+            self.refresh();
+        }
+    }
+
+    fn eraseInLine(self: *Console, mode: u32) void {
+        const row_start = self.cellIndex(self.row, 0);
+        switch (mode) {
+            0 => self.clearCellRange(self.cellIndex(self.row, self.col), row_start + self.width),
+            1 => self.clearCellRange(row_start, self.cellIndex(self.row, self.col) + 1),
+            2 => self.clearCellRange(row_start, row_start + self.width),
+            else => {},
+        }
+    }
+
+    fn eraseInDisplay(self: *Console, mode: u32) void {
+        switch (mode) {
+            0 => self.clearCellRange(self.cellIndex(self.row, self.col), self.cell_count),
+            1 => self.clearCellRange(0, self.cellIndex(self.row, self.col) + 1),
+            2 => self.clearCellRange(0, self.cell_count),
+            else => {},
+        }
+    }
+
+    fn moveCursorUp(self: *Console, count: u32) void {
+        self.setCursor(self.row -| count, self.col);
+    }
+
+    fn moveCursorDown(self: *Console, count: u32) void {
+        self.setCursor(@min(self.row + count, self.height - 1), self.col);
+    }
+
+    fn moveCursorForward(self: *Console, count: u32) void {
+        self.setCursor(self.row, @min(self.col + count, self.width - 1));
+    }
+
+    fn moveCursorBack(self: *Console, count: u32) void {
+        self.setCursor(self.row, self.col -| count);
+    }
+
+    fn dispatchCsi(self: *Console, csi: *const ansi.Csi) void {
+        const p0 = csi.param(0, 0);
+        const p1 = csi.param(1, 0);
+
+        switch (csi.final) {
+            'A' => self.moveCursorUp(if (p0 == 0) 1 else p0),
+            'B' => self.moveCursorDown(if (p0 == 0) 1 else p0),
+            'C' => self.moveCursorForward(if (p0 == 0) 1 else p0),
+            'D' => self.moveCursorBack(if (p0 == 0) 1 else p0),
+            'G' => self.setCursor(self.row, if (p0 > 0) p0 - 1 else 0),
+            'H', 'f' => self.setCursor(
+                if (p0 > 0) p0 - 1 else 0,
+                if (csi.count() >= 2 and p1 > 0) p1 - 1 else 0,
+            ),
+            'J' => self.eraseInDisplay(p0),
+            'K' => self.eraseInLine(p0),
+            'm' => {
+                var i: usize = 0;
+                while (i < csi.count()) : (i += 1) {
+                    self.applySgrParam(csi.params[i]);
+                }
+            },
+            's' => {
+                if (!csi.private) {
+                    self.saved_row = self.row;
+                    self.saved_col = self.col;
+                }
+            },
+            'u' => {
+                if (!csi.private) {
+                    self.setCursor(self.saved_row, self.saved_col);
+                }
+            },
+            'h' => {
+                if (csi.private and p0 == 25) {
+                    self.setCursorVisible(true);
+                }
+            },
+            'l' => {
+                if (csi.private and p0 == 25) {
+                    self.setCursorVisible(false);
+                }
+            },
+            else => {},
         }
     }
 

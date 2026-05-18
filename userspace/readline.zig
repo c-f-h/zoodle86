@@ -85,7 +85,7 @@ pub const Readline = struct {
                 sys.VK_LEFT => self.moveWordLeft(), // Ctrl-Left: previous word
                 sys.VK_RIGHT => self.moveWordRight(), // Ctrl-Right: next word
                 sys.VK_K => self.killToEol(), // Ctrl-K: kill to end
-                sys.VK_U => self.killLine(), // Ctrl-U: kill whole line
+                sys.VK_U => self.killFromStart(), // Ctrl-U: kill up to cursor
                 sys.VK_D => { // Ctrl-D: delete forward or EOF
                     if (self.len == 0) return error.EOF;
                     self.deleteForward();
@@ -162,11 +162,17 @@ pub const Readline = struct {
         self.redrawFrom(redraw_start);
     }
 
-    fn killLine(self: *Readline) void {
-        const redraw_start = if (self.cursor < self.len) self.cursor else self.len;
+    fn killFromStart(self: *Readline) void {
+        if (self.cursor == 0) return;
+
+        const remaining = self.len - self.cursor;
+        var i: u32 = 0;
+        while (i < remaining) : (i += 1) {
+            self.buf[i] = self.buf[self.cursor + i];
+        }
+        self.len = remaining;
         self.cursor = 0;
-        self.len = 0;
-        self.redrawFrom(redraw_start);
+        self.redrawFrom(0);
     }
 
     fn moveLeft(self: *Readline) void {
