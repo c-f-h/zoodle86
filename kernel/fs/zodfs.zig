@@ -287,7 +287,7 @@ fn makeDefaultSuperblock(layout: Layout) Superblock {
 }
 
 /// Validates a mounted superblock against the expected derived layout.
-pub fn isValidSuperblock(superblock: *const Superblock) bool {
+fn isValidSuperblock(superblock: *const Superblock) bool {
     const layout = computeLayout(superblock.fs_sector_count) orelse return false;
 
     return std.mem.eql(u8, superblock.magic[0..], MAGIC[0..]) and
@@ -340,9 +340,8 @@ pub const FsError = error{
     SystemFileTableFull,
     OutOfMemory,
     AccessDenied,
+    TooManySymlinks,
 } || block_device.BlockError;
-
-pub const ReadFileError = FsError || error{OutOfMemory};
 
 const MAX_FILE_BLOCK_COUNT: usize = DIRECT_BLOCK_COUNT + POINTERS_PER_INDIRECT_BLOCK + POINTERS_PER_INDIRECT_BLOCK * POINTERS_PER_INDIRECT_BLOCK;
 
@@ -409,7 +408,7 @@ pub const FileSystem = struct {
     }
 
     /// Formats the filesystem region with the current inode-based layout.
-    pub fn formatFs(self: *FileSystem) FsError!void {
+    fn formatFs(self: *FileSystem) FsError!void {
         const fs_sector_count = self.block_dev.block_count - FS_START_LBA;
         const layout = computeLayout(fs_sector_count) orelse return error.NoSpace;
         self.superblock = makeDefaultSuperblock(layout);
@@ -471,10 +470,12 @@ pub const FileSystem = struct {
         return self.readDirectoryInode(ROOT_INODE_INDEX);
     }
 
+    /// Returns the inode at `inode_index`, loading it from disk if not yet cached.
     pub fn getInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
         return self.inode_cache.get(self, inode_index);
     }
 
+    /// Drops a reference to the given inode.
     pub fn drop(self: *FileSystem, inode: *DiskInode) void {
         const entry = InodeCache.getEntryForInode(inode);
         if (entry.ref_count == 1) {
@@ -491,21 +492,15 @@ pub const FileSystem = struct {
         self.inode_cache.dropPtr(inode);
     }
 
+    /// Increments the reference count of the given inode and returns it.
     pub fn dup(_: *FileSystem, inode: *DiskInode) *DiskInode {
         const entry = InodeCache.getEntryForInode(inode);
         entry.ref_count += 1;
         return inode;
     }
 
-    pub fn getInodeIndex(_: *FileSystem, inode: *DiskInode) InodeT {
+    fn getInodeIndex(_: *FileSystem, inode: *DiskInode) InodeT {
         return InodeCache.getEntryForInode(inode).inode_index;
-    }
-
-    /// Returns stat-like metadata for the object referenced by `path`.
-    pub fn statPath(self: *FileSystem, path: []const u8) FsError!Stat {
-        const inode = try self.getInodeAtPath(path);
-        defer self.drop(inode);
-        return self.statInode(inode);
     }
 
     fn createFileInternal(self: *FileSystem, dir_inode: *DiskInode, name: []const u8, kind: InodeKind, size: u32, device: abi.Device) FsError!*DiskInode {
@@ -556,7 +551,7 @@ pub const FileSystem = struct {
         if ((try self.findDirEntry(dir_inode, name)) != null) return error.FileExists;
 
         switch (target_inode.kind) {
-            .Regular, .CharDevice, .BlockDevice => {},
+            .Regular, .CharDevice, .BlockDevice, .Symlink => {},
             else => return error.NotAFile,
         }
 
@@ -574,16 +569,18 @@ pub const FileSystem = struct {
         try self.writeSuperblock();
     }
 
-    /// Creates a new directory with the given full path and returns its inode index.
-    pub fn createDirectory(self: *FileSystem, path: []const u8) FsError!*DiskInode {
-        const split = splitPath(path);
-        const dir_inode = try self.getInodeAtPath(split.dir);
-        defer self.drop(dir_inode);
-        return self.createDirectoryAt(dir_inode, split.name);
+    /// Creates a new symbolic link whose inode stores the raw target path bytes.
+    pub fn createSymlink(self: *FileSystem, dir_inode: *DiskInode, name: []const u8, target_path: []const u8) FsError!void {
+        if (target_path.len == 0) return error.InvalidName;
+
+        const inode = try self.createFileInternal(dir_inode, name, InodeKind.Symlink, @intCast(target_path.len), .{});
+        defer self.drop(inode);
+
+        try self.writeToInodeAtOffset(inode, 0, target_path, true);
     }
 
     /// Creates a new empty directory in the given directory and returns its inode index.
-    pub fn createDirectoryAt(self: *FileSystem, dir_inode: *DiskInode, name: []const u8) FsError!*DiskInode {
+    pub fn createDirectory(self: *FileSystem, dir_inode: *DiskInode, name: []const u8) FsError!*DiskInode {
         return self.createFileInternal(dir_inode, name, InodeKind.Directory, ROOT_DIRECTORY_BYTES, .{});
     }
 
@@ -593,24 +590,6 @@ pub const FileSystem = struct {
     }
 
     //////////// FILE READING ////////////
-
-    /// Reads an entire regular file, given by its full path, into allocator-owned memory.
-    pub fn getFileContents(self: *FileSystem, allocator: std.mem.Allocator, path: []const u8) ReadFileError![]u8 {
-        const inode = try self.getInodeAtPath(path);
-        defer self.drop(inode);
-        return self.readInodeContents(allocator, inode);
-    }
-
-    pub fn readInodeContents(self: *const FileSystem, allocator: std.mem.Allocator, inode: *const DiskInode) ReadFileError![]u8 {
-        if (inode.size_bytes == 0) {
-            return allocator.alloc(u8, 0);
-        }
-
-        const data = try allocator.alloc(u8, @intCast(inode.size_bytes));
-        errdefer allocator.free(data);
-        _ = try self.readInodeAt(inode, 0, data);
-        return data;
-    }
 
     /// Reads bytes from a file identified directly by inode number.
     pub fn readInodeAt(self: *const FileSystem, inode: *const DiskInode, offset: u32, dest: []u8) FsError!usize {
@@ -646,14 +625,6 @@ pub const FileSystem = struct {
         }
         const inode_index = try self.walkPathToInodeIndex(self.getRootInode(), path);
         return self.inode_cache.get(self, inode_index);
-    }
-
-    /// Creates or overwrites a file with the given path with the provided full contents.
-    pub fn writeFileContents(self: *FileSystem, path: []const u8, data: []const u8) FsError!void {
-        const split = splitPath(path);
-        const dir_inode = try self.getInodeAtPath(split.dir);
-        defer self.drop(dir_inode);
-        try self.writeFileAt(dir_inode, split.name, data);
     }
 
     /// Creates or overwrites a file in the given directory with the provided full contents.
@@ -723,20 +694,11 @@ pub const FileSystem = struct {
         return entry.inode_index;
     }
 
-    /// Returns true if a file or directory exists at the given path, false if not found.
-    pub fn pathExists(self: *FileSystem, path: []const u8) FsError!bool {
-        _ = self.walkPathToInodeIndex(self.getRootInode(), path) catch |err| switch (err) {
-            error.FileNotFound => return false,
-            else => return err,
-        };
-        return true;
-    }
-
     /// Increments the link count of a non-directory inode.
     fn linkInode(self: *FileSystem, inode: *DiskInode) FsError!void {
         if (inode.link_count == 0) return error.Corrupt;
         switch (inode.kind) {
-            .Regular, .CharDevice, .BlockDevice => {},
+            .Regular, .CharDevice, .BlockDevice, .Symlink => {},
             else => return error.NotAFile,
         }
         if (inode.link_count == std.math.maxInt(u16)) return error.Corrupt;
@@ -764,7 +726,7 @@ pub const FileSystem = struct {
         const entry = try self.readDirEntry(dir_inode, index);
 
         switch (entry.kind) {
-            .Regular, .CharDevice, .BlockDevice => {},
+            .Regular, .CharDevice, .BlockDevice, .Symlink => {},
             else => return error.NotAFile,
         }
 
@@ -838,7 +800,7 @@ pub const FileSystem = struct {
             const entry = try self.readDirEntry(&root_inode, index);
             switch (entry.kind) {
                 .Free => {},
-                .Regular, .Directory, .CharDevice, .BlockDevice => {
+                .Regular, .Directory, .CharDevice, .BlockDevice, .Symlink => {
                     const inode = try self.readInode(entry.inode_index);
                     try self.validateInode(&inode);
                     if (inode.kind != entry.kind) return error.Corrupt;
@@ -934,7 +896,7 @@ pub const FileSystem = struct {
         errdefer self.drop(inode);
 
         switch (inode.kind) {
-            .Regular, .CharDevice, .BlockDevice => return inode,
+            .Regular, .CharDevice, .BlockDevice, .Symlink => return inode,
             else => return error.NotAFile,
         }
     }
@@ -1168,7 +1130,7 @@ pub const FileSystem = struct {
                 if (inode.size_bytes != 0 or inode.link_count != 0) return error.Corrupt;
                 return;
             },
-            .Regular, .Directory => {
+            .Regular, .Directory, .Symlink => {
                 if (!inode.device.isEmpty()) return error.Corrupt;
             },
             .CharDevice, .BlockDevice => {
@@ -1381,23 +1343,11 @@ fn validateDirectoryEntry(entry: *const DirectoryEntry, inode_count: u16) FsErro
             if (entry.name_len != 0) return error.Corrupt;
             return;
         },
-        .Regular, .Directory, .CharDevice, .BlockDevice => {},
+        .Regular, .Directory, .CharDevice, .BlockDevice, .Symlink => {},
         else => return error.Corrupt,
     }
 
     if (entry.inode_index >= inode_count) return error.Corrupt;
     if (entry.name_len == 0 or entry.name_len > FILENAME_MAX_LEN) return error.Corrupt;
     if (!validateName(entry.name[0..entry.name_len])) return error.Corrupt;
-}
-
-/// Split a file path into directory and filename components.
-/// Should live in vfs, but remains here for now for compile_fs.zig.
-pub fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } {
-    const trimmed = std.mem.trimEnd(u8, path, "/");
-    const last_slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');
-    if (last_slash) |idx| {
-        return .{ .dir = trimmed[0..idx], .name = trimmed[idx + 1 ..] };
-    } else {
-        return .{ .dir = &.{}, .name = trimmed };
-    }
 }

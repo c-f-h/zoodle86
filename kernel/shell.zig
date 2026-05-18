@@ -15,7 +15,7 @@ const serial = @import("serial.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
 
-const autoexec_name = "autoexec";
+const autoexec_name = "/autoexec";
 const executable_search_path = [_][]const u8{
     "/bin",
 };

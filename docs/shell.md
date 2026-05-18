@@ -24,7 +24,7 @@ The kernel provides an interactive shell with the following commands:
 
 ## Startup Script
 
-At boot, the shell executes an optional `autoexec` file from the filesystem before entering the interactive prompt. This allows automation of startup tasks. Inject a custom autoexec via SCons:
+At boot, the shell executes an optional `/autoexec` file from the filesystem before entering the interactive prompt. This allows automation of startup tasks. Inject a custom autoexec via SCons:
 
 ```sh
 scons run AUTOEXEC="serial on\nrun hello\nshutdown"
@@ -39,9 +39,9 @@ End scripts with `shutdown` for a clean exit.
 The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. Every non-empty line is parsed as a pipeline of one or more command stages. Each stage resolves bare program names through `/bin` and supports shell-style left-to-right redirections with `<`, `>`, and `>>`.
 
 - `hello 4` runs `/bin/hello 4`.
-- `ls /bin > list.txt` redirects stdout to a file using spawn-time fd remapping.
-- `echo hello >> log.txt` appends stdout to an existing file or creates it if needed.
-- `cat < log.txt | cat > copy.txt` combines input redirection, a pipe, and output redirection in one command line.
-- `echo one > out.txt >> log.txt` follows shell-style left-to-right semantics: both redirections are opened in order, and the later one becomes the command's final stdout target.
+- `ls /bin > /list.txt` redirects stdout to a file using spawn-time fd remapping.
+- `echo hello >> /log.txt` appends stdout to an existing file or creates it if needed.
+- `cat < /log.txt | cat > /copy.txt` combines input redirection, a pipe, and output redirection in one command line.
+- `echo one > /out.txt >> /log.txt` follows shell-style left-to-right semantics: both redirections are opened in order, and the later one becomes the command's final stdout target.
 
 Kernel shell commands can be invoked by prefixing with a `!`, e.g., `!memmap`.

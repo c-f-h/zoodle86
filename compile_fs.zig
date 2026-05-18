@@ -3,6 +3,7 @@ const fs = @import("kernel/fs/zodfs.zig");
 const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
 const std = @import("std");
+const vfs = @import("kernel/fs/vfs.zig");
 
 const CompileError = error{
     InvalidArgs,
@@ -55,7 +56,7 @@ fn importDirectory(
                 defer init.gpa.free(child_relative_path);
 
                 try stdout.print("  Creating directory: {s}\n", .{child_relative_path});
-                const child_inode = try disk_fs.createDirectoryAt(fs_dir_inode, entry.name);
+                const child_inode = try disk_fs.createDirectory(fs_dir_inode, entry.name);
                 defer disk_fs.drop(child_inode);
 
                 counts.directories += 1;
@@ -140,7 +141,7 @@ fn processLinksManifest(
         };
         defer disk_fs.drop(source_inode);
 
-        const split = fs.splitPath(target_path);
+        const split = vfs.splitPath(target_path);
         const dir_inode = disk_fs.getInodeAtPath(split.dir) catch |err| {
             try stdout.print("  Error: link target directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;
@@ -214,7 +215,7 @@ fn processSpecialManifest(
             stdout.print("  Error: malformed special entry: {s}\n", .{raw_line}) catch {};
             return CompileError.InvalidSpecialEntry;
         } orelse continue;
-        const split = fs.splitPath(entry.target_path);
+        const split = vfs.splitPath(entry.target_path);
         const dir_inode = disk_fs.getInodeAtPath(split.dir) catch |err| {
             try stdout.print("  Error: special-file directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;

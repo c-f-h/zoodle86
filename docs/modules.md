@@ -63,21 +63,21 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it executes commands from an optional `autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it executes commands from an optional `/autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.fs.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `zodfs.zig` directly.
-- `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`), extracts regular files/directories to a host directory, and skips special inodes it cannot materialize on the host.
+- `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`), extracts regular files/directories to a host directory, and skips non-extracted inode kinds it does not materialize on the host (currently device nodes and symlinks).
 - `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`), writes a directory tree of input files into it, and consumes optional root `_special`/`_links` manifests to create device nodes and hard links.
 
 ## Userspace
 
 - `userspace/hello.zig`: hello-world/yield smoke-test binary.
-- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `cp`, `echo`, `find`, `ln`, `ls`, `mkdir`, `mv`, `rm`, `rmdir`, or `stat` based on the basename of `argv[0]`. Installed as `/bin/busybox` and hard-linked to respective tool names.
+- `userspace/busybox.zig`: multi-call binary that dispatches to `cat`, `cp`, `echo`, `find`, `ln`, `ls`, `mkdir`, `mv`, `rm`, `rmdir`, or `stat` based on the basename of `argv[0]`. `ln` supports hard links by default plus `-s`/`--symbolic` for symlinks. Installed as `/bin/busybox` and hard-linked to respective tool names.
 - `userspace/fib.zig`: CPU-bound Fibonacci demo that prints `pid`-tagged results for a short sequence.
-- `userspace/test_fs.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, `getdents`/`readdir`, and pipe semantics.
+- `userspace/test_fs.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, hard links, symlinks, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/test_alloc.zig`: heap allocator stress test covering allocate/free/realloc behavior.
 - `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports multi-stage pipelines plus left-to-right `<`, `>`, and `>>` redirections.

@@ -92,6 +92,7 @@ pub const SyscallError = error{
     EMFILE,
     ENOSPC,
     ENOTEMPTY,
+    ELOOP,
 };
 
 pub const WriteAllError = SyscallError || error{WriteZero};
@@ -135,6 +136,7 @@ fn mapErrno(errno: Errno) SyscallError {
         .EMFILE => error.EMFILE,
         .ENOSPC => error.ENOSPC,
         .ENOTEMPTY => error.ENOTEMPTY,
+        .ELOOP => error.ELOOP,
         .Success, _ => error.EIO,
     };
 }
@@ -398,6 +400,13 @@ pub fn link(old_path: []const u8, new_path: []const u8) SyscallError!void {
     const old_path_abi = AbiSlice.fromSlice(u8, old_path);
     const new_path_abi = AbiSlice.fromSlice(u8, new_path);
     _ = try syscall(.Link, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
+}
+
+/// Creates a new symbolic link from `link_path` to the raw target path bytes in `target_path`.
+pub fn symlink(target_path: []const u8, link_path: []const u8) SyscallError!void {
+    const target_path_abi = AbiSlice.fromSlice(u8, target_path);
+    const link_path_abi = AbiSlice.fromSlice(u8, link_path);
+    _ = try syscall(.Symlink, @intFromPtr(&target_path_abi), @intFromPtr(&link_path_abi), 0);
 }
 
 /// Marks the calling process so all its children are auto-reaped on exit

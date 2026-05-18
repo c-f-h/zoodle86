@@ -12,7 +12,27 @@ const abi = @import("abi");
 const std = @import("std");
 
 pub const FsError = zodfs.FsError;
+pub const ReadFileError = FsError || error{OutOfMemory};
+
 pub const Stat = abi.Stat;
+
+const ResolveEntry = struct {
+    parent_inode: *zodfs.DiskInode,
+    index: u32,
+    entry: zodfs.DirectoryEntry,
+};
+
+const ResolveOptions = struct {
+    follow_final: bool,
+    allow_missing_final: bool = false,
+};
+
+const ResolveResult = union(enum) {
+    found: ResolveEntry,
+    missing_final: []u8,
+};
+
+const MAX_SYMLINK_EXPANSIONS: usize = 16;
 
 var root_fs: zodfs.FileSystem = undefined;
 var root_block_device: ide.IdeBlockDevice = undefined;
@@ -39,93 +59,165 @@ pub fn getRootFs() *zodfs.FileSystem {
     return &root_fs;
 }
 
-pub const splitPath = zodfs.splitPath;
-
-/// Returns stat-like metadata for a filesystem path.
-pub fn stat(path: []const u8) FsError!Stat {
-    return try root_fs.statPath(path);
+/// Split a file path into directory and filename components.
+pub fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } {
+    const trimmed = std.mem.trimEnd(u8, path, "/");
+    const last_slash = std.mem.lastIndexOfScalar(u8, trimmed, '/');
+    if (last_slash) |idx| {
+        return .{ .dir = trimmed[0..idx], .name = trimmed[idx + 1 ..] };
+    } else {
+        return .{ .dir = &.{}, .name = trimmed };
+    }
 }
 
-/// Returns true if a file or directory exists at the given path, false if not found.
+/// Returns stat-like metadata for a filesystem path; can optionally follow a final symlink.
+pub fn stat(path: []const u8, follow_final: bool) FsError!Stat {
+    const inode = try resolvePathInode(path, follow_final);
+    defer root_fs.drop(inode);
+    return try root_fs.statInode(inode);
+}
+
+/// Returns true if a file, directory, or symlink exists at the given path.
 pub fn pathExists(path: []const u8) FsError!bool {
-    return try root_fs.pathExists(path);
+    if (path.len == 0) return error.InvalidName;
+    if (std.mem.trim(u8, path, "/").len == 0) return true;
+
+    _ = resolvePath(path, .{ .follow_final = false }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
 }
 
-/// Reads an entire regular file, given by its full path, into allocator-owned memory.
+/// Reads an entire file, following a final symlink when present.
 pub fn getFileContents(allocator: std.mem.Allocator, path: []const u8) (FsError || error{OutOfMemory})![]u8 {
-    return root_fs.getFileContents(allocator, path);
+    const inode = try resolvePathInode(path, true);
+    defer root_fs.drop(inode);
+    return readInodeContents(&root_fs, allocator, inode);
 }
 
-/// Creates or overwrites a file with the given path with the provided full contents.
+/// Reads the full contents of a file identified directly by inode into a newly allocated buffer.
+pub fn readInodeContents(fs: *const zodfs.FileSystem, allocator: std.mem.Allocator, inode: *const zodfs.DiskInode) ReadFileError![]u8 {
+    if (inode.size_bytes == 0) {
+        return allocator.alloc(u8, 0);
+    }
+
+    const data = try allocator.alloc(u8, @intCast(inode.size_bytes));
+    errdefer allocator.free(data);
+    _ = try fs.readInodeAt(inode, 0, data);
+    return data;
+}
+
+/// Creates or overwrites a file with the given path, following a final symlink when present.
 pub fn writeFileContents(path: []const u8, data: []const u8) FsError!void {
-    return root_fs.writeFileContents(path, data);
+    const allocator = kernel.getAllocator();
+    const inode = switch (try resolvePath(path, .{ .follow_final = true, .allow_missing_final = true })) {
+        .found => |resolved| blk: {
+            defer root_fs.drop(resolved.parent_inode);
+            break :blk try root_fs.getInode(resolved.entry.inode_index);
+        },
+        .missing_final => |expanded_path| blk: {
+            defer allocator.free(expanded_path);
+            const split = splitPath(expanded_path);
+            const parent_path = if (split.dir.len == 0) "/" else split.dir;
+            const parent_inode = try resolvePathInode(parent_path, true);
+            defer root_fs.drop(parent_inode);
+            break :blk try root_fs.createFile(parent_inode, split.name);
+        },
+    };
+    defer root_fs.drop(inode);
+
+    if (inode.kind != .Regular) return error.NotAFile;
+    try root_fs.writeToInodeAtOffset(inode, 0, data, true);
 }
 
-/// Moves (renames) old_path to new_path, atomically replacing any existing regular file at
-/// new_path. Directories cannot be moved. Open descriptors keep the replaced inode alive
-/// until the final close, but the destination path switches to the source inode immediately.
+/// Moves (renames) old_path to new_path, atomically replacing any existing non-directory entry at
+/// new_path. Directories cannot be moved. Open descriptors keep the replaced inode alive until the
+/// final close, but the destination path switches to the source inode immediately.
 pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
     if (std.mem.eql(u8, old_path, new_path)) return;
 
-    // Resolve source; it must be a regular file.
-    const src_inode = try root_fs.getInodeAtPath(old_path);
-    defer root_fs.drop(src_inode);
-    if (src_inode.kind == .Directory) return error.NotAFile;
+    const src = switch (try resolvePath(old_path, .{ .follow_final = false })) {
+        .found => |resolved| resolved,
+        .missing_final => unreachable,
+    };
+    defer root_fs.drop(src.parent_inode);
+    if (src.entry.kind == .Directory) return error.NotAFile;
 
-    // Resolve destination parent directory (must exist).
+    const src_inode = try root_fs.getInode(src.entry.inode_index);
+    defer root_fs.drop(src_inode);
+
     const new_split = splitPath(new_path);
-    const dst_parent_inode = try root_fs.getInodeAtPath(new_split.dir);
+    const dst_parent_inode = try resolveParentDirectory(new_path);
     defer root_fs.drop(dst_parent_inode);
 
     const existing = try root_fs.findDirEntryAndIndex(dst_parent_inode, new_split.name);
-    // If destination already exists remove it, provided it is a non-open file.
     if (existing) |existing_index_and_direntry| {
         const ex_index, const ex_direntry = existing_index_and_direntry;
         if (ex_direntry.kind == .Directory) return error.NotAFile;
         try root_fs.deleteFile(dst_parent_inode, ex_index);
     }
 
-    // Add the new directory entry, then remove the old one.
     try root_fs.createLink(dst_parent_inode, new_split.name, src_inode);
-    const src_parent_inode, const src_idx, _ =
-        try root_fs.walkPathToDirEntry(root_fs.getRootInode(), old_path);
-    defer root_fs.drop(src_parent_inode);
-    try root_fs.deleteFile(src_parent_inode, src_idx);
+    try root_fs.deleteFile(src.parent_inode, src.index);
 }
 
-/// Creates a new hard link to an existing regular file.
+/// Creates a new hard link to an existing non-directory inode.
 pub fn linkFile(old_path: []const u8, new_path: []const u8) FsError!void {
-    const target_inode = try root_fs.getInodeAtPath(old_path);
+    const source = switch (try resolvePath(old_path, .{ .follow_final = false })) {
+        .found => |resolved| resolved,
+        .missing_final => unreachable,
+    };
+    defer root_fs.drop(source.parent_inode);
+
+    const target_inode = try root_fs.getInode(source.entry.inode_index);
     defer root_fs.drop(target_inode);
 
     const split = splitPath(new_path);
-    const parent_inode = try root_fs.getInodeAtPath(split.dir);
+    const parent_inode = try resolveParentDirectory(new_path);
     defer root_fs.drop(parent_inode);
 
     try root_fs.createLink(parent_inode, split.name, target_inode);
 }
 
 pub fn createDirectory(path: []const u8) FsError!void {
-    const inode = try root_fs.createDirectory(path);
+    const split = splitPath(path);
+    const parent_inode = try resolveParentDirectory(path);
+    defer root_fs.drop(parent_inode);
+
+    const inode = try root_fs.createDirectory(parent_inode, split.name);
     root_fs.drop(inode);
+}
+
+/// Creates a symbolic link whose contents are the raw target path bytes.
+pub fn symlink(target_path: []const u8, link_path: []const u8) FsError!void {
+    const split = splitPath(link_path);
+    const parent_inode = try resolveParentDirectory(link_path);
+    defer root_fs.drop(parent_inode);
+
+    try root_fs.createSymlink(parent_inode, split.name, target_path);
 }
 
 /// Removes an empty directory.
 pub fn removeDirectory(path: []const u8) FsError!void {
-    const parent_inode, const index, _ =
-        try root_fs.walkPathToDirEntry(root_fs.getRootInode(), path);
-    defer root_fs.drop(parent_inode);
+    const resolved = switch (try resolvePath(path, .{ .follow_final = false })) {
+        .found => |entry| entry,
+        .missing_final => unreachable,
+    };
+    defer root_fs.drop(resolved.parent_inode);
 
-    try root_fs.deleteDirectory(parent_inode, index);
+    try root_fs.deleteDirectory(resolved.parent_inode, resolved.index);
 }
 
 /// Unlinks a filesystem path. Open descriptors keep the inode alive until the final close.
 pub fn unlink(path: []const u8) FsError!void {
-    const parent_inode, const index, _ =
-        try root_fs.walkPathToDirEntry(root_fs.getRootInode(), path);
-    defer root_fs.drop(parent_inode);
+    const resolved = switch (try resolvePath(path, .{ .follow_final = false })) {
+        .found => |entry| entry,
+        .missing_final => unreachable,
+    };
+    defer root_fs.drop(resolved.parent_inode);
 
-    try root_fs.deleteFile(parent_inode, index);
+    try root_fs.deleteFile(resolved.parent_inode, resolved.index);
 }
 
 /////////////////////////// Open file handling ///////////////////////////
@@ -167,22 +259,25 @@ pub fn createOpenFileEntry(path: []const u8, flags: u32) FsError!u8 {
 
     const access_mode = try filedesc.validateOpenFlags(flags);
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
-    const inode = if (std.mem.eql(u8, path, "/"))
+    const allocator = kernel.getAllocator();
+    const inode = if (std.mem.trim(u8, path, "/").len == 0)
         root_fs.dup(root_fs.getRootInode())
-    else
-        // try to find an existing file at this path
-        root_fs.getInodeAtPath(path) catch |err| switch (err) {
-            error.FileNotFound => blk: {
-                if ((flags & abi.O_CREAT) == 0) return error.FileNotFound;
+    else switch (try resolvePath(path, .{ .follow_final = true, .allow_missing_final = true })) {
+        .found => |resolved| blk: {
+            defer root_fs.drop(resolved.parent_inode);
+            break :blk try root_fs.getInode(resolved.entry.inode_index);
+        },
+        .missing_final => |expanded_path| blk: {
+            defer allocator.free(expanded_path);
+            if ((flags & abi.O_CREAT) == 0) return error.FileNotFound;
 
-                // not found, but creation requested: create the file and return its inode index
-                const split = splitPath(path);
-                const parent_inode = try root_fs.getInodeAtPath(split.dir);
-                defer root_fs.drop(parent_inode);
-                break :blk try root_fs.createFile(parent_inode, split.name);
-            },
-            else => return err,
-        };
+            const split = splitPath(expanded_path);
+            const parent_path = if (split.dir.len == 0) "/" else split.dir;
+            const parent_inode = try resolvePathInode(parent_path, true);
+            defer root_fs.drop(parent_inode);
+            break :blk try root_fs.createFile(parent_inode, split.name);
+        },
+    };
     errdefer root_fs.drop(inode);
 
     if ((flags & abi.O_TRUNC) != 0) {
@@ -263,4 +358,153 @@ pub fn readDirEntries(file_index: u8, dest: []abi.DirEntry) FsError!usize {
         out_count += 1;
     }
     return out_count;
+}
+
+/// Canonicalize an absolute path by removing redundant and trailing slashes.
+fn normalizePath(allocator: std.mem.Allocator, path: []const u8) FsError![]u8 {
+    if (path.len == 0 or path[0] != '/') return error.InvalidName;
+
+    const trimmed = std.mem.trim(u8, path, "/");
+    if (trimmed.len == 0) return allocator.dupe(u8, "/");
+
+    const normalized = try allocator.alloc(u8, trimmed.len + 1);
+    normalized[0] = '/';
+    @memcpy(normalized[1..], trimmed);
+    return normalized;
+}
+
+fn expandSymlinkPath(allocator: std.mem.Allocator, parent_path: []const u8, target_path: []const u8, suffix: []const u8) FsError![]u8 {
+    if (target_path.len == 0) return error.InvalidName;
+
+    const needs_join_slash = target_path[0] != '/' and !std.mem.eql(u8, parent_path, "/");
+    const prefix_len = if (target_path[0] == '/')
+        target_path.len
+    else
+        parent_path.len + @intFromBool(needs_join_slash) + target_path.len;
+    const raw_path = try allocator.alloc(u8, prefix_len + suffix.len);
+    errdefer allocator.free(raw_path);
+
+    var cursor: usize = 0;
+    if (target_path[0] == '/') {
+        @memcpy(raw_path[cursor .. cursor + target_path.len], target_path);
+        cursor += target_path.len;
+    } else {
+        @memcpy(raw_path[cursor .. cursor + parent_path.len], parent_path);
+        cursor += parent_path.len;
+        if (needs_join_slash) {
+            raw_path[cursor] = '/';
+            cursor += 1;
+        }
+        @memcpy(raw_path[cursor .. cursor + target_path.len], target_path);
+        cursor += target_path.len;
+    }
+    @memcpy(raw_path[cursor .. cursor + suffix.len], suffix);
+
+    const normalized = try normalizePath(allocator, raw_path);
+    allocator.free(raw_path);
+    return normalized;
+}
+
+fn resolvePath(path: []const u8, options: ResolveOptions) FsError!ResolveResult {
+    const allocator = kernel.getAllocator();
+    var current_path = try normalizePath(allocator, path);
+    var keep_path = false;
+    defer if (!keep_path) allocator.free(current_path);
+
+    if (std.mem.eql(u8, current_path, "/")) return error.InvalidName;
+
+    var symlink_expansions: usize = 0;
+
+    outer: while (true) {
+        var current_dir = root_fs.dup(root_fs.getRootInode());
+        errdefer root_fs.drop(current_dir);
+
+        var i: usize = 1; // start after leading slash
+        while (true) {
+            // find next path component
+            const component_start = i;
+            while (i < current_path.len and current_path[i] != '/') : (i += 1) {}
+            const component = current_path[component_start..i];
+
+            // skip any trailing slashes to find the start of the next component
+            var next_component_start = i;
+            while (next_component_start < current_path.len and current_path[next_component_start] == '/') : (next_component_start += 1) {}
+            const is_final = next_component_start >= current_path.len;
+
+            // check for component in current directory
+            const found = try root_fs.findDirEntryAndIndex(current_dir, component);
+            if (found == null) {
+                if (is_final and options.allow_missing_final) {
+                    keep_path = true;
+                    root_fs.drop(current_dir);
+                    return .{ .missing_final = current_path };
+                }
+                return error.FileNotFound;
+            }
+            const index, const entry = found.?;
+
+            // follow symlink if present and allowed by options
+            if (entry.kind == .Symlink and (options.follow_final or !is_final)) {
+                if (symlink_expansions == MAX_SYMLINK_EXPANSIONS) return error.TooManySymlinks;
+
+                const symlink_inode = try root_fs.getInode(entry.inode_index);
+                defer root_fs.drop(symlink_inode);
+
+                const target_path = try readInodeContents(&root_fs, allocator, symlink_inode);
+                defer allocator.free(target_path);
+
+                const parent_path = if (component_start == 1) "/" else current_path[0 .. component_start - 1];
+                const expanded = try expandSymlinkPath(allocator, parent_path, target_path, current_path[i..]);
+                allocator.free(current_path);
+                current_path = expanded;
+                symlink_expansions += 1;
+                root_fs.drop(current_dir);
+                continue :outer;
+            }
+
+            // if we have found the final component, return it
+            if (is_final) {
+                return .{ .found = .{
+                    .parent_inode = current_dir,
+                    .index = index,
+                    .entry = entry,
+                } };
+            }
+
+            // otherwise, keep walking the path; need a directory to continue
+            if (entry.kind != .Directory) return error.FileNotFound;
+
+            const next_dir = try root_fs.getInode(entry.inode_index);
+            if (next_dir.kind != .Directory) {
+                root_fs.drop(next_dir);
+                return error.Corrupt;
+            }
+
+            root_fs.drop(current_dir);
+            current_dir = next_dir;
+            i = next_component_start;
+        }
+    }
+}
+
+/// Resolves a path to an inode, optionally following a final symlink. The returned inode must be dropped by the caller.
+fn resolvePathInode(path: []const u8, follow_final: bool) FsError!*zodfs.DiskInode {
+    if (path.len == 0) return error.InvalidName;
+    if (std.mem.trim(u8, path, "/").len == 0) return root_fs.dup(root_fs.getRootInode());
+
+    const resolved = switch (try resolvePath(path, .{ .follow_final = follow_final })) {
+        .found => |entry| entry,
+        .missing_final => unreachable,
+    };
+    defer root_fs.drop(resolved.parent_inode);
+    return try root_fs.getInode(resolved.entry.inode_index);
+}
+
+fn resolveParentDirectory(path: []const u8) FsError!*zodfs.DiskInode {
+    const split = splitPath(path);
+    const parent_path = if (split.dir.len == 0) "/" else split.dir;
+    const parent_inode = try resolvePathInode(parent_path, true);
+    errdefer root_fs.drop(parent_inode);
+    if (parent_inode.kind != .Directory) return error.NotADirectory;
+    return parent_inode;
 }

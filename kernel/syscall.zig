@@ -44,6 +44,7 @@ fn mapError(err: anyerror) Errno {
         error.ProcessFileTableFull => .EMFILE,
         error.SystemFileTableFull => .ENFILE,
         error.Timeout => .EIO,
+        error.TooManySymlinks => .ELOOP,
         else => .EIO,
     };
 }
@@ -61,7 +62,7 @@ fn sys_close(fd: u32) !u32 {
 fn sys_stat(path_slice_va: u32, stat_ofs: u32) !u32 {
     const current_task = task.getCurrentTask();
     const path = try current_task.readUserSlice(u8, path_slice_va);
-    const stat = try vfs.stat(path);
+    const stat = try vfs.stat(path, false); // return stat of the symlink itself if path is a symlink
     const out = try current_task.getUserMem(stat_ofs, @sizeOf(filedesc.Stat));
     @memcpy(out, std.mem.asBytes(&stat));
     return 0;
@@ -303,6 +304,14 @@ fn sys_link(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
     return 0;
 }
 
+fn sys_symlink(target_path_slice_va: u32, link_path_slice_va: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const target_path = try current_task.readUserSlice(u8, target_path_slice_va);
+    const link_path = try current_task.readUserSlice(u8, link_path_slice_va);
+    try vfs.symlink(target_path, link_path);
+    return 0;
+}
+
 /// Marks the current task so that all its children are auto-reaped on exit
 /// rather than becoming zombies. Analogous to ignoring SIGCHLD on Linux.
 fn sys_set_child_reap() !u32 {
@@ -373,6 +382,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
         .Link => sys_link(arg1, arg2),
+        .Symlink => sys_symlink(arg1, arg2),
         .Rename => sys_rename(arg1, arg2),
         .Spawn => sys_spawn(arg1, arg2),
         .SetChildReap => sys_set_child_reap(),

@@ -44,6 +44,10 @@ const truncate_file = tmpdir ++ "/truncate.txt";
 const unlink_file = tmpdir ++ "/unlink.txt";
 const link_source_file = tmpdir ++ "/link_src.txt";
 const link_alias_file = tmpdir ++ "/link_alias.txt";
+const symlink_target_file = tmpdir ++ "/syl_tgt.txt";
+const symlink_abs_file = tmpdir ++ "/syl_abs.txt";
+const symlink_rel_file = tmpdir ++ "/syl_rel.txt";
+const symlink_loop_file = tmpdir ++ "/syl_loop.txt";
 const rename_src = tmpdir ++ "/rename_src.txt";
 const rename_dst = tmpdir ++ "/rename_dst.txt";
 const stat_file = tmpdir ++ "/stat.txt";
@@ -52,7 +56,7 @@ const stat_dir = tmpdir ++ "/stat_dir";
 const dirent_dir = tmpdir ++ "/dirents";
 const dirent_file = dirent_dir ++ "/entry.txt";
 const dirent_subdir = dirent_dir ++ "/nested";
-const nonexistent_file = "nonexistent.txt";
+const nonexistent_file = "/missing.txt";
 const sector_size = 512;
 const pipe_capacity = 4096;
 const chunk_size = 640;
@@ -60,6 +64,9 @@ const chunk_count = 6;
 const total_bytes = chunk_size * chunk_count;
 const seek_expected = "01234AB789XY\x00\x00Z";
 const truncate_expected = "ABCD\x00\x00\x00\x00\x00\x00";
+const symlink_relative_target = "syl_tgt.txt";
+const symlink_loop_target = "syl_loop.txt";
+const symlink_payload = "symlink payload";
 const stat_payload = "stat payload";
 
 fn writeAll(fd: u32, buf: []const u8) !void {
@@ -173,9 +180,9 @@ fn testSeek() !void {
 // This hardens the seeking test by ensuring that the disk contains sectors that must be explicitly zeroed.
 fn seedDiskWithNonzeroData() !void {
     var seed: [sector_size]u8 = undefined;
-    var seed_name_buf: [10]u8 = undefined;
+    var seed_name_buf: [15]u8 = undefined;
     for (0..10) |seed_index| {
-        const seed_name = try std.fmt.bufPrint(&seed_name_buf, "seed{d:0>2}.txt", .{seed_index});
+        const seed_name = try std.fmt.bufPrint(&seed_name_buf, "/tmp/seed{d:0>2}.txt", .{seed_index});
         const seed_fd = try expectSyscall(sys.open(seed_name, .{
             .open_mode = .ReadWrite,
             .create = true,
@@ -322,6 +329,85 @@ fn testLink() !void {
 
     _ = try expectSyscall(sys.unlink(link_alias_file), "testLink: unlink remaining link", @src());
     _ = try syscallShouldFail(sys.open(link_alias_file, .{}), "testLink: alias path removed", @src());
+}
+
+fn testSymlink() !void {
+    sys.unlink(symlink_loop_file) catch {};
+    sys.unlink(symlink_rel_file) catch {};
+    sys.unlink(symlink_abs_file) catch {};
+    sys.unlink(symlink_target_file) catch {};
+
+    const fd = try expectSyscall(sys.open(symlink_target_file, .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    }), "testSymlink: create target file", @src());
+    errdefer sys.close(fd) catch {};
+    try writeAll(fd, symlink_payload);
+
+    var target_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(fd, &target_stat), "testSymlink: fstat target file", @src());
+    try expectKind(target_stat.kind, .Regular);
+    _ = try expectSyscall(sys.close(fd), "testSymlink: close target file", @src());
+
+    _ = try expectSyscall(sys.symlink(symlink_target_file, symlink_abs_file), "testSymlink: create absolute symlink", @src());
+    _ = try expectSyscall(sys.symlink(symlink_relative_target, symlink_rel_file), "testSymlink: create relative symlink", @src());
+    _ = try syscallShouldFail(sys.symlink(symlink_target_file, symlink_abs_file), "testSymlink: duplicate absolute symlink path", @src());
+
+    var abs_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(symlink_abs_file, &abs_stat), "testSymlink: stat absolute symlink", @src());
+    try expectKind(abs_stat.kind, .Symlink);
+    try expectOffset(abs_stat.size, @intCast(symlink_target_file.len));
+    try expectOffset(abs_stat.nlink, 1);
+    if (abs_stat.inode == target_stat.inode) return error.InodeMismatch;
+
+    var rel_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(symlink_rel_file, &rel_stat), "testSymlink: stat relative symlink", @src());
+    try expectKind(rel_stat.kind, .Symlink);
+    try expectOffset(rel_stat.size, @intCast(symlink_relative_target.len));
+    try expectOffset(rel_stat.nlink, 1);
+    if (rel_stat.inode == target_stat.inode) return error.InodeMismatch;
+
+    const via_abs_fd = try expectSyscall(sys.open(symlink_abs_file, .{}), "testSymlink: open absolute symlink", @src());
+    errdefer sys.close(via_abs_fd) catch {};
+    var via_abs_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.fstat(via_abs_fd, &via_abs_stat), "testSymlink: fstat absolute symlink fd", @src());
+    try expectKind(via_abs_stat.kind, .Regular);
+    if (via_abs_stat.inode != target_stat.inode) return error.InodeMismatch;
+    var via_abs: [symlink_payload.len]u8 = undefined;
+    try readExact(via_abs_fd, &via_abs);
+    try expectEof(via_abs_fd);
+    try expectBytes(&via_abs, symlink_payload);
+    _ = try expectSyscall(sys.close(via_abs_fd), "testSymlink: close absolute symlink fd", @src());
+
+    const via_rel_fd = try expectSyscall(sys.open(symlink_rel_file, .{}), "testSymlink: open relative symlink", @src());
+    errdefer sys.close(via_rel_fd) catch {};
+    var via_rel: [symlink_payload.len]u8 = undefined;
+    try readExact(via_rel_fd, &via_rel);
+    try expectEof(via_rel_fd);
+    try expectBytes(&via_rel, symlink_payload);
+    _ = try expectSyscall(sys.close(via_rel_fd), "testSymlink: close relative symlink fd", @src());
+
+    _ = try expectSyscall(sys.unlink(symlink_target_file), "testSymlink: unlink target file", @src());
+
+    _ = try expectSyscall(sys.stat(symlink_abs_file, &abs_stat), "testSymlink: stat dangling absolute symlink", @src());
+    try expectKind(abs_stat.kind, .Symlink);
+    _ = try expectSyscall(sys.stat(symlink_rel_file, &rel_stat), "testSymlink: stat dangling relative symlink", @src());
+    try expectKind(rel_stat.kind, .Symlink);
+    _ = try syscallShouldFail(sys.open(symlink_abs_file, .{}), "testSymlink: open dangling absolute symlink", @src());
+    _ = try syscallShouldFail(sys.open(symlink_rel_file, .{}), "testSymlink: open dangling relative symlink", @src());
+
+    _ = try expectSyscall(sys.symlink(symlink_loop_target, symlink_loop_file), "testSymlink: create self-loop symlink", @src());
+    var loop_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(symlink_loop_file, &loop_stat), "testSymlink: stat self-loop symlink", @src());
+    try expectKind(loop_stat.kind, .Symlink);
+    try expectOffset(loop_stat.size, @intCast(symlink_loop_target.len));
+    _ = try syscallShouldFail(sys.open(symlink_loop_file, .{}), "testSymlink: open self-loop symlink", @src());
+
+    _ = try expectSyscall(sys.unlink(symlink_abs_file), "testSymlink: unlink absolute symlink", @src());
+    _ = try expectSyscall(sys.unlink(symlink_rel_file), "testSymlink: unlink relative symlink", @src());
+    _ = try expectSyscall(sys.unlink(symlink_loop_file), "testSymlink: unlink self-loop symlink", @src());
+    _ = try syscallShouldFail(sys.stat(symlink_abs_file, &abs_stat), "testSymlink: stat removed absolute symlink", @src());
 }
 
 fn testRename() !void {
@@ -811,6 +897,7 @@ pub fn main(argv: []const []const u8) !void {
     try testTruncate();
     try testUnlink();
     try testLink();
+    try testSymlink();
     try testRename();
     try testStat();
     try testGetDents();

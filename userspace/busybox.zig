@@ -306,17 +306,35 @@ fn findMain(argv: []const []const u8) noreturn {
 // ln
 // ---------------------------------------------------------------------------
 
-/// Creates a hard link from a new path to an existing regular file.
+/// Creates a hard link by default, or a symbolic link with -s/--symbolic.
 fn lnMain(argv: []const []const u8) noreturn {
-    if (argv.len != 3) {
-        sys.writeAll(sys.STDERR, "Usage: ln <existing-path> <new-path>\n") catch {};
+    var symbolic = false;
+    const first_arg = parseOpts(argv, &.{
+        .{ .short = 's', .long = "symbolic", .result = .{ .Bool = &symbolic } },
+    }) catch {
+        sys.writeAll(sys.STDERR, "Usage: ln [-s|--symbolic] <target-path> <link-path>\n") catch {};
+        sys.exit(1);
+    };
+
+    if (argv.len - first_arg != 2) {
+        sys.writeAll(sys.STDERR, "Usage: ln [-s|--symbolic] <target-path> <link-path>\n") catch {};
         sys.exit(1);
     }
 
-    sys.link(argv[1], argv[2]) catch {
-        err_toolFailedTo("ln", "link", argv[2]);
-        sys.exit(1);
-    };
+    const target_path = argv[first_arg];
+    const link_path = argv[first_arg + 1];
+
+    if (symbolic) {
+        sys.symlink(target_path, link_path) catch {
+            err_toolFailedTo("ln", "symlink", link_path);
+            sys.exit(1);
+        };
+    } else {
+        sys.link(target_path, link_path) catch {
+            err_toolFailedTo("ln", "link", link_path);
+            sys.exit(1);
+        };
+    }
 
     sys.exit(0);
 }

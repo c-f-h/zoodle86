@@ -280,7 +280,7 @@ fn tryOpenSpecialInode(path: []const u8, flags: u32) vfs.FsError!?FileDesc {
     if (path.len == 0 or std.mem.eql(u8, path, "/")) return null;
 
     const access_mode = try validateOpenFlags(flags);
-    const st = vfs.stat(path) catch |err| switch (err) {
+    const st = vfs.stat(path, true) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };

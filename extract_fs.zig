@@ -1,4 +1,5 @@
 const fs = @import("kernel/fs/zodfs.zig");
+const vfs = @import("kernel/fs/vfs.zig");
 const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
 const std = @import("std");
@@ -6,7 +7,7 @@ const std = @import("std");
 const ExtractCounts = struct {
     files: usize = 0,
     directories: usize = 0,
-    specials_skipped: usize = 0,
+    skipped: usize = 0,
 };
 
 fn extractDirectory(
@@ -34,7 +35,7 @@ fn extractDirectory(
                 const inode = try disk_fs.getInode(entry.inode_index);
                 defer disk_fs.drop(inode);
 
-                const data = try disk_fs.readInodeContents(init.gpa, inode);
+                const data = try vfs.readInodeContents(disk_fs, init.gpa, inode);
                 defer init.gpa.free(data);
 
                 try stdout.print("  Extracting file: {s} ({d} bytes)\n", .{ child_relative_path, data.len });
@@ -52,8 +53,8 @@ fn extractDirectory(
                 defer disk_fs.drop(inode);
                 try extractDirectory(init, stdout, disk_fs, inode, child_output_path, child_relative_path, counts);
             },
-            .CharDevice, .BlockDevice => {
-                counts.specials_skipped += 1;
+            .CharDevice, .BlockDevice, .Symlink => {
+                counts.skipped += 1;
             },
             else => return error.Corrupt,
         }
@@ -100,6 +101,6 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout.print(
         "\nDone. Extracted {d} files, {d} directories, and skipped {d} special files.\n",
-        .{ counts.files, counts.directories, counts.specials_skipped },
+        .{ counts.files, counts.directories, counts.skipped },
     );
 }

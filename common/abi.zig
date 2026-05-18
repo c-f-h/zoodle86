@@ -44,6 +44,7 @@ pub const Syscall = enum(u32) {
     Rmdir = 84,
     Link = 86,
     Unlink = 87,
+    Symlink = 88,
     Rename = 82,
     Ftruncate = 93,
     Ioctl = 156,
@@ -86,6 +87,7 @@ pub const Errno = enum(u32) {
     EMFILE = 24,
     ENOSPC = 28,
     ENOTEMPTY = 39,
+    ELOOP = 40,
     _,
 };
 
