@@ -62,7 +62,7 @@ fn sys_close(fd: u32) !u32 {
 fn sys_stat(path_slice_va: u32, stat_ofs: u32) !u32 {
     const current_task = task.getCurrentTask();
     const path = try current_task.readUserSlice(u8, path_slice_va);
-    const stat = try vfs.stat(path, false); // return stat of the symlink itself if path is a symlink
+    const stat = try vfs.statAt(current_task.getCwd(), path, false); // return stat of the symlink itself if path is a symlink
     const out = try current_task.getUserMem(stat_ofs, @sizeOf(filedesc.Stat));
     @memcpy(out, std.mem.asBytes(&stat));
     return 0;
@@ -77,8 +77,9 @@ fn sys_fstat(fd: u32, stat_ofs: u32) !u32 {
 }
 
 fn sys_unlink(path_ofs: u32, path_len: u32) !u32 {
-    const path = try task.getCurrentTask().getUserMem(path_ofs, path_len);
-    try vfs.unlink(path);
+    const current_task = task.getCurrentTask();
+    const path = try current_task.getUserMem(path_ofs, path_len);
+    try vfs.unlinkAt(current_task.getCwd(), path);
     return 0;
 }
 
@@ -223,11 +224,18 @@ fn sys_spawn(argv_desc_ofs: u32, opts_ptr: u32) !u32 {
     }
 
     defer current_task.loadPageDir(); // make sure to return to the correct page directory
-    const child = try kernel.loadUserspaceElf(argv_buf[0], argv_buf);
+    const executable_path = try vfs.canonicalizePath(kernel.getAllocator(), current_task.getCwd(), argv_buf[0]);
+    defer kernel.getAllocator().free(executable_path);
+
+    const child = try kernel.loadUserspaceElf(executable_path, argv_buf);
     child.parent_pid = current_task.pid;
     if (current_task.controlling_tty) |controlling| {
         child.bindControllingTty(controlling);
     }
+    child.inheritCwd(current_task) catch |err| {
+        child.terminate();
+        return err;
+    };
 
     // Apply fd remaps: dupe each requested parent fd into the child's fd table.
     // Both fd tables are kernel memory; no page directory switch needed here.
@@ -277,14 +285,16 @@ fn sys_getdents(fd: u32, entries_slice_va: u32) !u32 {
 }
 
 fn sys_mkdir(path_slice_va: u32) !u32 {
-    const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
-    try vfs.createDirectory(path);
+    const current_task = task.getCurrentTask();
+    const path = try current_task.readUserSlice(u8, path_slice_va);
+    try vfs.createDirectoryAt(current_task.getCwd(), path);
     return 0;
 }
 
 fn sys_rmdir(path_slice_va: u32) !u32 {
-    const path = try task.getCurrentTask().readUserSlice(u8, path_slice_va);
-    try vfs.removeDirectory(path);
+    const current_task = task.getCurrentTask();
+    const path = try current_task.readUserSlice(u8, path_slice_va);
+    try vfs.removeDirectoryAt(current_task.getCwd(), path);
     return 0;
 }
 
@@ -292,7 +302,7 @@ fn sys_rename(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
     const current_task = task.getCurrentTask();
     const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
     const new_path = try current_task.readUserSlice(u8, new_path_slice_va);
-    try vfs.moveFile(old_path, new_path);
+    try vfs.moveFileAt(current_task.getCwd(), old_path, new_path);
     return 0;
 }
 
@@ -300,7 +310,7 @@ fn sys_link(old_path_slice_va: u32, new_path_slice_va: u32) !u32 {
     const current_task = task.getCurrentTask();
     const old_path = try current_task.readUserSlice(u8, old_path_slice_va);
     const new_path = try current_task.readUserSlice(u8, new_path_slice_va);
-    try vfs.linkFile(old_path, new_path);
+    try vfs.linkFileAt(current_task.getCwd(), old_path, new_path);
     return 0;
 }
 
@@ -308,8 +318,25 @@ fn sys_symlink(target_path_slice_va: u32, link_path_slice_va: u32) !u32 {
     const current_task = task.getCurrentTask();
     const target_path = try current_task.readUserSlice(u8, target_path_slice_va);
     const link_path = try current_task.readUserSlice(u8, link_path_slice_va);
-    try vfs.symlink(target_path, link_path);
+    try vfs.symlinkAt(current_task.getCwd(), target_path, link_path);
     return 0;
+}
+
+fn sys_chdir(path_ofs: u32, path_len: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const path = try current_task.getUserMem(path_ofs, path_len);
+    const cwd = try vfs.changeDirectory(current_task.getCwd(), path);
+    try current_task.adoptCwd(cwd);
+    return 0;
+}
+
+fn sys_getcwd(buf_ofs: u32, buf_len: u32) !u32 {
+    const current_task = task.getCurrentTask();
+    const dest = try current_task.getUserMem(buf_ofs, buf_len);
+    const cwd = current_task.getCwd();
+    if (dest.len < cwd.len) return error.NoSpace;
+    @memcpy(dest[0..cwd.len], cwd);
+    return @intCast(cwd.len);
 }
 
 /// Marks the current task so that all its children are auto-reaped on exit
@@ -379,11 +406,13 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Ftruncate => sys_ftruncate(arg1, arg2),
         .WaitPid => sys_waitpid(arg1),
         .GetDents => sys_getdents(arg1, arg2),
+        .Chdir => sys_chdir(arg1, arg2),
+        .Rename => sys_rename(arg1, arg2),
         .Mkdir => sys_mkdir(arg1),
         .Rmdir => sys_rmdir(arg1),
         .Link => sys_link(arg1, arg2),
         .Symlink => sys_symlink(arg1, arg2),
-        .Rename => sys_rename(arg1, arg2),
+        .GetCwd => sys_getcwd(arg1, arg2),
         .Spawn => sys_spawn(arg1, arg2),
         .SetChildReap => sys_set_child_reap(),
         .KShell => sys_kshell(arg1),

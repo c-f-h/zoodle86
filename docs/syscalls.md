@@ -4,6 +4,8 @@ User-mode programs invoke syscalls via `int 0x80` with the syscall number in `ea
 
 Syscall numbers are either the same as that of a Linux syscall which is similar in name and functionality, or > 1000 for project-native ones which have no direct Linux equivalent.
 
+Unless noted otherwise, path-taking syscalls accept either absolute paths or relative paths resolved against the calling task's current working directory. Redundant slashes plus `.` / `..` components are canonicalized before lookup.
+
 | Syscall | Number | Arguments | Returns | Notes |
 |---------|--------|-----------|---------|-------|
 | `read` | 0 | fd, buf_offset, count | bytes read | Reads from filesystem-backed, pipe, tty, or framebuffer character-device fds |
@@ -21,6 +23,7 @@ Syscall numbers are either the same as that of a Linux syscall which is similar 
 | `exit` | 60 | exit_code | — | Terminates task with the given exit code, closes descriptors, and reschedules; does not return |
 | `waitpid` | 61 | pid | exit_status | Blocks until the child with the given PID exits; returns its exit status. Returns `EINVAL` in `ecx` if PID is not a direct child. |
 | `getdents` | 78 | fd, dirent_slice_ptr | entry count | Expects an `AbiSlice` describing a writable `DirEntry` buffer; returns the number of entries written, or 0 at end-of-directory. |
+| `chdir` | 80 | path_offset, path_len | 0 | Changes the calling task's current working directory to the resolved directory path. |
 | `mkdir` | 83 | path_slice | 0 | Creates a directory; path_slice is a userspace address pointing to an `AbiSlice` describing the path |
 | `rmdir` | 84 | path_slice_ptr | 0 | Removes a directory; fails if not empty or in use |
 | `link` | 86 | old_path_slice, new_path_slice | 0 | Creates a hard link from `new_path` to the existing non-directory inode at `old_path` |
@@ -28,8 +31,9 @@ Syscall numbers are either the same as that of a Linux syscall which is similar 
 | `unlink` | 87 | path_offset, path_len | 0 | Removes one filesystem entry by name; open descriptors keep the inode alive until the final close |
 | `symlink` | 88 | target_path_slice, link_path_slice | 0 | Creates a symbolic link whose inode stores the raw target path bytes; relative targets are resolved from the link's parent directory when opened |
 | `ftruncate` | 93 | fd, length | 0 | Resizes a filesystem-backed fd; zero-fills when extending and requires write access |
+| `getcwd` | 183 | buf_offset, buf_len | bytes written | Copies the calling task's current working directory into the caller-provided buffer. |
 | `ioctl` | 156 | fd, command, arg | device-specific | Supports tty mode switching via `IOCTL_TTY_SET_MODE` with `TTY_MODE_CANONICAL`/`TTY_MODE_RAW` and framebuffer metadata queries via `IOCTL_FRAMEBUF_GET_INFO`; tty mode switches return the previous tty mode. |
-| `spawn` | 1001 | argv_slice_ptr, opts_ptr | child PID | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable. `opts_ptr` is 0 (no options) or a pointer to a `SpawnOpts` struct whose `fd_remaps` field is an `AbiSlice` of `(dst_u32, src_u32)` pairs; for each pair the child's `fd[dst]` is set to a copy of the parent's `fd[src]` |
+| `spawn` | 1001 | argv_slice_ptr, opts_ptr | child PID | Reads a userspace `AbiSlice` describing the full argv array; `argv[0]` names the executable. Relative executable paths are resolved against the parent's current working directory, and the child inherits that cwd. `opts_ptr` is 0 (no options) or a pointer to a `SpawnOpts` struct whose `fd_remaps` field is an `AbiSlice` of `(dst_u32, src_u32)` pairs; for each pair the child's `fd[dst]` is set to a copy of the parent's `fd[src]` |
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
 | `kshell` | 1003 | cmdline_slice_ptr | 0 | Executes a kernel shell command string. |
 | `get_cursor` | 1004 | — | `(row << 16) \| col` | Returns the stdout console cursor position (both 0-indexed) packed into a single u32. |

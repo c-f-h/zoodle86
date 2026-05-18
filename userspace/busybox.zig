@@ -1,6 +1,8 @@
 const std = @import("std");
 const sys = @import("sys.zig");
 
+const ansi = sys.ansi;
+
 // ---------------------------------------------------------------------------
 // shared helpers
 // ---------------------------------------------------------------------------
@@ -134,17 +136,14 @@ fn lsEntryTag(kind: sys.InodeKind) []const u8 {
     };
 }
 
-const ansi_reset = "\x1B[0m";
-const ansi_bold = "\x1B[1m";
-
 fn lsEntryColor(kind: sys.InodeKind) []const u8 {
     return switch (kind) {
-        .Directory => "\x1B[34m", // blue
-        .CharDevice => "\x1B[35m", // magenta
-        .BlockDevice => "\x1B[33m", // yellow
-        .Pipe => "\x1B[35m", // magenta
-        .Symlink => "\x1B[36m", // cyan
-        else => ansi_reset,
+        .Directory => ansi.blue,
+        .CharDevice => ansi.magenta,
+        .BlockDevice => ansi.yellow,
+        .Pipe => ansi.magenta,
+        .Symlink => ansi.cyan,
+        else => ansi.reset,
     };
 }
 
@@ -166,7 +165,7 @@ fn lsPrintEntry(name: []const u8, kind: sys.InodeKind, size: u32) bool {
     sys.writeAll(sys.STDOUT, " ") catch return false;
     sys.writeAll(sys.STDOUT, lsEntryColor(kind)) catch return false;
     sys.writeAll(sys.STDOUT, name) catch return false;
-    sys.writeAll(sys.STDOUT, ansi_reset) catch return false;
+    sys.writeAll(sys.STDOUT, ansi.reset) catch return false;
 
     const padding: [16]u8 = @splat(' ');
     if (name.len < 16) {
@@ -214,7 +213,7 @@ fn lsListPath(path: []const u8) bool {
 /// Lists directory contents using the userspace directory-entry syscall.
 fn lsMain(argv: []const []const u8) noreturn {
     var ok = true;
-    const default_paths = [_][]const u8{"/"};
+    const default_paths = [_][]const u8{"."};
     const paths: []const []const u8 = if (argv.len <= 1) default_paths[0..] else argv[1..];
 
     for (paths, 0..) |path, index| {
@@ -222,13 +221,13 @@ fn lsMain(argv: []const []const u8) noreturn {
             if (index != 0) sys.writeAll(sys.STDOUT, "\n") catch {
                 ok = false;
             };
-            sys.writeAll(sys.STDOUT, ansi_bold) catch {
+            sys.writeAll(sys.STDOUT, ansi.bold) catch {
                 ok = false;
             };
             sys.writeAll(sys.STDOUT, lsDisplayName(path)) catch {
                 ok = false;
             };
-            sys.writeAll(sys.STDOUT, ansi_reset ++ ":\n") catch {
+            sys.writeAll(sys.STDOUT, ansi.reset ++ ":\n") catch {
                 ok = false;
             };
         }
@@ -293,7 +292,7 @@ fn findWalkPath(path: []const u8) bool {
 /// Recursively prints each path reachable from the provided starting paths.
 fn findMain(argv: []const []const u8) noreturn {
     var ok = true;
-    const default_paths = [_][]const u8{"/"};
+    const default_paths = [_][]const u8{"."};
     const paths: []const []const u8 = if (argv.len <= 1) default_paths[0..] else argv[1..];
 
     for (paths) |path| {

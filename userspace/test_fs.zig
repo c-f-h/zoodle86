@@ -56,6 +56,13 @@ const stat_dir = tmpdir ++ "/stat_dir";
 const dirent_dir = tmpdir ++ "/dirents";
 const dirent_file = dirent_dir ++ "/entry.txt";
 const dirent_subdir = dirent_dir ++ "/nested";
+const cwd_dir = tmpdir ++ "/cwd";
+const cwd_nested_dir = cwd_dir ++ "/nested";
+const cwd_child_dir = cwd_nested_dir ++ "/child";
+const cwd_file = cwd_dir ++ "/note.txt";
+const cwd_renamed_file = cwd_dir ++ "/renamed.txt";
+const cwd_link_file = cwd_dir ++ "/hard.txt";
+const cwd_symlink_file = cwd_nested_dir ++ "/rel_link.txt";
 const nonexistent_file = "/missing.txt";
 const sector_size = 512;
 const pipe_capacity = 4096;
@@ -68,6 +75,7 @@ const symlink_relative_target = "syl_tgt.txt";
 const symlink_loop_target = "syl_loop.txt";
 const symlink_payload = "symlink payload";
 const stat_payload = "stat payload";
+const cwd_payload = "cwd payload";
 
 fn writeAll(fd: u32, buf: []const u8) !void {
     const written = try expectSyscall(sys.write(fd, buf), "writeAll: write", @src());
@@ -107,6 +115,16 @@ fn expectFlags(actual: u32, expected_mask: u32) !void {
 
 fn expectDirEntryName(actual: *const sys.DirEntry, expected: []const u8) !void {
     if (!std.mem.eql(u8, actual.name[0..actual.name_len], expected)) return error.DataMismatch;
+}
+
+fn expectContains(haystack: []const u8, needle: []const u8) !void {
+    if (std.mem.indexOf(u8, haystack, needle) == null) return error.DataMismatch;
+}
+
+fn expectCwd(expected: []const u8) !void {
+    var cwd_buf: [sys.PATH_MAX]u8 = undefined;
+    const cwd = try expectSyscall(sys.getCwd(&cwd_buf), "expectCwd: getcwd", @src());
+    try expectBytes(cwd, expected);
 }
 
 fn fillChunk(dest: []u8, file_tag: u8, iteration: usize) void {
@@ -646,6 +664,30 @@ fn spawnCatPipePair() !SpawnedCatPipes {
     };
 }
 
+fn captureCommandStdout(path: []const u8, args: []const []const u8, buf: []u8) ![]const u8 {
+    const stdout_read, const stdout_write = try checkSyscall(sys.pipe(), "captureCommandStdout: create stdout pipe", @src());
+    errdefer sys.close(stdout_read) catch {};
+    errdefer sys.close(stdout_write) catch {};
+
+    const fd_remaps = [_]sys.FdRemap{
+        .{ .dst = sys.STDOUT, .src = stdout_write },
+    };
+    const pid = try checkSyscall(sys.spawnOpts(path, args, &fd_remaps), "captureCommandStdout: spawn command", @src());
+    _ = try expectSyscall(sys.close(stdout_write), "captureCommandStdout: close stdout write in parent", @src());
+
+    var used: usize = 0;
+    while (used < buf.len) {
+        const bytes_read = try expectSyscall(sys.read(stdout_read, buf[used..]), "captureCommandStdout: read stdout", @src());
+        if (bytes_read == 0) break;
+        used += bytes_read;
+    }
+    if (used == buf.len) return error.ShortRead;
+
+    _ = try expectSyscall(sys.close(stdout_read), "captureCommandStdout: close stdout read in parent", @src());
+    try expectOffset(try expectSyscall(sys.waitpid(pid), "captureCommandStdout: wait for child", @src()), 0);
+    return buf[0..used];
+}
+
 fn testStat() !void {
     sys.unlink(stat_link) catch {};
     sys.unlink(stat_file) catch {};
@@ -840,6 +882,113 @@ fn testBrokenPipe() !void {
     _ = try expectSyscall(sys.close(write_fd), "testBrokenPipe: close write end", @src());
 }
 
+fn testCwd() !void {
+    var original_cwd_buf: [sys.PATH_MAX]u8 = undefined;
+    const original_cwd = try expectSyscall(sys.getCwd(&original_cwd_buf), "testCwd: get original cwd", @src());
+
+    var restore_cwd_buf: [sys.PATH_MAX]u8 = undefined;
+    @memcpy(restore_cwd_buf[0..original_cwd.len], original_cwd);
+    const restore_cwd = restore_cwd_buf[0..original_cwd.len];
+    defer sys.chdir(restore_cwd) catch {};
+
+    sys.unlink(cwd_symlink_file) catch {};
+    sys.unlink(cwd_link_file) catch {};
+    sys.unlink(cwd_renamed_file) catch {};
+    sys.unlink(cwd_file) catch {};
+    sys.rmdir(cwd_child_dir) catch {};
+    sys.rmdir(cwd_nested_dir) catch {};
+    sys.rmdir(cwd_dir) catch {};
+
+    _ = try expectSyscall(sys.mkdir(cwd_dir), "testCwd: mkdir cwd dir", @src());
+    _ = try expectSyscall(sys.chdir(cwd_dir), "testCwd: chdir cwd dir", @src());
+    try expectCwd(cwd_dir);
+
+    var short_buf: [4]u8 = undefined;
+    try syscallShouldFail(sys.getCwd(&short_buf), "testCwd: getcwd short buffer", @src());
+
+    _ = try expectSyscall(sys.mkdir("nested"), "testCwd: mkdir nested", @src());
+    _ = try expectSyscall(sys.mkdir("nested/child"), "testCwd: mkdir child", @src());
+
+    var dot_stat: sys.Stat = undefined;
+    var dotdot_stat: sys.Stat = undefined;
+    _ = try expectSyscall(sys.stat(".", &dot_stat), "testCwd: stat dot", @src());
+    _ = try expectSyscall(sys.stat("nested/..", &dotdot_stat), "testCwd: stat nested dotdot", @src());
+    if (dot_stat.inode != dotdot_stat.inode) return error.InodeMismatch;
+
+    const create_flags: sys.FileOpenFlags = .{
+        .open_mode = .ReadWrite,
+        .create = true,
+        .truncate = true,
+    };
+    const fd = try expectSyscall(sys.open("note.txt", create_flags), "testCwd: create note", @src());
+    try writeAll(fd, cwd_payload);
+    _ = try expectSyscall(sys.close(fd), "testCwd: close note", @src());
+
+    _ = try expectSyscall(sys.rename("note.txt", "./renamed.txt"), "testCwd: rename note", @src());
+    _ = try expectSyscall(sys.link("renamed.txt", "hard.txt"), "testCwd: link renamed", @src());
+    _ = try expectSyscall(sys.symlink("../renamed.txt", "nested/rel_link.txt"), "testCwd: symlink renamed", @src());
+
+    const verify_fd = try expectSyscall(sys.open("nested/../renamed.txt", .{}), "testCwd: open renamed via dotdot", @src());
+    defer sys.close(verify_fd) catch {};
+    var verify_buf: [cwd_payload.len]u8 = undefined;
+    try readExact(verify_fd, &verify_buf);
+    try expectEof(verify_fd);
+    try expectBytes(&verify_buf, cwd_payload);
+
+    const symlink_fd = try expectSyscall(sys.open("nested/rel_link.txt", .{}), "testCwd: open symlink", @src());
+    defer sys.close(symlink_fd) catch {};
+    var symlink_buf: [cwd_payload.len]u8 = undefined;
+    try readExact(symlink_fd, &symlink_buf);
+    try expectEof(symlink_fd);
+    try expectBytes(&symlink_buf, cwd_payload);
+
+    var ls_buf: [256]u8 = undefined;
+    const ls_output = try captureCommandStdout("/bin/ls", &.{}, &ls_buf);
+    try expectContains(ls_output, "renamed.txt");
+    try expectContains(ls_output, "hard.txt");
+    try expectContains(ls_output, "nested");
+
+    const inherited_cwd_pid = try expectSyscall(sys.spawn("/bin/stat", &.{"renamed.txt"}), "testCwd: spawn inherited cwd stat", @src());
+    try expectOffset(try expectSyscall(sys.waitpid(inherited_cwd_pid), "testCwd: wait inherited cwd stat", @src()), 0);
+
+    _ = try expectSyscall(sys.chdir("/bin"), "testCwd: chdir bin", @src());
+    const relative_exec_pid = try expectSyscall(sys.spawn("./stat", &.{cwd_renamed_file}), "testCwd: spawn relative executable", @src());
+    try expectOffset(try expectSyscall(sys.waitpid(relative_exec_pid), "testCwd: wait relative executable", @src()), 0);
+
+    _ = try expectSyscall(sys.chdir(cwd_dir), "testCwd: chdir cwd dir again", @src());
+    _ = try expectSyscall(sys.chdir("nested/child"), "testCwd: chdir child", @src());
+    try expectCwd(cwd_child_dir);
+
+    const child_fd = try expectSyscall(sys.open("../../renamed.txt", .{}), "testCwd: open from child", @src());
+    defer sys.close(child_fd) catch {};
+    var child_buf: [cwd_payload.len]u8 = undefined;
+    try readExact(child_fd, &child_buf);
+    try expectEof(child_fd);
+    try expectBytes(&child_buf, cwd_payload);
+
+    _ = try expectSyscall(sys.chdir("./.."), "testCwd: chdir parent", @src());
+    try expectCwd(cwd_nested_dir);
+    _ = try expectSyscall(sys.chdir(".."), "testCwd: chdir cwd dir from nested", @src());
+    try expectCwd(cwd_dir);
+
+    _ = try expectSyscall(sys.chdir("/"), "testCwd: chdir root", @src());
+    try expectCwd("/");
+
+    const root_fd = try expectSyscall(sys.open("tmp/cwd/renamed.txt", .{}), "testCwd: open from root relative", @src());
+    defer sys.close(root_fd) catch {};
+    var root_buf: [cwd_payload.len]u8 = undefined;
+    try readExact(root_fd, &root_buf);
+    try expectEof(root_fd);
+    try expectBytes(&root_buf, cwd_payload);
+
+    _ = try expectSyscall(sys.unlink(cwd_symlink_file), "testCwd: unlink symlink", @src());
+    _ = try expectSyscall(sys.unlink(cwd_link_file), "testCwd: unlink hard link", @src());
+    _ = try expectSyscall(sys.unlink(cwd_renamed_file), "testCwd: unlink renamed", @src());
+    _ = try expectSyscall(sys.rmdir(cwd_child_dir), "testCwd: rmdir child", @src());
+    _ = try expectSyscall(sys.rmdir(cwd_nested_dir), "testCwd: rmdir nested", @src());
+    _ = try expectSyscall(sys.rmdir(cwd_dir), "testCwd: rmdir cwd dir", @src());
+}
+
 /// Exercises filesystem syscalls with alternating writes, seeks, and unlinks.
 pub fn main(argv: []const []const u8) !void {
     _ = argv;
@@ -904,6 +1053,7 @@ pub fn main(argv: []const []const u8) !void {
     try testRmdir();
     try testPipe();
     try testBrokenPipe();
+    try testCwd();
     try testPipeSpawn();
     try testPipeSpawnWriterCloseWakeup();
 

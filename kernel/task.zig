@@ -76,6 +76,7 @@ pub const Task = struct {
     stack_mem: paging.VMemRange = .{}, // actual extents of current stack (may grow downwards)
 
     fd_table: [MAX_FDS]filedesc.FileDesc = [_]filedesc.FileDesc{.empty} ** MAX_FDS,
+    cwd: []const u8 = &.{},
 
     /// Controlling tty for stdio and interactive input.
     controlling_tty: ?*tty.Tty = null,
@@ -90,6 +91,7 @@ pub const Task = struct {
         task.pid = next_pid;
         next_pid += 1;
         task.initFdTable();
+        task.setCwd("/") catch @panic("failed to initialize task cwd");
 
         const frame: *interrupt_frame.UserInterruptFrame = getReturnFrame(task);
         frame.* = .{
@@ -171,6 +173,10 @@ pub const Task = struct {
     /// Does NOT change state or pid; call terminate() or set state manually after.
     pub fn cleanup(t: *Task) void {
         t.closeTaskFiles();
+        if (t.cwd.len != 0) {
+            kernel.getAllocator().free(t.cwd);
+            t.cwd = &.{};
+        }
         t.kernel_esp = 0;
         t.code_mem.freePages();
         t.data_mem.freePages();
@@ -242,6 +248,32 @@ pub const Task = struct {
     pub fn getFdSlot(task: *Task, fd: u32) ?*filedesc.FileDesc {
         if (fd >= task.fd_table.len) return null;
         return &task.fd_table[fd];
+    }
+
+    /// Returns the task's current working directory as a canonical absolute path.
+    pub fn getCwd(task: *const Task) []const u8 {
+        return if (task.cwd.len == 0) "/" else task.cwd;
+    }
+
+    /// Replaces the task's current working directory with an owned absolute path.
+    pub fn adoptCwd(task: *Task, cwd: []const u8) error{InvalidName}!void {
+        if (cwd.len == 0 or cwd[0] != '/') return error.InvalidName;
+        if (task.cwd.len != 0) {
+            kernel.getAllocator().free(task.cwd);
+        }
+        task.cwd = cwd;
+    }
+
+    /// Replaces the task's current working directory with a duplicated absolute path.
+    pub fn setCwd(task: *Task, cwd: []const u8) error{ OutOfMemory, InvalidName }!void {
+        const owned = try kernel.getAllocator().dupe(u8, cwd);
+        errdefer kernel.getAllocator().free(owned);
+        try task.adoptCwd(owned);
+    }
+
+    /// Copies the parent's current working directory into this task.
+    pub fn inheritCwd(task: *Task, parent: *const Task) error{ OutOfMemory, InvalidName }!void {
+        try task.setCwd(parent.getCwd());
     }
 
     /// Sets the initial instruction and stack pointers for entry into user space.

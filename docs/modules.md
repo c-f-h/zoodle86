@@ -4,7 +4,7 @@ Complete listing of every source file and its role.
 
 ## Core Kernel Modules
 
-- `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, framebuffer metadata records, and the compact key-event layout.
+- `common/abi.zig`: shared syscall ABI definitions imported by both kernel and userspace, including syscall numbers, argv/path slice descriptors, cwd/getcwd constants, stat metadata, fixed-size directory-entry records for `getdents`, spawn fd-remap structs, framebuffer metadata records, and the compact key-event layout.
 - `kernel/stage2.zig`: protected-mode half of the minimal stage-2 loader; sets up paging, mounts the filesystem through a loader-only read path, loads the `kernel` ELF binary, and runs it.
 - `kernel/kernel.zig`: main kernel entry point: sets up GDT, interrupt handling, memory management, mounts the filesystem, and launches the kernel shell.
 - `kernel/gfx/framebuf.zig`: boot framebuffer support; validates stage-2 VBE metadata, maps the linear framebuffer, exposes low-level pixel/fill/text helpers for graphics-mode rendering, and provides a `/dev/fb0` character device for raw byte access.
@@ -24,7 +24,7 @@ Complete listing of every source file and its role.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
 - `kernel/pci.zig`: PCI config-space access and bus enumeration, including multi-host-controller root scanning and PCI-to-PCI bridge traversal.
-- `kernel/task.zig`: task/process management with a stack-first 8 KiB per-task kernel stack region, seeded user/kernel resume frames, per-task page directories, user memory regions, file descriptor mappings, controlling-tty binding for stdio, and wait queues for `waitpid`.
+- `kernel/task.zig`: task/process management with a stack-first 8 KiB per-task kernel stack region, seeded user/kernel resume frames, per-task page directories, owned current-working-directory strings, user memory regions, file descriptor mappings, controlling-tty binding for stdio, and wait queues for `waitpid`.
 - `kernel/interrupt_frame.zig`: stack frame layouts for both normalized user interrupt returns and saved kernel-yield resume points.
 - `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with an unmapped 8 KiB guard region immediately before each task and round-robin scheduling over the entry array.
 - `kernel/waitqueue.zig`: intrusive singly-linked WaitQueue; tasks blocked on an event are added as heap-allocated nodes and freed when woken via `wakeOne`/`wakeAll`.
@@ -33,7 +33,7 @@ Complete listing of every source file and its role.
 - `kernel/ansi.zig`: low-level incremental ANSI/VT100 escape parser that tokenizes ESC/CSI sequences for higher-level consumers such as `console.zig`.
 - `kernel/pipe.zig`: in-memory pipe objects with reader/writer counts and ring-buffer-backed byte transport between file descriptors.
 - `kernel/ringbuf.zig`: fixed-capacity byte ring buffer used by the pipe implementation.
-- `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode.
+- `kernel/syscall.zig`: syscall implementation; dispatches on `int 0x80` calls from user mode, including cwd-aware path syscalls plus `chdir`/`getcwd`.
 
 ## Console & Input/Output
 
@@ -47,7 +47,7 @@ Complete listing of every source file and its role.
 
 - `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
 - `kernel/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` operations, including optional seekable byte-offset support.
-- `kernel/fs/vfs.zig`: virtual filesystem layer providing a unified interface to filesystem operations. Mounts the root filesystem on IDE and forwards operations to the underlying filesystem implementation. Exports public API for path operations, file I/O, directory manipulation, and special-file handling without exposing filesystem-specific details.
+- `kernel/fs/vfs.zig`: virtual filesystem layer providing a unified interface to filesystem operations. Mounts the root filesystem on IDE and forwards operations to the underlying filesystem implementation. Exports public API for cwd-aware path canonicalization (`.` / `..`, redundant slashes), file I/O, directory manipulation, and special-file handling without exposing filesystem-specific details.
 - `kernel/fs/zodfs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction. Implements the ZOD2 format with superblock, block bitmap, inode table, and data region.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.
 - `kernel/ide.zig`: IDE/ATA disk controller with LBA28 addressing, sector-level I/O. Also provides `IdeBlockDevice`, a concrete `BlockDevice` implementation backed by an ATA drive.
@@ -80,9 +80,9 @@ Complete listing of every source file and its role.
 - `userspace/test_fs.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, hard links, symlinks, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/test_alloc.zig`: heap allocator stress test covering allocate/free/realloc behavior.
-- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, supports multi-stage pipelines plus left-to-right `<`, `>`, and `>>` redirections, persists history in `/var/history`, and provides `history`, `exit`/`quit`, plus `!cmd` kernel-shell escapes.
+- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; shows the current working directory in the prompt, resolves and runs commands from `/bin`, supports multi-stage pipelines plus left-to-right `<`, `>`, and `>>` redirections, persists history in `/var/history`, and provides `cd`, `pwd`, `history`, `exit`/`quit`, plus `!cmd` kernel-shell escapes.
 - `userspace/fbdemo.zig`: userspace framebuffer demo that opens `/dev/fb0`, queries metadata via ioctl, snapshots the device contents, draws a small colour-pattern test image through fd I/O, waits for a keypress, and restores the original pixels.
-- `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers plus fd-backed `std.Io.Reader`/`std.Io.Writer` adapters, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`, including `FrameBufInfo`.
+- `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers plus fd-backed `std.Io.Reader`/`std.Io.Writer` adapters, cwd helpers (`chdir`, `getCwd`), linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`, including `FrameBufInfo`.
 
 ## Build Configuration
 

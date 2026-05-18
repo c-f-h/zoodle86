@@ -22,6 +22,7 @@ pub const AbiSlice = extern struct {
 /// Maximum number of arguments supported in the argv startup array.
 pub const MAX_ARGV_COUNT = 128;
 pub const DIRENT_NAME_MAX: usize = 16;
+pub const PATH_MAX: usize = 512;
 
 /// Userspace-visible syscall numbers dispatched through int 0x80.
 pub const Syscall = enum(u32) {
@@ -40,13 +41,15 @@ pub const Syscall = enum(u32) {
     Exit = 60,
     WaitPid = 61,
     GetDents = 78,
+    Chdir = 80,
+    Rename = 82,
     Mkdir = 83,
     Rmdir = 84,
     Link = 86,
     Unlink = 87,
     Symlink = 88,
-    Rename = 82,
     Ftruncate = 93,
+    GetCwd = 183,
     Ioctl = 156,
     Spawn = 1001,
     SetChildReap = 1002,

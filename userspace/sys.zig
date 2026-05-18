@@ -8,6 +8,7 @@ pub const INVALID_FD: u32 = 0xFFFF_FFFF;
 
 pub const AbiSlice = abi.AbiSlice;
 pub const MAX_ARGV_COUNT = abi.MAX_ARGV_COUNT;
+pub const PATH_MAX = abi.PATH_MAX;
 pub const Errno = abi.Errno;
 pub const FileOpenMode = abi.FileOpenMode;
 pub const FileOpenFlags = abi.FileOpenFlags;
@@ -346,6 +347,11 @@ pub fn stat(path: []const u8, out: *Stat) SyscallError!void {
     _ = try syscall(.Stat, @intFromPtr(&AbiSlice.fromSlice(u8, path)), @intFromPtr(out), 0);
 }
 
+/// Changes the calling process's current working directory.
+pub fn chdir(path: []const u8) SyscallError!void {
+    _ = try syscall(.Chdir, @intFromPtr(path.ptr), @intCast(path.len), 0);
+}
+
 /// Reads metadata for an open file descriptor into `out`.
 pub fn fstat(fd: u32, out: *Stat) SyscallError!void {
     _ = try syscall(.Fstat, fd, @intFromPtr(out), 0);
@@ -391,6 +397,12 @@ pub fn getpid() u32 {
 pub fn getCursor() struct { row: u32, col: u32 } {
     const packed_pos = syscall(.GetCursor, 0, 0, 0) catch unreachable;
     return .{ .row = packed_pos >> 16, .col = packed_pos & 0xFFFF };
+}
+
+/// Copies the current working directory into `buf` and returns the populated prefix.
+pub fn getCwd(buf: []u8) SyscallError![]const u8 {
+    const len = try syscall(.GetCwd, @intFromPtr(buf.ptr), @intCast(buf.len), 0);
+    return buf[0..len];
 }
 
 /// Reads framebuffer metadata through a framebuffer file descriptor.
@@ -639,3 +651,27 @@ export fn argvStartup(argv: *const AbiSlice) callconv(.c) noreturn {
     };
     exit(0);
 }
+
+pub const ansi = struct {
+    pub const reset = "\x1b[0m";
+    pub const bold = "\x1b[1m";
+    pub const normal = "\x1b[22m";
+
+    pub const black = "\x1b[30m";
+    pub const red = "\x1b[31m";
+    pub const green = "\x1b[32m";
+    pub const yellow = "\x1b[33m";
+    pub const blue = "\x1b[34m";
+    pub const magenta = "\x1b[35m";
+    pub const cyan = "\x1b[36m";
+    pub const white = "\x1b[37m";
+
+    pub const gray = "\x1b[90m";
+    pub const bright_red = "\x1b[91m";
+    pub const bright_green = "\x1b[92m";
+    pub const bright_yellow = "\x1b[93m";
+    pub const bright_blue = "\x1b[94m";
+    pub const bright_magenta = "\x1b[95m";
+    pub const bright_cyan = "\x1b[96m";
+    pub const bright_white = "\x1b[97m";
+};

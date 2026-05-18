@@ -248,8 +248,8 @@ pub const Stat = abi.Stat;
 const DirEntry = abi.DirEntry;
 const SeekWhence = abi.SeekWhence;
 
-pub fn openFileDesc(path: []const u8, flags: u32) vfs.FsError!FileDesc {
-    return FileDesc{ .file = try vfs.createOpenFileEntry(path, flags) };
+pub fn openFileDesc(cwd: []const u8, path: []const u8, flags: u32) vfs.FsError!FileDesc {
+    return FileDesc{ .file = try vfs.createOpenFileEntryAt(cwd, path, flags) };
 }
 
 fn openTty(index: u8, access_mode: u32) ?FileDesc {
@@ -276,11 +276,11 @@ fn openFramebuf(minor: u8, access_mode: u32) vfs.FsError!?FileDesc {
 }
 
 /// Open a special device inode and map it to a device descriptor.
-fn tryOpenSpecialInode(path: []const u8, flags: u32) vfs.FsError!?FileDesc {
+fn tryOpenSpecialInode(cwd: []const u8, path: []const u8, flags: u32) vfs.FsError!?FileDesc {
     if (path.len == 0 or std.mem.eql(u8, path, "/")) return null;
 
     const access_mode = try validateOpenFlags(flags);
-    const st = vfs.stat(path, true) catch |err| switch (err) {
+    const st = vfs.statAt(cwd, path, true) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
@@ -299,9 +299,10 @@ fn tryOpenSpecialInode(path: []const u8, flags: u32) vfs.FsError!?FileDesc {
 /// Opens or creates a filesystem-backed descriptor for a task.
 pub fn openFile(ptask: *task.Task, path: []const u8, flags: u32) FiledescError!u32 {
     const fd = ptask.findFreeFd() orelse return error.ProcessFileTableFull;
+    const cwd = ptask.getCwd();
     const filedesc =
-        try tryOpenSpecialInode(path, flags) orelse
-        try openFileDesc(path, flags);
+        try tryOpenSpecialInode(cwd, path, flags) orelse
+        try openFileDesc(cwd, path, flags);
     ptask.setFdSlot(fd, filedesc);
     return fd;
 }

@@ -3,6 +3,8 @@ const heap = @import("allocator.zig");
 const readline = @import("readline.zig");
 const sys = @import("sys.zig");
 
+const ansi = sys.ansi;
+
 const executable_search_path = [_][]const u8{
     "/bin",
 };
@@ -166,6 +168,12 @@ const ParseError = error{
     UnexpectedPipe,
 };
 
+const BuiltinResult = enum {
+    none,
+    handled,
+    exit_shell,
+};
+
 /// Runs an interactive userspace shell with pipelines and file redirections.
 pub fn main(_: []const []const u8) !void {
     const alloc = heap.getAllocator();
@@ -182,7 +190,8 @@ pub fn main(_: []const []const u8) !void {
         }
         rl.setHistory(history_view[0..history_len]);
 
-        rl.init("$ ");
+        var prompt_buf: [sys.PATH_MAX + 3]u8 = undefined;
+        rl.init(buildPrompt(&prompt_buf));
         const line = rl.readLine() catch |err| {
             if (err == error.EOF) {
                 _ = sys.write(sys.STDOUT, "\n") catch {};
@@ -197,35 +206,26 @@ pub fn main(_: []const []const u8) !void {
         history.push(trimmed);
         saveHistory(&history);
 
-        if (std.mem.eql(u8, trimmed, "history")) {
-            history.print();
+        var tokens_buf: [MAX_SHELL_TOKENS][]const u8 = undefined;
+        const tokens = tokenizeShellCommandLine(trimmed, &tokens_buf) orelse {
+            writeLine("shell: too many arguments\n");
             continue;
+        };
+        if (tokens.len == 0) continue;
+
+        switch (handleBuiltin(&history, trimmed, tokens)) {
+            .none => {},
+            .handled => continue,
+            .exit_shell => return,
         }
 
-        if (trimmed[0] == '!') {
-            // kernel shell escape
-            sys.kshell(trimmed[1..]) catch {
-                writeLine("shell: kernel shell command failed\n");
-            };
-            continue;
-        }
-
-        if (std.mem.eql(u8, trimmed, "exit") or std.mem.eql(u8, trimmed, "quit")) {
-            return;
-        }
-
-        runCommandLine(alloc, trimmed) catch |err| {
+        runCommandLine(alloc, tokens) catch |err| {
             writeError("shell: internal error: ", @errorName(err));
         };
     }
 }
 
-fn runCommandLine(alloc: std.mem.Allocator, line: []const u8) !void {
-    var tokens_buf: [MAX_SHELL_TOKENS][]const u8 = undefined;
-    const tokens = tokenizeShellCommandLine(line, &tokens_buf) orelse {
-        writeLine("shell: too many arguments\n");
-        return;
-    };
+fn runCommandLine(alloc: std.mem.Allocator, tokens: []const []const u8) !void {
     if (tokens.len == 0) return;
 
     var stage_buf: [MAX_SHELL_STAGES]CommandStage = undefined;
@@ -236,6 +236,43 @@ fn runCommandLine(alloc: std.mem.Allocator, line: []const u8) !void {
         return;
     };
     try runParsedCommandLine(alloc, parsed);
+}
+
+fn handleBuiltin(history: *const ShellHistory, trimmed: []const u8, tokens: []const []const u8) BuiltinResult {
+    if (trimmed[0] == '!') {
+        sys.kshell(trimmed[1..]) catch {
+            writeLine("shell: kernel shell command failed\n");
+        };
+        return .handled;
+    }
+
+    if (tokens.len == 1 and std.mem.eql(u8, tokens[0], "history")) {
+        history.print();
+        return .handled;
+    }
+
+    if (tokens.len == 1 and std.mem.eql(u8, tokens[0], "pwd")) {
+        writePwd();
+        return .handled;
+    }
+
+    if (std.mem.eql(u8, tokens[0], "cd")) {
+        if (tokens.len > 2) {
+            writeLine("Usage: cd [path]\n");
+        } else {
+            const target = if (tokens.len == 1) "/" else tokens[1];
+            sys.chdir(target) catch {
+                writeError("shell: failed to change directory: ", target);
+            };
+        }
+        return .handled;
+    }
+
+    if (tokens.len == 1 and (std.mem.eql(u8, tokens[0], "exit") or std.mem.eql(u8, tokens[0], "quit"))) {
+        return .exit_shell;
+    }
+
+    return .none;
 }
 
 fn parseCommandLine(
@@ -480,6 +517,22 @@ fn waitForChild(pid: u32) bool {
         return false;
     };
     return true;
+}
+
+fn buildPrompt(buf: []u8) []const u8 {
+    var cwd_buf: [sys.PATH_MAX]u8 = undefined;
+    const cwd = sys.getCwd(&cwd_buf) catch return "$ ";
+    return std.fmt.bufPrint(buf, ansi.gray ++ "{s}" ++ ansi.reset ++ "$ ", .{cwd}) catch "$ ";
+}
+
+fn writePwd() void {
+    var cwd_buf: [sys.PATH_MAX]u8 = undefined;
+    const cwd = sys.getCwd(&cwd_buf) catch {
+        writeLine("shell: failed to get cwd\n");
+        return;
+    };
+    sys.writeAll(sys.STDOUT, cwd) catch return;
+    sys.writeAll(sys.STDOUT, "\n") catch {};
 }
 
 fn tokenizeShellCommandLine(cmdline: []const u8, buf: *[MAX_SHELL_TOKENS][]const u8) ?[]const []const u8 {

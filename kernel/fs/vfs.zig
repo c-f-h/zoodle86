@@ -72,17 +72,33 @@ pub fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } 
 
 /// Returns stat-like metadata for a filesystem path; can optionally follow a final symlink.
 pub fn stat(path: []const u8, follow_final: bool) FsError!Stat {
-    const inode = try resolvePathInode(path, follow_final);
+    return statAt("/", path, follow_final);
+}
+
+/// Returns stat-like metadata for a filesystem path resolved against `cwd`.
+pub fn statAt(cwd: []const u8, path: []const u8, follow_final: bool) FsError!Stat {
+    const inode = try resolvePathInodeAt(cwd, path, follow_final);
     defer root_fs.drop(inode);
     return try root_fs.statInode(inode);
 }
 
 /// Returns true if a file, directory, or symlink exists at the given path.
 pub fn pathExists(path: []const u8) FsError!bool {
-    if (path.len == 0) return error.InvalidName;
-    if (std.mem.trim(u8, path, "/").len == 0) return true;
+    return pathExistsAt("/", path);
+}
 
-    _ = resolvePath(path, .{ .follow_final = false }) catch |err| switch (err) {
+/// Returns true if a file, directory, or symlink exists at the given path resolved against `cwd`.
+pub fn pathExistsAt(cwd: []const u8, path: []const u8) FsError!bool {
+    if (path.len == 0) return error.InvalidName;
+
+    const allocator = kernel.getAllocator();
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    if (std.mem.eql(u8, canonical, "/")) {
+        allocator.free(canonical);
+        return true;
+    }
+
+    _ = resolvePathCanonicalOwned(canonical, .{ .follow_final = false }) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -91,7 +107,12 @@ pub fn pathExists(path: []const u8) FsError!bool {
 
 /// Reads an entire file, following a final symlink when present.
 pub fn getFileContents(allocator: std.mem.Allocator, path: []const u8) (FsError || error{OutOfMemory})![]u8 {
-    const inode = try resolvePathInode(path, true);
+    return getFileContentsAt(allocator, "/", path);
+}
+
+/// Reads an entire file resolved against `cwd`, following a final symlink when present.
+pub fn getFileContentsAt(allocator: std.mem.Allocator, cwd: []const u8, path: []const u8) (FsError || error{OutOfMemory})![]u8 {
+    const inode = try resolvePathInodeAt(cwd, path, true);
     defer root_fs.drop(inode);
     return readInodeContents(&root_fs, allocator, inode);
 }
@@ -110,8 +131,17 @@ pub fn readInodeContents(fs: *const zodfs.FileSystem, allocator: std.mem.Allocat
 
 /// Creates or overwrites a file with the given path, following a final symlink when present.
 pub fn writeFileContents(path: []const u8, data: []const u8) FsError!void {
+    return writeFileContentsAt("/", path, data);
+}
+
+/// Creates or overwrites a file resolved against `cwd`, following a final symlink when present.
+pub fn writeFileContentsAt(cwd: []const u8, path: []const u8, data: []const u8) FsError!void {
     const allocator = kernel.getAllocator();
-    const inode = switch (try resolvePath(path, .{ .follow_final = true, .allow_missing_final = true })) {
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    const inode = if (std.mem.eql(u8, canonical, "/")) blk: {
+        allocator.free(canonical);
+        break :blk root_fs.dup(root_fs.getRootInode());
+    } else switch (try resolvePathCanonicalOwned(canonical, .{ .follow_final = true, .allow_missing_final = true })) {
         .found => |resolved| blk: {
             defer root_fs.drop(resolved.parent_inode);
             break :blk try root_fs.getInode(resolved.entry.inode_index);
@@ -120,7 +150,7 @@ pub fn writeFileContents(path: []const u8, data: []const u8) FsError!void {
             defer allocator.free(expanded_path);
             const split = splitPath(expanded_path);
             const parent_path = if (split.dir.len == 0) "/" else split.dir;
-            const parent_inode = try resolvePathInode(parent_path, true);
+            const parent_inode = try resolvePathInodeCanonical(parent_path, true);
             defer root_fs.drop(parent_inode);
             break :blk try root_fs.createFile(parent_inode, split.name);
         },
@@ -135,9 +165,20 @@ pub fn writeFileContents(path: []const u8, data: []const u8) FsError!void {
 /// new_path. Directories cannot be moved. Open descriptors keep the replaced inode alive until the
 /// final close, but the destination path switches to the source inode immediately.
 pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
+    return moveFileAt("/", old_path, new_path);
+}
+
+/// Moves a file from `old_path` to `new_path`, resolving both paths against `cwd`.
+pub fn moveFileAt(cwd: []const u8, old_path: []const u8, new_path: []const u8) FsError!void {
     if (std.mem.eql(u8, old_path, new_path)) return;
 
-    const src = switch (try resolvePath(old_path, .{ .follow_final = false })) {
+    const allocator = kernel.getAllocator();
+    const old_canonical = try canonicalizePath(allocator, cwd, old_path);
+    if (std.mem.eql(u8, old_canonical, "/")) {
+        allocator.free(old_canonical);
+        return error.InvalidName;
+    }
+    const src = switch (try resolvePathCanonicalOwned(old_canonical, .{ .follow_final = false })) {
         .found => |resolved| resolved,
         .missing_final => unreachable,
     };
@@ -147,8 +188,10 @@ pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
     const src_inode = try root_fs.getInode(src.entry.inode_index);
     defer root_fs.drop(src_inode);
 
-    const new_split = splitPath(new_path);
-    const dst_parent_inode = try resolveParentDirectory(new_path);
+    const new_canonical = try canonicalizePath(allocator, cwd, new_path);
+    defer allocator.free(new_canonical);
+    const new_split = splitPath(new_canonical);
+    const dst_parent_inode = try resolveParentDirectoryCanonical(new_canonical);
     defer root_fs.drop(dst_parent_inode);
 
     const existing = try root_fs.findDirEntryAndIndex(dst_parent_inode, new_split.name);
@@ -164,7 +207,18 @@ pub fn moveFile(old_path: []const u8, new_path: []const u8) FsError!void {
 
 /// Creates a new hard link to an existing non-directory inode.
 pub fn linkFile(old_path: []const u8, new_path: []const u8) FsError!void {
-    const source = switch (try resolvePath(old_path, .{ .follow_final = false })) {
+    return linkFileAt("/", old_path, new_path);
+}
+
+/// Creates a new hard link to an existing non-directory inode, resolving both paths against `cwd`.
+pub fn linkFileAt(cwd: []const u8, old_path: []const u8, new_path: []const u8) FsError!void {
+    const allocator = kernel.getAllocator();
+    const old_canonical = try canonicalizePath(allocator, cwd, old_path);
+    if (std.mem.eql(u8, old_canonical, "/")) {
+        allocator.free(old_canonical);
+        return error.InvalidName;
+    }
+    const source = switch (try resolvePathCanonicalOwned(old_canonical, .{ .follow_final = false })) {
         .found => |resolved| resolved,
         .missing_final => unreachable,
     };
@@ -173,16 +227,26 @@ pub fn linkFile(old_path: []const u8, new_path: []const u8) FsError!void {
     const target_inode = try root_fs.getInode(source.entry.inode_index);
     defer root_fs.drop(target_inode);
 
-    const split = splitPath(new_path);
-    const parent_inode = try resolveParentDirectory(new_path);
+    const new_canonical = try canonicalizePath(allocator, cwd, new_path);
+    defer allocator.free(new_canonical);
+    const split = splitPath(new_canonical);
+    const parent_inode = try resolveParentDirectoryCanonical(new_canonical);
     defer root_fs.drop(parent_inode);
 
     try root_fs.createLink(parent_inode, split.name, target_inode);
 }
 
 pub fn createDirectory(path: []const u8) FsError!void {
-    const split = splitPath(path);
-    const parent_inode = try resolveParentDirectory(path);
+    return createDirectoryAt("/", path);
+}
+
+/// Creates a directory at the given path resolved against `cwd`.
+pub fn createDirectoryAt(cwd: []const u8, path: []const u8) FsError!void {
+    const allocator = kernel.getAllocator();
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    defer allocator.free(canonical);
+    const split = splitPath(canonical);
+    const parent_inode = try resolveParentDirectoryCanonical(canonical);
     defer root_fs.drop(parent_inode);
 
     const inode = try root_fs.createDirectory(parent_inode, split.name);
@@ -191,8 +255,16 @@ pub fn createDirectory(path: []const u8) FsError!void {
 
 /// Creates a symbolic link whose contents are the raw target path bytes.
 pub fn symlink(target_path: []const u8, link_path: []const u8) FsError!void {
-    const split = splitPath(link_path);
-    const parent_inode = try resolveParentDirectory(link_path);
+    return symlinkAt("/", target_path, link_path);
+}
+
+/// Creates a symbolic link at `link_path` resolved against `cwd`.
+pub fn symlinkAt(cwd: []const u8, target_path: []const u8, link_path: []const u8) FsError!void {
+    const allocator = kernel.getAllocator();
+    const canonical = try canonicalizePath(allocator, cwd, link_path);
+    defer allocator.free(canonical);
+    const split = splitPath(canonical);
+    const parent_inode = try resolveParentDirectoryCanonical(canonical);
     defer root_fs.drop(parent_inode);
 
     try root_fs.createSymlink(parent_inode, split.name, target_path);
@@ -200,7 +272,18 @@ pub fn symlink(target_path: []const u8, link_path: []const u8) FsError!void {
 
 /// Removes an empty directory.
 pub fn removeDirectory(path: []const u8) FsError!void {
-    const resolved = switch (try resolvePath(path, .{ .follow_final = false })) {
+    return removeDirectoryAt("/", path);
+}
+
+/// Removes an empty directory resolved against `cwd`.
+pub fn removeDirectoryAt(cwd: []const u8, path: []const u8) FsError!void {
+    const allocator = kernel.getAllocator();
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    if (std.mem.eql(u8, canonical, "/")) {
+        allocator.free(canonical);
+        return error.InvalidName;
+    }
+    const resolved = switch (try resolvePathCanonicalOwned(canonical, .{ .follow_final = false })) {
         .found => |entry| entry,
         .missing_final => unreachable,
     };
@@ -211,7 +294,18 @@ pub fn removeDirectory(path: []const u8) FsError!void {
 
 /// Unlinks a filesystem path. Open descriptors keep the inode alive until the final close.
 pub fn unlink(path: []const u8) FsError!void {
-    const resolved = switch (try resolvePath(path, .{ .follow_final = false })) {
+    return unlinkAt("/", path);
+}
+
+/// Unlinks a filesystem path resolved against `cwd`.
+pub fn unlinkAt(cwd: []const u8, path: []const u8) FsError!void {
+    const allocator = kernel.getAllocator();
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    if (std.mem.eql(u8, canonical, "/")) {
+        allocator.free(canonical);
+        return error.InvalidName;
+    }
+    const resolved = switch (try resolvePathCanonicalOwned(canonical, .{ .follow_final = false })) {
         .found => |entry| entry,
         .missing_final => unreachable,
     };
@@ -255,14 +349,21 @@ pub fn getOpenFile(index: u8) *OpenFile {
 
 /// Opens or creates a filesystem-backed descriptor, not bound to a particular task.
 pub fn createOpenFileEntry(path: []const u8, flags: u32) FsError!u8 {
+    return createOpenFileEntryAt("/", path, flags);
+}
+
+/// Opens or creates a filesystem-backed descriptor using `cwd` for relative path resolution.
+pub fn createOpenFileEntryAt(cwd: []const u8, path: []const u8, flags: u32) FsError!u8 {
     if (path.len == 0) return error.InvalidName;
 
     const access_mode = try filedesc.validateOpenFlags(flags);
     const open_index = findFreeOpenFileIndex() orelse return error.SystemFileTableFull;
     const allocator = kernel.getAllocator();
-    const inode = if (std.mem.trim(u8, path, "/").len == 0)
-        root_fs.dup(root_fs.getRootInode())
-    else switch (try resolvePath(path, .{ .follow_final = true, .allow_missing_final = true })) {
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    const inode = if (std.mem.eql(u8, canonical, "/")) blk: {
+        allocator.free(canonical);
+        break :blk root_fs.dup(root_fs.getRootInode());
+    } else switch (try resolvePathCanonicalOwned(canonical, .{ .follow_final = true, .allow_missing_final = true })) {
         .found => |resolved| blk: {
             defer root_fs.drop(resolved.parent_inode);
             break :blk try root_fs.getInode(resolved.entry.inode_index);
@@ -273,7 +374,7 @@ pub fn createOpenFileEntry(path: []const u8, flags: u32) FsError!u8 {
 
             const split = splitPath(expanded_path);
             const parent_path = if (split.dir.len == 0) "/" else split.dir;
-            const parent_inode = try resolvePathInode(parent_path, true);
+            const parent_inode = try resolvePathInodeCanonical(parent_path, true);
             defer root_fs.drop(parent_inode);
             break :blk try root_fs.createFile(parent_inode, split.name);
         },
@@ -360,17 +461,58 @@ pub fn readDirEntries(file_index: u8, dest: []abi.DirEntry) FsError!usize {
     return out_count;
 }
 
-/// Canonicalize an absolute path by removing redundant and trailing slashes.
-fn normalizePath(allocator: std.mem.Allocator, path: []const u8) FsError![]u8 {
-    if (path.len == 0 or path[0] != '/') return error.InvalidName;
+fn popLastPathComponent(path: []u8, len: *usize) void {
+    if (len.* <= 1) {
+        len.* = 1;
+        return;
+    }
 
-    const trimmed = std.mem.trim(u8, path, "/");
-    if (trimmed.len == 0) return allocator.dupe(u8, "/");
+    var i = len.* - 1;
+    while (i > 0 and path[i] != '/') : (i -= 1) {}
+    len.* = if (i == 0) 1 else i;
+}
 
-    const normalized = try allocator.alloc(u8, trimmed.len + 1);
-    normalized[0] = '/';
-    @memcpy(normalized[1..], trimmed);
-    return normalized;
+/// Canonicalizes `path` against `cwd`, collapsing repeated slashes and `.` / `..`.
+pub fn canonicalizePath(allocator: std.mem.Allocator, cwd: []const u8, path: []const u8) FsError![]u8 {
+    if (path.len == 0) return error.InvalidName;
+    if (cwd.len == 0 or cwd[0] != '/') return error.InvalidName;
+
+    const base_len = if (path[0] == '/') 1 else cwd.len + @intFromBool(!std.mem.eql(u8, cwd, "/"));
+    var normalized = try allocator.alloc(u8, base_len + path.len);
+    var out_len: usize = 0;
+
+    if (path[0] == '/') {
+        normalized[0] = '/';
+        out_len = 1;
+    } else {
+        @memcpy(normalized[0..cwd.len], cwd);
+        out_len = cwd.len;
+    }
+
+    var cursor: usize = 0;
+    while (cursor < path.len) {
+        while (cursor < path.len and path[cursor] == '/') : (cursor += 1) {}
+        if (cursor == path.len) break;
+
+        const component_start = cursor;
+        while (cursor < path.len and path[cursor] != '/') : (cursor += 1) {}
+        const component = path[component_start..cursor];
+
+        if (std.mem.eql(u8, component, ".")) continue;
+        if (std.mem.eql(u8, component, "..")) {
+            popLastPathComponent(normalized, &out_len);
+            continue;
+        }
+
+        if (out_len != 1) {
+            normalized[out_len] = '/';
+            out_len += 1;
+        }
+        @memcpy(normalized[out_len .. out_len + component.len], component);
+        out_len += component.len;
+    }
+
+    return allocator.realloc(normalized, out_len);
 }
 
 fn expandSymlinkPath(allocator: std.mem.Allocator, parent_path: []const u8, target_path: []const u8, suffix: []const u8) FsError![]u8 {
@@ -400,14 +542,14 @@ fn expandSymlinkPath(allocator: std.mem.Allocator, parent_path: []const u8, targ
     }
     @memcpy(raw_path[cursor .. cursor + suffix.len], suffix);
 
-    const normalized = try normalizePath(allocator, raw_path);
+    const normalized = try canonicalizePath(allocator, "/", raw_path);
     allocator.free(raw_path);
     return normalized;
 }
 
-fn resolvePath(path: []const u8, options: ResolveOptions) FsError!ResolveResult {
+fn resolvePathCanonicalOwned(initial_path: []u8, options: ResolveOptions) FsError!ResolveResult {
     const allocator = kernel.getAllocator();
-    var current_path = try normalizePath(allocator, path);
+    var current_path = initial_path;
     var keep_path = false;
     defer if (!keep_path) allocator.free(current_path);
 
@@ -488,11 +630,19 @@ fn resolvePath(path: []const u8, options: ResolveOptions) FsError!ResolveResult 
 }
 
 /// Resolves a path to an inode, optionally following a final symlink. The returned inode must be dropped by the caller.
-fn resolvePathInode(path: []const u8, follow_final: bool) FsError!*zodfs.DiskInode {
+fn resolvePathInodeAt(cwd: []const u8, path: []const u8, follow_final: bool) FsError!*zodfs.DiskInode {
     if (path.len == 0) return error.InvalidName;
-    if (std.mem.trim(u8, path, "/").len == 0) return root_fs.dup(root_fs.getRootInode());
+    const canonical = try canonicalizePath(kernel.getAllocator(), cwd, path);
+    return resolvePathInodeCanonicalOwned(canonical, follow_final);
+}
 
-    const resolved = switch (try resolvePath(path, .{ .follow_final = follow_final })) {
+fn resolvePathInodeCanonicalOwned(canonical: []u8, follow_final: bool) FsError!*zodfs.DiskInode {
+    if (std.mem.eql(u8, canonical, "/")) {
+        kernel.getAllocator().free(canonical);
+        return root_fs.dup(root_fs.getRootInode());
+    }
+
+    const resolved = switch (try resolvePathCanonicalOwned(canonical, .{ .follow_final = follow_final })) {
         .found => |entry| entry,
         .missing_final => unreachable,
     };
@@ -500,11 +650,27 @@ fn resolvePathInode(path: []const u8, follow_final: bool) FsError!*zodfs.DiskIno
     return try root_fs.getInode(resolved.entry.inode_index);
 }
 
-fn resolveParentDirectory(path: []const u8) FsError!*zodfs.DiskInode {
+fn resolvePathInodeCanonical(path: []const u8, follow_final: bool) FsError!*zodfs.DiskInode {
+    return resolvePathInodeCanonicalOwned(try kernel.getAllocator().dupe(u8, path), follow_final);
+}
+
+fn resolveParentDirectoryCanonical(path: []const u8) FsError!*zodfs.DiskInode {
     const split = splitPath(path);
     const parent_path = if (split.dir.len == 0) "/" else split.dir;
-    const parent_inode = try resolvePathInode(parent_path, true);
+    const parent_inode = try resolvePathInodeCanonical(parent_path, true);
     errdefer root_fs.drop(parent_inode);
     if (parent_inode.kind != .Directory) return error.NotADirectory;
     return parent_inode;
+}
+
+/// Resolves `path` against `cwd`, ensuring it names a directory, and returns the canonical path.
+pub fn changeDirectory(cwd: []const u8, path: []const u8) FsError![]u8 {
+    const allocator = kernel.getAllocator();
+    const canonical = try canonicalizePath(allocator, cwd, path);
+    errdefer allocator.free(canonical);
+
+    const inode = try resolvePathInodeCanonical(canonical, true);
+    defer root_fs.drop(inode);
+    if (inode.kind != .Directory) return error.NotADirectory;
+    return canonical;
 }
