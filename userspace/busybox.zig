@@ -20,6 +20,44 @@ fn err_toolFailedTo(tool: []const u8, action: []const u8, path: []const u8) void
     sys.writeAll(sys.STDERR, msg) catch {};
 }
 
+const OptResult = union(enum) {
+    Bool: *bool,
+};
+
+const OptSpec = struct {
+    short: ?u8 = null,
+    long: ?[]const u8 = null,
+    result: OptResult,
+};
+
+fn parseOpts(argv: []const []const u8, specs: []const OptSpec) error{InvalidArgs}!u32 {
+    var i: u32 = 1;
+    while (i < argv.len) {
+        const arg = argv[i];
+        if (arg.len < 2 or arg[0] != '-') break;
+
+        var matched = false;
+        for (specs) |spec| {
+            const is_match = (spec.short != null and arg.len == 2 and arg[1] == spec.short.?) or
+                (spec.long != null and
+                    arg.len > 2 and arg[0] == '-' and arg[1] == '-' and
+                    std.mem.eql(u8, arg[2..], spec.long.?));
+            if (is_match) {
+                switch (spec.result) {
+                    .Bool => |ptr| {
+                        ptr.* = true;
+                        matched = true;
+                    },
+                }
+            }
+        }
+
+        if (!matched) return error.InvalidArgs;
+        i += 1;
+    }
+    return i;
+}
+
 // ---------------------------------------------------------------------------
 // cat
 // ---------------------------------------------------------------------------
@@ -100,11 +138,11 @@ const ansi_bold = "\x1B[1m";
 
 fn lsEntryColor(kind: sys.InodeKind) []const u8 {
     return switch (kind) {
-        .Directory => "\x1B[94m",
-        .CharDevice => "\x1B[96m",
-        .BlockDevice => "\x1B[93m",
-        .Pipe => "\x1B[95m",
-        .Symlink => "\x1B[95m",
+        .Directory => "\x1B[34m", // blue
+        .CharDevice => "\x1B[35m", // magenta
+        .BlockDevice => "\x1B[33m", // yellow
+        .Pipe => "\x1B[35m", // magenta
+        .Symlink => "\x1B[36m", // cyan
         else => ansi_reset,
     };
 }

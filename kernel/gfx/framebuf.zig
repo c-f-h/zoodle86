@@ -116,22 +116,22 @@ fn getBootVideoInfo(boot_video_info_phys: usize) !void {
 }
 
 /// Pack an RGB color into the current framebuffer's native pixel format.
-pub fn packRgb(r: u8, g: u8, b: u8) u32 {
+pub fn packRgb(rgb: [3]u8) u32 {
     var value: u32 = 0;
 
     if (info.red_mask_size != 0) {
         const max = (@as(u32, 1) << @as(u5, @intCast(info.red_mask_size))) - 1;
-        const chan = (@as(u32, r) * max) / 255;
+        const chan = (@as(u32, rgb[0]) * max) / 255;
         value |= (chan & max) << @as(u5, @intCast(info.red_position));
     }
     if (info.green_mask_size != 0) {
         const max = (@as(u32, 1) << @as(u5, @intCast(info.green_mask_size))) - 1;
-        const chan = (@as(u32, g) * max) / 255;
+        const chan = (@as(u32, rgb[1]) * max) / 255;
         value |= (chan & max) << @as(u5, @intCast(info.green_position));
     }
     if (info.blue_mask_size != 0) {
         const max = (@as(u32, 1) << @as(u5, @intCast(info.blue_mask_size))) - 1;
-        const chan = (@as(u32, b) * max) / 255;
+        const chan = (@as(u32, rgb[2]) * max) / 255;
         value |= (chan & max) << @as(u5, @intCast(info.blue_position));
     }
 

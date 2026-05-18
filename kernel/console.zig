@@ -166,35 +166,48 @@ pub const Console = struct {
         self.attr = (self.attr & 0xF0) | (attr & 0x0F);
     }
 
+    fn setFgColor(self: *Console, color: u8) void {
+        self.attr = (self.attr & 0xF8) | (color & 0x07);
+    }
+
     fn setBgAttr(self: *Console, attr: u8) void {
         self.attr = (self.attr & 0x0F) | ((attr & 0x0F) << 4);
     }
 
-    fn ansiColorToAttr(color: u32, bright: bool) u8 {
-        const ansi_to_vga = [_]u8{
-            0, // black
-            4, // red
-            2, // green
-            6, // yellow/brown
-            1, // blue
-            5, // magenta
-            3, // cyan
-            7, // white
-        };
-        return ansi_to_vga[color & 0x7] | if (bright) @as(u8, 0x08) else 0;
+    fn setBgColor(self: *Console, color: u8) void {
+        self.attr = (self.attr & 0x8F) | ((color & 0x07) << 4);
+    }
+
+    fn ansiColorToAttr(self: *const Console, color: u32) u8 {
+        if (self.backend == .vga) {
+            const ansi_to_vga = [_]u8{
+                0, // black
+                4, // red
+                2, // green
+                6, // yellow/brown
+                1, // blue
+                5, // magenta
+                3, // cyan
+                7, // white
+            };
+            return ansi_to_vga[color & 0x7];
+        } else {
+            // In the framebuffer backend we use the ANSI color index directly as the attribute.
+            return @truncate(color & 0x07);
+        }
     }
 
     fn applySgrParam(self: *Console, param: u32) void {
         switch (param) {
-            0 => self.attr = self.default_attr,
-            1 => self.setFgAttr((self.attr & 0x0F) | 0x08),
-            22 => self.setFgAttr(self.attr & 0x07),
-            30...37 => self.setFgAttr(ansiColorToAttr(param - 30, false)),
-            39 => self.setFgAttr(self.default_attr & 0x0F),
-            40...47 => self.setBgAttr(ansiColorToAttr(param - 40, false)),
-            49 => self.setBgAttr((self.default_attr >> 4) & 0x0F),
-            90...97 => self.setFgAttr(ansiColorToAttr(param - 90, true)),
-            100...107 => self.setBgAttr(ansiColorToAttr(param - 100, true)),
+            0 => self.attr = self.default_attr, // Reset
+            1 => self.setFgAttr((self.attr & 0x0F) | 0x08), // Bold
+            22 => self.setFgAttr(self.attr & 0x07), // Normal intensity
+            30...37 => self.setFgColor(self.ansiColorToAttr(param - 30)), // Set foreground color
+            39 => self.setFgAttr(self.default_attr & 0x0F), // Default foreground color
+            40...47 => self.setBgColor(self.ansiColorToAttr(param - 40)), // Set background color
+            49 => self.setBgAttr((self.default_attr >> 4) & 0x0F), // Default background color
+            90...97 => self.setFgAttr(self.ansiColorToAttr(param - 90) | 0x08), // Bright foreground color
+            100...107 => self.setBgAttr(self.ansiColorToAttr(param - 100) | 0x08), // Bright background color
             else => {},
         }
     }

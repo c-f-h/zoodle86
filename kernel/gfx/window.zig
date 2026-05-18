@@ -1,3 +1,4 @@
+const console_palette = @import("console_palette.zig");
 const framebuf = @import("framebuf.zig");
 const psf = @import("psf.zig");
 const mem = @import("../mem.zig");
@@ -18,7 +19,8 @@ pub const TextSize = struct {
 
 /// Fill the entire framebuffer with the desktop background colour. Call once before drawing any windows.
 pub fn drawBackground() void {
-    const bg = framebuf.packRgb(8, 14, 23);
+    const bg = framebuf.packRgb(.{ 8, 14, 23 });
+    //const bg = framebuf.packRgb(console_palette.ansi[console_palette.background]);
     framebuf.fillRect(0, 0, framebuf.width(), framebuf.height(), bg);
 }
 
@@ -103,10 +105,10 @@ pub const Window = struct {
     pub fn drawFrame(self: *Window, font: *const psf.PSFFont) void {
         if (!self.ready) return;
 
-        const panel = framebuf.packRgb(18, 28, 42);
-        const border = framebuf.packRgb(56, 86, 125);
-        const title_bg = framebuf.packRgb(40, 92, 170);
-        const title_fg = framebuf.packRgb(218, 232, 249);
+        const panel = framebuf.packRgb(console_palette.ansi[console_palette.background]);
+        const border = framebuf.packRgb(console_palette.ansi[console_palette.border]);
+        const title_bg = framebuf.packRgb(console_palette.ansi[console_palette.title_bg]);
+        const title_fg = framebuf.packRgb(console_palette.ansi[console_palette.title_fg]);
 
         framebuf.fillRect(self.panel_x, self.panel_y, self.panel_w, self.panel_h, border);
         framebuf.fillRect(

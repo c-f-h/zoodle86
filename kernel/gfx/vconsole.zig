@@ -1,4 +1,5 @@
 const font8x8 = @import("font8x8.zig");
+const console_palette = @import("console_palette.zig");
 const framebuf = @import("framebuf.zig");
 const psf = @import("psf.zig");
 const window = @import("window.zig");
@@ -11,33 +12,8 @@ const std = @import("std");
 var active_font: psf.PSFFont = font8x8.font;
 var active_font_label: []const u8 = "embedded psf1 8x8 bitmap";
 
-// Prettier, blue-ish palette
-const vga_palette = [16][3]u8{
-    .{ 18, 28, 42 },
-    .{ 40, 92, 170 },
-    .{ 0x00, 0xAA, 0x00 },
-    .{ 0x00, 0xAA, 0xAA },
-    .{ 0xAA, 0x00, 0x00 },
-    .{ 0xAA, 0x00, 0xAA },
-    .{ 0xAA, 0x55, 0x00 },
-    .{ 218, 232, 249 },
-    .{ 138, 160, 188 },
-    .{ 0x55, 0x55, 0xFF },
-    .{ 0x55, 0xFF, 0x55 },
-    .{ 0x55, 0xFF, 0xFF },
-    .{ 0xFF, 0x55, 0x55 },
-    .{ 0xFF, 0x55, 0xFF },
-    .{ 0xFF, 0xFF, 0x55 },
-    .{ 245, 248, 252 },
-};
-
 // Pre-packed color values for the specific pixel format of the framebuffer.
-var packed_vga_palette: [16]u32 = undefined;
-
-fn packPaletteColor(idx: u8) u32 {
-    const rgb = vga_palette[idx & 0x0F];
-    return framebuf.packRgb(rgb[0], rgb[1], rgb[2]);
-}
+var packed_palette: [16]u32 = undefined;
 
 fn swapAttr(attr: u8) u8 {
     return (attr << 4) | (attr >> 4);
@@ -87,8 +63,8 @@ fn drawGlyphCellAt(
     ch: u8,
     attr: u8,
 ) void {
-    const bg: u16 = @truncate(packed_vga_palette[@truncate(attr >> 4)]);
-    const fg: u16 = @truncate(packed_vga_palette[@truncate(attr & 0x0F)]);
+    const bg: u16 = @truncate(packed_palette[@truncate(attr >> 4)]);
+    const fg: u16 = @truncate(packed_palette[@truncate(attr & 0x0F)]);
     const glyph = font.getGlyph(ch);
 
     var row: u32 = 0;
@@ -162,7 +138,7 @@ pub const VConsole = struct {
         title: []const u8,
     ) !void {
         for (0..16) |i| {
-            packed_vga_palette[i] = packPaletteColor(@truncate(i));
+            packed_palette[i] = framebuf.packRgb(console_palette.ansi[i]);
         }
         self.cols = cols;
         self.rows = rows;
