@@ -72,6 +72,23 @@ IMAGE_SIZE = 1_474_560
 STAGE2_IMAGE_BASE = 0x8000
 STAGE2_RESERVED_SECTORS = 16    # NB: must match fs_defs.zig STAGE2_RESERVED_SECTORS
 
+AddOption(
+    "--rebuild-fs",
+    action="store_true",
+    dest="rebuild_fs",
+    default=False,
+    help="rebuild build/fsimage.img from declared inputs instead of preserving the prior image contents",
+)
+AddOption(
+    "--skip-user",
+    action="store_true",
+    dest="skip_user",
+    default=False,
+    help="reuse existing build\\*.elf userspace programs instead of rebuilding them",
+)
+FORCE_REBUILD_FS = bool(GetOption("rebuild_fs"))
+SKIP_USERSPACE = bool(GetOption("skip_user"))
+
 
 def run(cmd, **kwargs):
     completed = subprocess.run(cmd, cwd=ROOT, **kwargs)
@@ -381,7 +398,11 @@ def build_fs_image(target, source, env):
     bin_dir = FS_IMAGE_DIR / "bin"
     reset_dir(bin_dir)
     for userspace_exe in source[0:len(USERSPACE_EXES)]:
-        userspace_path = pathlib.Path(str(userspace_exe))
+        userspace_path = pathlib.Path(userspace_exe.abspath)
+        if not userspace_path.exists():
+            raise RuntimeError(
+                f"{userspace_path.name} is missing; build once without --skip-user to regenerate userspace programs."
+            )
         shutil.copy2(userspace_path, bin_dir / userspace_path.stem)
 
     # Inject the kernel module as "kernel".
@@ -493,15 +514,23 @@ stage2_payload = env.Command(
     Action(build_stage2_payload, "Flattening $SOURCE"),
 )
 boot_bin = env.Command(str(BOOT_BIN), [BOOT_ASM, stage2_payload[1]], Action(assemble_boot, "Assembling $TARGET"))
-userspace_exes = [
-    AlwaysBuild(env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET")))
-    for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
-]
+if SKIP_USERSPACE:
+    userspace_exes = [
+        env.File(str(userspace_exe))
+        for userspace_exe in USERSPACE_EXES
+    ]
+else:
+    userspace_exes = [
+        AlwaysBuild(env.Command(str(userspace_exe), [str(userspace_src), USERSPACE_LINKER_SCRIPT], Action(build_userspace_exe, "Compiling $TARGET")))
+        for userspace_src, userspace_exe in zip(USERSPACE_SOURCES, USERSPACE_EXES)
+    ]
 kernel_full_exe = AlwaysBuild(env.Command(str(KERNEL_FULL_EXE), [str(KERNEL_SRC), KERNEL_LINKER_SCRIPT, interrupts_obj], Action(build_kernel, "Compiling $TARGET")))
 kernel_disasm = env.Command(str(KERNEL_DISASM), kernel_full_exe, Action(disassemble_kernel, "Disassembling $SOURCE"))
 kernel_mod_exe = env.Command(str(KERNEL_EXE), [kernel_full_exe, kernel_disasm], Action(strip_kernel, "Stripping $TARGET"))
 autoexec_value = env.Value(get_autoexec_script())
 fsimage = env.Command(str(FS_IMAGE), userspace_exes + [kernel_mod_exe, autoexec_value] + STATIC_INPUTS, Action(build_fs_image, "Building $TARGET"))
+if FORCE_REBUILD_FS:
+    fsimage = AlwaysBuild(fsimage)
 boot_img = env.Command(str(BOOT_IMG), [fsimage, boot_bin, stage2_payload[0]], Action(build_image, "Packing $TARGET"))
 env.Precious(boot_img)
 
