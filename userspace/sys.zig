@@ -1,3 +1,4 @@
+const std = @import("std");
 pub const abi = @import("abi");
 
 pub const STDIN: u32 = 0;
@@ -98,6 +99,123 @@ pub const SyscallError = error{
 pub const WriteAllError = SyscallError || error{WriteZero};
 pub const WaitKeyError = SyscallError || error{EOF};
 
+/// Streams data from a userspace-visible file descriptor through `std.Io.Reader`.
+pub const Reader = struct {
+    fd: u32,
+    err: ?SyscallError = null,
+    interface: std.Io.Reader,
+
+    /// Initializes a buffered `std.Io.Reader` backed by `fd`.
+    pub fn init(fd: u32, buffer: []u8) Reader {
+        return .{
+            .fd = fd,
+            .interface = .{
+                .vtable = &.{
+                    .stream = stream,
+                },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+        };
+    }
+
+    /// Returns the last low-level I/O error that caused a reader failure.
+    pub fn getError(self: *const Reader) ?SyscallError {
+        return self.err;
+    }
+
+    fn stream(io_reader: *std.Io.Reader, io_writer: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *Reader = @alignCast(@fieldParentPtr("interface", io_reader));
+        if (@intFromEnum(limit) == 0) return 0;
+
+        const dest = limit.slice(try io_writer.writableSliceGreedy(1));
+        const count = read(self.fd, dest) catch |err| {
+            self.err = err;
+            return error.ReadFailed;
+        };
+        if (count == 0) return error.EndOfStream;
+        io_writer.advance(count);
+        return count;
+    }
+};
+
+/// Streams data to a userspace-visible file descriptor through `std.Io.Writer`.
+pub const Writer = struct {
+    fd: u32,
+    err: ?WriteAllError = null,
+    interface: std.Io.Writer,
+
+    /// Initializes a buffered `std.Io.Writer` backed by `fd`.
+    pub fn init(fd: u32, buffer: []u8) Writer {
+        return .{
+            .fd = fd,
+            .interface = .{
+                .vtable = &.{
+                    .drain = drain,
+                },
+                .buffer = buffer,
+            },
+        };
+    }
+
+    /// Flushes buffered data and reports the underlying low-level failure.
+    pub fn flush(self: *Writer) WriteAllError!void {
+        self.interface.flush() catch {
+            return self.err orelse error.WriteZero;
+        };
+    }
+
+    /// Returns the last low-level I/O error that caused a writer failure.
+    pub fn getError(self: *const Writer) ?WriteAllError {
+        return self.err;
+    }
+
+    fn drain(io_writer: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *Writer = @alignCast(@fieldParentPtr("interface", io_writer));
+        if (data.len == 0) return 0;
+
+        var total_written: usize = 0;
+
+        const header = io_writer.buffered();
+        if (header.len != 0) {
+            const n = try writeChunk(self, header);
+            total_written += n;
+            if (n != header.len) return io_writer.consume(total_written);
+        }
+
+        for (data[0 .. data.len - 1]) |chunk| {
+            const n = try writeChunk(self, chunk);
+            total_written += n;
+            if (n != chunk.len) return io_writer.consume(total_written);
+        }
+
+        const pattern = data[data.len - 1];
+        var i: usize = 0;
+        while (i < splat) : (i += 1) {
+            const n = try writeChunk(self, pattern);
+            total_written += n;
+            if (n != pattern.len) return io_writer.consume(total_written);
+        }
+
+        return io_writer.consume(total_written);
+    }
+
+    fn writeChunk(self: *Writer, bytes: []const u8) std.Io.Writer.Error!usize {
+        if (bytes.len == 0) return 0;
+
+        const count = write(self.fd, bytes) catch |err| {
+            self.err = err;
+            return error.WriteFailed;
+        };
+        if (count == 0) {
+            self.err = error.WriteZero;
+            return error.WriteFailed;
+        }
+        return count;
+    }
+};
+
 /// Provides the freestanding memcpy symbol expected by the userspace binary.
 pub export fn memcpy(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
     var i: usize = 0;
@@ -112,6 +230,23 @@ pub export fn memset(dest: [*]u8, val: u8, len: usize) [*]u8 {
     var i: usize = 0;
     while (i < len) : (i += 1) {
         dest[i] = val;
+    }
+    return dest;
+}
+
+/// Provides the freestanding memmove symbol expected by the userspace binary.
+pub export fn memmove(dest: [*]u8, src: [*]const u8, len: usize) [*]u8 {
+    if (@intFromPtr(dest) <= @intFromPtr(src) or @intFromPtr(dest) >= @intFromPtr(src) + len) {
+        var i: usize = 0;
+        while (i < len) : (i += 1) {
+            dest[i] = src[i];
+        }
+    } else {
+        var i = len;
+        while (i > 0) {
+            i -= 1;
+            dest[i] = src[i];
+        }
     }
     return dest;
 }

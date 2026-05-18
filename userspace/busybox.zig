@@ -63,12 +63,13 @@ fn parseOpts(argv: []const []const u8, specs: []const OptSpec) error{InvalidArgs
 // ---------------------------------------------------------------------------
 
 fn catCopyFd(fd: u32) bool {
-    var buf: [128]u8 = undefined;
-    while (true) {
-        const count = sys.read(fd, &buf) catch return false;
-        if (count == 0) return true;
-        sys.writeAll(sys.STDOUT, buf[0..@intCast(count)]) catch return false;
-    }
+    var reader_buf: [128]u8 = undefined;
+    var writer_buf: [128]u8 = undefined;
+    var reader = sys.Reader.init(fd, &reader_buf);
+    var writer = sys.Writer.init(sys.STDOUT, &writer_buf);
+    _ = reader.interface.streamRemaining(&writer.interface) catch return false;
+    writer.flush() catch return false;
+    return true;
 }
 
 fn catWriteIsDirectoryError(path: []const u8) void {
@@ -524,18 +525,18 @@ fn cpMain(argv: []const []const u8) noreturn {
     };
     defer sys.close(dst_fd) catch {};
 
-    var buf: [512]u8 = undefined;
-    while (true) {
-        const n = sys.read(src_fd, &buf) catch {
-            sys.writeAll(sys.STDERR, "cp: read error\n") catch {};
-            sys.exit(1);
-        };
-        if (n == 0) break;
-        sys.writeAll(dst_fd, buf[0..@intCast(n)]) catch {
-            sys.writeAll(sys.STDERR, "cp: write error\n") catch {};
-            sys.exit(1);
-        };
-    }
+    var reader_buf: [512]u8 = undefined;
+    var writer_buf: [512]u8 = undefined;
+    var reader = sys.Reader.init(src_fd, &reader_buf);
+    var writer = sys.Writer.init(dst_fd, &writer_buf);
+    _ = reader.interface.streamRemaining(&writer.interface) catch {
+        sys.writeAll(sys.STDERR, "cp: read/write error\n") catch {};
+        sys.exit(1);
+    };
+    writer.flush() catch {
+        sys.writeAll(sys.STDERR, "cp: write error\n") catch {};
+        sys.exit(1);
+    };
 
     sys.exit(0);
 }
