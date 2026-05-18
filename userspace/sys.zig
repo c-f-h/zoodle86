@@ -523,14 +523,14 @@ pub fn rmdir(path: []const u8) SyscallError!void {
     _ = try syscall(.Rmdir, @intFromPtr(&path_abi), 0, 0);
 }
 
-/// Renames or moves a file from old_path to new_path, replacing any existing regular file there.
+/// Renames or moves a file from old_path to new_path, replacing any existing non-directory entry there.
 pub fn rename(old_path: []const u8, new_path: []const u8) SyscallError!void {
     const old_path_abi = AbiSlice.fromSlice(u8, old_path);
     const new_path_abi = AbiSlice.fromSlice(u8, new_path);
     _ = try syscall(.Rename, @intFromPtr(&old_path_abi), @intFromPtr(&new_path_abi), 0);
 }
 
-/// Creates a new hard link from `new_path` to the existing regular file at `old_path`.
+/// Creates a new hard link from `new_path` to the existing non-directory inode at `old_path`.
 pub fn link(old_path: []const u8, new_path: []const u8) SyscallError!void {
     const old_path_abi = AbiSlice.fromSlice(u8, old_path);
     const new_path_abi = AbiSlice.fromSlice(u8, new_path);

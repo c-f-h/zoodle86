@@ -12,7 +12,7 @@ During boot, `stage2` reads the `"kernel"` ELF file from the filesystem through 
 
 Before enabling paging, the real-mode stage2 entry scans VBE modes, switches to the best linear-framebuffer, sub-1000 rows mode it finds, and writes boot video metadata at physical `0x0600` for the kernel. It then enters protected mode and jumps into the Zig half of stage2, which passes the physical address of the boot video metadata block so `kernel/gfx/framebuf.zig` can validate the chosen VBE mode and map the framebuffer if one is available, while `kernel/console.zig` buffers early kernel text in RAM and `kernel/gfx/vconsole.zig` later renders that framebuffer-backed text console.
 
-In graphics mode the screen is split into two side-by-side panels. Each panel is backed by an independent `VConsole`/`Window` pair; the `Window` allocates its shadow pixel buffer from the page-backed kernel heap arena rooted at `0xE000_0000`. The left panel hosts the primary kernel shell (`console.primary`); the right panel hosts a secondary `Console` instance whose `stdout` is bound to the `hello` process that is launched at boot before the interactive shell starts. Each panel draws a framed pane with a title bar around the largest console grid that fits the active font and half the framebuffer width. The kernel first calls `window.drawBackground()` to paint the full-screen desktop background, then calls `VConsole.drawFrame()` for each panel independently. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `cp850-8x14.psf` from the filesystem; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
+In graphics mode the screen is split into two side-by-side panels. Each panel is backed by an independent `VConsole`/`Window` pair; the `Window` allocates its shadow pixel buffer from the page-backed kernel heap arena rooted at `0xE000_0000`. The left panel hosts the primary kernel shell (`console.primary`); the right panel hosts a secondary tty/console intended for userspace programs. With the default `AUTOEXEC` script this usually becomes the userspace shell panel, but any spawned userspace task inherits whichever tty is currently in the foreground. Each panel draws a framed pane with a title bar around the largest console grid that fits the active font and half the framebuffer width. The kernel first calls `window.drawBackground()` to paint the full-screen desktop background, then calls `VConsole.drawFrame()` for each panel independently. The console grid size is therefore variable: it depends on the VBE resolution and the loaded PSF font. The kernel attempts to load `/fonts/ter-u14n.psf`; `font8x8.zig` provides an embedded 8×8 PSF1 fallback so the graphical console can always render text.
 
 ## Virtual Memory Layout
 
@@ -27,12 +27,12 @@ The kernel uses paging with 1 MB of identity mapping at both 0x0 (low memory) an
 | 0x7000_0000 - 0x8000_0000 | 256 MB | User-mode stack reservation (grows downward from 0x80000000) |
 | 0x8000_0000 - 0xC000_0000 | 1 GB | Unused |
 | 0xC000_8000 - 0xC000_A200 | ~8 KB | Stage-2 loader (VA), physically at 0x8000 |
-| 0xC001_0000 - 0xC002_0000 | 64 KB | Kernel module (`kernel.elf`), physically at 0x10000 |
+| 0xC001_0000 - dynamic | dynamic | Kernel ELF PT_LOAD segments (linked at 0xC001_0000; physically placed below 1 MB) |
 | 0xC004_0000 - 0xC004_2000 | 8 KB | Bootstrap page directory + first page table (physical 0x40000-0x42000) |
 | 0xD000_0000 - dynamic | dynamic | Early framebuffer mapping window used by `kernel/gfx/framebuf.zig` |
 | 0xE000_0000 - 0xE100_0000 | 16 MB | Kernel heap arena (page-backed power-of-two allocator) |
 | 0xE100_0000 - 0xE140_0000 | 4 MB | Profiler sample pages (dynamically allocated by `kprof` while running) |
-| 0xE800_0000 - 0xE810_0000 | 1 MB | Runtime-allocated task pool (`TaskmanEntry` array with one guard page per task) |
+| 0xE800_0000 - dynamic | dynamic | Runtime task pool (`TaskmanEntry` array with an 8 KiB unmapped guard region before each task) |
 | 0xFC00_0000 - 0xFE00_0000 | 32 MB | Mapped ACPI tables |
 | 0xFEC0_0000 - 0xFEC0_1000 | 4 KB | Memory-mapped APIC I/O (base GSI 0) |
 | 0xFEE0_0000 - 0xFEE0_1000 | 4 KB | Memory-mapped Local APIC |
@@ -49,7 +49,7 @@ The kernel detects the largest contiguous usable RAM region reported by E820 (ty
 
 The kernel reserves an 8 MB general-purpose kernel heap arena at `0xE000_0000` and backs it with a freeing allocator in `kernel/allocator.zig`. Small allocations use power-of-two size classes with free-list reuse inside page-sized slabs that remain mapped once created. Large allocations are page-backed runs inside the same arena and are fully unmapped on free, returning their physical pages to `pageallocator` while keeping the shared heap page tables in place for all task page directories.
 
-The fixed-size task pool starts at `0xE800_0000`. User processes are allocated private memory slices from the page allocator and have independent stack/heap boundaries. Each task has a 8 KB kernel stack page as the first page of its `Task` object, with the current task pointer stored at the stack base; `taskman` leaves unmapped guard pages immediately before that stack page so kernel-stack overflow faults instead of corrupting adjacent task state. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window. `brk` growth stops at the base of that stack reservation so the heap cannot overlap the stack window.
+The fixed-size task pool starts at `0xE800_0000`. User processes are allocated private memory slices from the page allocator and have independent stack/heap boundaries. Each task begins with an 8 KiB kernel stack region, with the current task pointer stored at the stack base; `taskman` leaves an unmapped 8 KiB guard region immediately before each task so kernel-stack overflow faults instead of corrupting adjacent task state. User-mode stacks live in a fixed reservation from 0x7000_0000 to 0x8000_0000 with the top page mapped initially and additional pages faulted in on demand within that window. `brk` growth stops at the base of that stack reservation so the heap cannot overlap the stack window.
 
 ## Userspace Heap Allocation
 

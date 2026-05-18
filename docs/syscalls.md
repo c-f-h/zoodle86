@@ -8,9 +8,9 @@ Syscall numbers are either the same as that of a Linux syscall which is similar 
 |---------|--------|-----------|---------|-------|
 | `read` | 0 | fd, buf_offset, count | bytes read | Reads from filesystem-backed, pipe, tty, or framebuffer character-device fds |
 | `write` | 1 | fd, buf_offset, count | bytes written | Writes to tty-backed stdio, filesystem-backed, pipe, tty, or framebuffer character-device fds |
-| `open` | 2 | path_offset, path_len, flags | fd | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND`, and follows symbolic links in the resolved path |
+| `open` | 2 | path_offset, path_len, flags | fd | Supports `O_CREAT`, `O_TRUNC`, and `O_APPEND`, follows symbolic links in the resolved path, and returns `ELOOP` if too many symlinks are expanded |
 | `close` | 3 | fd | 0 | Closes stdio, pipe, or filesystem-backed fds |
-| `stat` | 4 | path_offset, path_len, stat_out_offset | 0 | Fills a writable userspace `Stat` buffer for an inode-backed path; the final path component is not dereferenced if it is a symbolic link |
+| `stat` | 4 | path_slice_ptr, stat_out_offset | 0 | Fills a writable userspace `Stat` buffer for an inode-backed path; the final path component is not dereferenced if it is a symbolic link |
 | `fstat` | 5 | fd, stat_out_offset | 0 | Fills a writable userspace `Stat` buffer for an open fd; supports files, directories, stdio, pipes, tty devices, and `/dev/fb0` |
 | `lseek` | 8 | fd, signed_offset, whence | new offset | Supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`; may seek past EOF on files and is also supported by seekable character devices such as `/dev/fb0` |
 | `brk` | 12 | addr | new break | Gets heap break if addr=0; sets break to addr if valid; validates bounds and grows/shrinks data memory |
@@ -22,10 +22,10 @@ Syscall numbers are either the same as that of a Linux syscall which is similar 
 | `waitpid` | 61 | pid | exit_status | Blocks until the child with the given PID exits; returns its exit status. Returns `EINVAL` in `ecx` if PID is not a direct child. |
 | `getdents` | 78 | fd, dirent_slice_ptr | entry count | Expects an `AbiSlice` describing a writable `DirEntry` buffer; returns the number of entries written, or 0 at end-of-directory. |
 | `mkdir` | 83 | path_slice | 0 | Creates a directory; path_slice is a userspace address pointing to an `AbiSlice` describing the path |
-| `rmdir` | 84 | path_offset, path_len | 0 | Removes a directory; fails if not empty or in use |
+| `rmdir` | 84 | path_slice_ptr | 0 | Removes a directory; fails if not empty or in use |
 | `link` | 86 | old_path_slice, new_path_slice | 0 | Creates a hard link from `new_path` to the existing non-directory inode at `old_path` |
-| `rename` | 82 | old_path_slice, new_path_slice | 0 | Atomically moves `old_path` to `new_path`; replaces any existing regular file at `new_path`. |
-| `unlink` | 87 | path_offset, path_len | 0 | Removes a filesystem entry; fails if the file is still open by any task |
+| `rename` | 82 | old_path_slice, new_path_slice | 0 | Atomically moves `old_path` to `new_path`; replaces any existing non-directory entry at `new_path`, while open descriptors to the replaced inode stay valid until close. |
+| `unlink` | 87 | path_offset, path_len | 0 | Removes one filesystem entry by name; open descriptors keep the inode alive until the final close |
 | `symlink` | 88 | target_path_slice, link_path_slice | 0 | Creates a symbolic link whose inode stores the raw target path bytes; relative targets are resolved from the link's parent directory when opened |
 | `ftruncate` | 93 | fd, length | 0 | Resizes a filesystem-backed fd; zero-fills when extending and requires write access |
 | `ioctl` | 156 | fd, command, arg | device-specific | Supports tty mode switching via `IOCTL_TTY_SET_MODE` with `TTY_MODE_CANONICAL`/`TTY_MODE_RAW` and framebuffer metadata queries via `IOCTL_FRAMEBUF_GET_INFO`; tty mode switches return the previous tty mode. |
@@ -33,4 +33,4 @@ Syscall numbers are either the same as that of a Linux syscall which is similar 
 | `set_child_reap` | 1002 | — | 0 | Marks the calling task so all its children auto-reap on exit instead of becoming zombies (analogous to `SIGCHLD = SIG_IGN` on Linux) |
 | `kshell` | 1003 | cmdline_slice_ptr | 0 | Executes a kernel shell command string. |
 | `get_cursor` | 1004 | — | `(row << 16) \| col` | Returns the stdout console cursor position (both 0-indexed) packed into a single u32. |
-Common errno values currently returned in `ecx` include `ENOENT`, `EIO`, `E2BIG`, `EBADF`, `EAGAIN`, `ENOMEM`, `EACCES`, `EFAULT`, `EBUSY`, `EEXIST`, `ENODEV`, `ENOTDIR`, `EINVAL`, `ENFILE`, `EMFILE`, `ENOSPC`, and `ENOTEMPTY`.
+Common errno values currently returned in `ecx` include `ENOENT`, `EIO`, `E2BIG`, `EBADF`, `EAGAIN`, `ENOMEM`, `EACCES`, `EFAULT`, `EBUSY`, `EEXIST`, `ENODEV`, `ENOTDIR`, `EISDIR`, `EINVAL`, `ENFILE`, `EMFILE`, `ENOSPC`, `ENOTEMPTY`, and `ELOOP`.

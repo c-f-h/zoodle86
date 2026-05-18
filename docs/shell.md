@@ -36,7 +36,7 @@ End scripts with `shutdown` for a clean exit.
 
 ## Userspace Shell
 
-The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. Every non-empty line is parsed as a pipeline of one or more command stages. Each stage resolves bare program names through `/bin` and supports shell-style left-to-right redirections with `<`, `>`, and `>>`.
+The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. Non-empty lines are parsed as a pipeline of one or more command stages. Each stage resolves bare program names through `/bin` and supports shell-style left-to-right redirections with `<`, `>`, and `>>`.
 
 - `hello 4` runs `/bin/hello 4`.
 - `ls /bin > /list.txt` redirects stdout to a file using spawn-time fd remapping.
@@ -44,4 +44,8 @@ The `/bin/shell` userspace program provides an interactive prompt built on the u
 - `cat < /log.txt | cat > /copy.txt` combines input redirection, a pipe, and output redirection in one command line.
 - `echo one > /out.txt >> /log.txt` follows shell-style left-to-right semantics: both redirections are opened in order, and the later one becomes the command's final stdout target.
 
-Kernel shell commands can be invoked by prefixing with a `!`, e.g., `!memmap`.
+Special built-ins:
+
+- `history` prints the persisted command history stored in `/var/history`.
+- `exit` and `quit` leave the userspace shell.
+- `!<kernel-command>` invokes a kernel shell command, e.g. `!memmap`.

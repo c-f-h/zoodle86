@@ -24,9 +24,9 @@ Complete listing of every source file and its role.
 - `kernel/apic.zig`: Local APIC and I/O APIC initialization, MADT APIC-entry parsing, PIC disablement, and IRQ-to-vector routing.
 - `kernel/cpuid.zig`: raw CPUID query helper plus vendor/basic-leaf decoding used for clock and feature inspection.
 - `kernel/pci.zig`: PCI config-space access and bus enumeration, including multi-host-controller root scanning and PCI-to-PCI bridge traversal.
-- `kernel/task.zig`: task/process management with a stack-first per-task kernel stack page, seeded user/kernel resume frames, user memory regions, page directories, file descriptor mappings, and an optional `stdout_console` pointer so processes can be routed to a specific `Console` instance (inherited by spawned children).
+- `kernel/task.zig`: task/process management with a stack-first 8 KiB per-task kernel stack region, seeded user/kernel resume frames, per-task page directories, user memory regions, file descriptor mappings, controlling-tty binding for stdio, and wait queues for `waitpid`.
 - `kernel/interrupt_frame.zig`: stack frame layouts for both normalized user interrupt returns and saved kernel-yield resume points.
-- `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with one unmapped guard page immediately before each task and round-robin scheduling over the entry array.
+- `kernel/taskman.zig`: fixed-size task pool (max 8 tasks) allocated at runtime, with an unmapped 8 KiB guard region immediately before each task and round-robin scheduling over the entry array.
 - `kernel/waitqueue.zig`: intrusive singly-linked WaitQueue; tasks blocked on an event are added as heap-allocated nodes and freed when woken via `wakeOne`/`wakeAll`.
 - `kernel/filedesc.zig`: global open-file table plus Linux-like `open`/`read`/`write`/`close`/`lseek`/`moveFile` descriptor semantics layered over filesystem files, generic character devices, and pipe endpoints.
 - `kernel/tty.zig`: console-backed canonical tty devices with cooked line input, ANSI-capable output, simple echo/backspace handling, and an embedded `CharDevice` interface for fd I/O.
@@ -37,7 +37,7 @@ Complete listing of every source file and its role.
 
 ## Console & Input/Output
 
-- `kernel/console.zig`: instantiable high-level console (`Console` struct) with scrolling, cursor management, terminal-action handling for parsed ANSI/VT100 sequences (cursor movement, erase, visibility, and basic SGR colours), hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering. Module-level wrapper functions (`console.puts()`, etc.) delegate to the `console.primary` instance so existing callers are undisturbed. Each `Console` holds an optional `vconsole_instance` pointer so multiple independent consoles can render to separate `VConsole`/`Window` panel pairs on the framebuffer.
+- `kernel/console.zig`: instantiable high-level console (`Console` struct) with scrolling, cursor management, inline ANSI/VT100 parsing and terminal actions (cursor movement, erase, visibility, and basic SGR colours), hex formatting, memory dumps, a RAM-backed bootstrap buffer for graphics mode, and backend switching between VGA text mode and framebuffer text rendering. Module-level wrapper functions (`console.puts()`, etc.) delegate to the `console.primary` instance so existing callers are undisturbed. Each `Console` holds an optional `vconsole_instance` pointer so multiple independent consoles can render to separate `VConsole`/`Window` panel pairs on the framebuffer.
 - `kernel/serial.zig`: COM1 serial driver for debug output and exception logging to the host via Bochs.
 - `kernel/vgatext.zig`: low-level VGA 80x25 text-mode driver with cell read/write and hardware cursor control for the text-mode console backend.
 - `kernel/keyboard.zig`: scancode-to-keycode conversion, extended key support, modifier tracking, ASCII conversion.
@@ -63,14 +63,14 @@ Complete listing of every source file and its role.
 
 - `kernel/app_keylog.zig`: the keylog app state and implementation for real-time keyboard debugging.
 - `kernel/app_memmap.zig`: full-screen interactive ASCII viewer for the page directory and page tables.
-- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it executes commands from an optional `/autoexec` file in the filesystem before entering the interactive prompt.
+- `kernel/shell.zig`: command loop and table-driven shell command dispatch (`help`, `write`, `cpuid`, `serial`, `run`, `multirun`, `ps`, `dumpmem`, `memmap`, `memstat`, `taskswitch`, `ticks`, `profile`, `fontbench`, `keylog`, `shutdown`, `break`). At boot it executes commands from an optional `/autoexec` file in the filesystem before entering the interactive prompt.
 
 ## Host Tools
 
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.fs.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `zodfs.zig` directly.
 - `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`), extracts regular files/directories to a host directory, and skips non-extracted inode kinds it does not materialize on the host (currently device nodes and symlinks).
-- `compile_fs.zig`: host tool that formats a fresh filesystem image (via `fs.FileSystem.mountOrFormat()`), writes a directory tree of input files into it, and consumes optional root `_special`/`_links` manifests to create device nodes and hard links.
+- `compile_fs.zig`: host tool that formats a fresh filesystem image, mounts it, writes a directory tree of input files into it, and consumes optional root `_special`/`_links` manifests to create device nodes and hard links.
 
 ## Userspace
 
@@ -80,7 +80,7 @@ Complete listing of every source file and its role.
 - `userspace/test_fs.zig`: filesystem and descriptor stress test that keeps two file descriptors open, alternates writes, and validates `lseek`, sparse write, `ftruncate`, hard links, symlinks, `getdents`/`readdir`, and pipe semantics.
 - `userspace/allocator.zig`: brk-backed `std.mem.Allocator` implementation with free-list reuse for normal Zig heap allocations.
 - `userspace/test_alloc.zig`: heap allocator stress test covering allocate/free/realloc behavior.
-- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, and supports multi-stage pipelines plus left-to-right `<`, `>`, and `>>` redirections.
+- `userspace/shell.zig`: interactive userspace shell built on `userspace/readline.zig`; resolves and runs commands from `/bin`, supports multi-stage pipelines plus left-to-right `<`, `>`, and `>>` redirections, persists history in `/var/history`, and provides `history`, `exit`/`quit`, plus `!cmd` kernel-shell escapes.
 - `userspace/fbdemo.zig`: userspace framebuffer demo that opens `/dev/fb0`, queries metadata via ioctl, snapshots the device contents, draws a small colour-pattern test image through fd I/O, waits for a keypress, and restores the original pixels.
 - `userspace/sys.zig`, `userspace.ld`: userspace syscall wrappers plus fd-backed `std.Io.Reader`/`std.Io.Writer` adapters, linker script, and startup entry point `_start` which passes command-line arguments to `main`. Imports the shared ABI definitions from `common/abi.zig`, including `FrameBufInfo`.
 
