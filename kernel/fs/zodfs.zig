@@ -359,7 +359,7 @@ pub const FileSystem = struct {
         try fs.formatFs();
     }
 
-    /// Mounts an existing inode-based filesystem.
+    /// Mounts an existing ZODFS filesystem.
     pub fn mount(bd: *BlockDevice, allocator: std.mem.Allocator) FsError!FileSystem {
         var fs = FileSystem{
             .block_dev = bd,
@@ -371,7 +371,7 @@ pub const FileSystem = struct {
         return fs;
     }
 
-    /// Mounts an existing inode-based filesystem for read-only use without an inode cache.
+    /// Mounts an existing ZODFS filesystem for read-only use without an inode cache.
     pub fn mountReadOnly(bd: *BlockDevice) FsError!FileSystem {
         var fs = FileSystem{
             .block_dev = bd,
@@ -381,6 +381,7 @@ pub const FileSystem = struct {
         return fs;
     }
 
+    /// Unmounts the filesystem and releases any resources.
     pub fn unmount(self: *FileSystem) void {
         if (self.root_inode) |inode| {
             if (InodeCache.getEntryForInode(inode).ref_count != 1) {
@@ -390,55 +391,6 @@ pub const FileSystem = struct {
             self.root_inode = null;
         }
         self.inode_cache.deinit();
-    }
-
-    fn zeroBlock(self: *FileSystem, block_index: u32) FsError!void {
-        var zero_sector = [_]u8{0} ** BLOCK_SIZE;
-        try self.writeDataBlock(block_index, &zero_sector);
-    }
-
-    fn readDataBlock(self: *const FileSystem, block_index: u32, dest: *[BLOCK_SIZE]u8) FsError!void {
-        const lba = self.dataBlockLba(block_index);
-        try self.block_dev.readBlock(lba, dest);
-    }
-
-    fn writeDataBlock(self: *FileSystem, block_index: u32, data: *const [BLOCK_SIZE]u8) FsError!void {
-        const lba = self.dataBlockLba(block_index);
-        try self.block_dev.writeBlock(lba, data);
-    }
-
-    /// Formats the filesystem region with the current inode-based layout.
-    fn formatFs(self: *FileSystem) FsError!void {
-        const fs_sector_count = self.block_dev.block_count - FS_START_LBA;
-        const layout = computeLayout(fs_sector_count) orelse return error.NoSpace;
-        self.superblock = makeDefaultSuperblock(layout);
-
-        var zero_sector = [_]u8{0} ** BLOCK_SIZE;
-        var lba = FS_START_LBA;
-        const zero_limit = self.superblock.data_start_lba + ROOT_DIRECTORY_SECTORS;
-        while (lba < zero_limit) : (lba += 1) {
-            try self.block_dev.writeBlock(lba, &zero_sector);
-        }
-
-        var root_blocks: [ROOT_DIRECTORY_SECTORS]u32 = undefined;
-        for (&root_blocks) |*block_index| {
-            block_index.* = try self.allocateDataBlock();
-        }
-
-        comptime {
-            // The logic below relies on the fact that the directory fits into the direct blocks.
-            std.debug.assert(ROOT_DIRECTORY_SECTORS <= DIRECT_BLOCK_COUNT);
-        }
-
-        var root_inode: DiskInode = .{};
-        root_inode.kind = InodeKind.Directory;
-        root_inode.link_count = 1;
-        root_inode.size_bytes = @intCast(ROOT_DIRECTORY_BYTES);
-        for (root_blocks, 0..) |block_index, index| {
-            root_inode.direct_blocks[index] = block_index;
-        }
-        try self.writeInode(ROOT_INODE_INDEX, &root_inode);
-        try self.writeSuperblock();
     }
 
     /// Returns stat-like metadata for the inode-backed object at `inode_index`.
@@ -499,8 +451,57 @@ pub const FileSystem = struct {
         return inode;
     }
 
-    fn getInodeIndex(_: *FileSystem, inode: *DiskInode) InodeT {
+    pub fn getInodeIndex(_: *FileSystem, inode: *DiskInode) InodeT {
         return InodeCache.getEntryForInode(inode).inode_index;
+    }
+
+    fn zeroBlock(self: *FileSystem, block_index: u32) FsError!void {
+        var zero_sector = [_]u8{0} ** BLOCK_SIZE;
+        try self.writeDataBlock(block_index, &zero_sector);
+    }
+
+    fn readDataBlock(self: *const FileSystem, block_index: u32, dest: *[BLOCK_SIZE]u8) FsError!void {
+        const lba = self.dataBlockLba(block_index);
+        try self.block_dev.readBlock(lba, dest);
+    }
+
+    fn writeDataBlock(self: *FileSystem, block_index: u32, data: *const [BLOCK_SIZE]u8) FsError!void {
+        const lba = self.dataBlockLba(block_index);
+        try self.block_dev.writeBlock(lba, data);
+    }
+
+    /// Formats the filesystem region with the current inode-based layout.
+    fn formatFs(self: *FileSystem) FsError!void {
+        const fs_sector_count = self.block_dev.block_count - FS_START_LBA;
+        const layout = computeLayout(fs_sector_count) orelse return error.NoSpace;
+        self.superblock = makeDefaultSuperblock(layout);
+
+        var zero_sector = [_]u8{0} ** BLOCK_SIZE;
+        var lba = FS_START_LBA;
+        const zero_limit = self.superblock.data_start_lba + ROOT_DIRECTORY_SECTORS;
+        while (lba < zero_limit) : (lba += 1) {
+            try self.block_dev.writeBlock(lba, &zero_sector);
+        }
+
+        var root_blocks: [ROOT_DIRECTORY_SECTORS]u32 = undefined;
+        for (&root_blocks) |*block_index| {
+            block_index.* = try self.allocateDataBlock();
+        }
+
+        comptime {
+            // The logic below relies on the fact that the directory fits into the direct blocks.
+            std.debug.assert(ROOT_DIRECTORY_SECTORS <= DIRECT_BLOCK_COUNT);
+        }
+
+        var root_inode: DiskInode = .{};
+        root_inode.kind = InodeKind.Directory;
+        root_inode.link_count = 1;
+        root_inode.size_bytes = @intCast(ROOT_DIRECTORY_BYTES);
+        for (root_blocks, 0..) |block_index, index| {
+            root_inode.direct_blocks[index] = block_index;
+        }
+        try self.writeInode(ROOT_INODE_INDEX, &root_inode);
+        try self.writeSuperblock();
     }
 
     fn createFileInternal(self: *FileSystem, dir_inode: *DiskInode, name: []const u8, kind: InodeKind, size: u32, device: abi.Device) FsError!*DiskInode {
@@ -508,7 +509,7 @@ pub const FileSystem = struct {
         if ((try self.findDirEntry(dir_inode, name)) != null) return error.FileExists;
 
         const entry_index = try self.findReusableEntryIndex(dir_inode);
-        const new_inode = try self.findFreeInodeIndex();
+        const new_inode = try self.findFreeInode();
 
         const num_blocks = fileBlocksForSize(size);
 
@@ -618,80 +619,11 @@ pub const FileSystem = struct {
 
     //////////// FILE WRITING ////////////
 
-    /// Returns a new reference to the inode for a file given by its full path.
-    pub fn getInodeAtPath(self: *FileSystem, path: []const u8) FsError!*DiskInode {
-        if (path.len == 1 and path[0] == '/') {
-            return self.dup(self.getRootInode());
-        }
-        const inode_index = try self.walkPathToInodeIndex(self.getRootInode(), path);
-        return self.inode_cache.get(self, inode_index);
-    }
-
-    /// Creates or overwrites a file in the given directory with the provided full contents.
-    pub fn writeFileAt(self: *FileSystem, dir_inode: *DiskInode, name: []const u8, data: []const u8) FsError!void {
-        if (!validateName(name)) return error.InvalidName;
-        if (fileBlocksForSize(@intCast(data.len)) > @as(u32, @intCast(MAX_FILE_BLOCK_COUNT))) return error.NoSpace;
-
-        const inode = try self.findDirEntryInode(dir_inode, name) orelse
-            try self.createFile(dir_inode, name);
-        defer self.drop(inode);
-        if (inode.kind != .Regular) return error.NotAFile;
-        try self.writeToInodeAtOffset(inode, 0, data, true);
-    }
-
     /// Writes bytes to a file identified directly by inode number, growing as needed.
     pub fn writeInodeAt(self: *FileSystem, inode: *DiskInode, offset: u32, data: []const u8) FsError!usize {
         if (data.len == 0) return 0;
         try self.writeToInodeAtOffset(inode, offset, data, false);
         return data.len;
-    }
-
-    //////////// PATH WALKING ////////////
-
-    /// Walk a full file path, starting from the given directory inode index.
-    /// Returns { parent_dir_inode, dir_entry_index, dir_entry } or error.FileNotFound.
-    pub fn walkPathToDirEntry(self: *FileSystem, dir_inode: *DiskInode, path: []const u8) FsError!struct { *DiskInode, u32, DirectoryEntry } {
-        // Invariant: current_dir always holds a temporary reference to a directory
-        // used during path walking, which we need to drop when returning.
-        var current_dir = self.dup(dir_inode);
-        defer self.drop(current_dir);
-
-        if (current_dir.kind != .Directory) return error.NotADirectory;
-
-        var path_iter = std.mem.splitScalar(u8, path, '/');
-
-        // TODO: proper handling of absolute vs relative paths
-        // TODO: handle "." and ".." components
-        while (path_iter.next()) |component| {
-            if (component.len == 0) continue;
-
-            const index, const entry = try self.findDirEntryAndIndex(current_dir, component) orelse {
-                return error.FileNotFound;
-            };
-            if (path_iter.peek() == null) {
-                // At end of path - return the entry
-                return .{ self.dup(current_dir), index, entry };
-            } else {
-                // Not at end of path - must be a directory to continue traversal
-                if (entry.kind != .Directory) return error.FileNotFound;
-            }
-
-            const new_dir = try self.getDirectoryInode(entry.inode_index);
-            self.drop(current_dir);
-            current_dir = new_dir;
-        }
-        // TODO: this is reachable if the path is empty or "/"
-        @panic("walkPathToDirEntry called with invalid path");
-    }
-
-    /// Walk a full file path, starting from the given directory inode index.
-    /// Returns the final file's inode index or error.FileNotFound.
-    pub fn walkPathToInodeIndex(self: *FileSystem, dir_inode: *DiskInode, path: []const u8) FsError!InodeT {
-        if (path.len == 0) return InodeCache.getEntryForInode(dir_inode).inode_index;
-        if (path.len == 1 and path[0] == '/') return ROOT_INODE_INDEX;
-        const parent_inode, _, const entry = try self.walkPathToDirEntry(dir_inode, path);
-        self.drop(parent_inode);
-        return entry.inode_index;
     }
 
     /// Increments the link count of a non-directory inode.
@@ -836,14 +768,6 @@ pub const FileSystem = struct {
         }
     }
 
-    pub fn findDirEntryInode(self: *FileSystem, dir_inode: *DiskInode, name: []const u8) FsError!?*DiskInode {
-        if (try self.findDirEntry(dir_inode, name)) |entry| {
-            return self.inode_cache.get(self, entry.inode_index);
-        } else {
-            return null;
-        }
-    }
-
     /// Looks up a named entry and returns its validated inode by value without using the inode cache.
     pub fn findDirEntryInodeReadOnly(self: *const FileSystem, dir_inode: *const DiskInode, name: []const u8) FsError!?DiskInode {
         if (try self.findDirEntry(dir_inode, name)) |entry| {
@@ -866,8 +790,8 @@ pub const FileSystem = struct {
         return error.DirectoryFull;
     }
 
-    /// Find a free inode index within the inode table.
-    fn findFreeInodeIndex(self: *FileSystem) FsError!*DiskInode {
+    /// Find and return a free inode within the inode table.
+    fn findFreeInode(self: *FileSystem) FsError!*DiskInode {
         var inode_index: InodeT = ROOT_INODE_INDEX + 1;
         while (inode_index < self.superblock.inode_count) : (inode_index += 1) {
             // first check the cache to avoid unnecessary disk reads
@@ -876,23 +800,16 @@ pub const FileSystem = struct {
                     continue;
                 }
             }
-            const inode = try self.inode_cache.get(self, inode_index);
+            const inode = try self.getInode(inode_index);
             if (inode.kind == .Free) return inode;
             self.drop(inode);
         }
         return error.NoSpace;
     }
 
-    /// Read the inode with the given index and verify that it is a valid file inode.
-    pub fn readFileInode(self: *const FileSystem, inode_index: InodeT) FsError!DiskInode {
-        const inode = try self.readInode(inode_index);
-        try self.validateInode(&inode);
-        if (inode.kind != .Regular) return error.NotAFile;
-        return inode;
-    }
-
-    fn getFileInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
-        const inode = try self.inode_cache.get(self, inode_index);
+    /// Get the inode with the given index and verify that it is a valid file inode.
+    pub fn getFileInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
+        const inode = try self.getInode(inode_index);
         errdefer self.drop(inode);
 
         switch (inode.kind) {
@@ -909,8 +826,9 @@ pub const FileSystem = struct {
         return inode;
     }
 
-    fn getDirectoryInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
-        const inode = try self.inode_cache.get(self, inode_index);
+    /// Get the inode with the given index and verify that it is a valid directory inode.
+    pub fn getDirectoryInode(self: *FileSystem, inode_index: InodeT) FsError!*DiskInode {
+        const inode = try self.getInode(inode_index);
         errdefer self.drop(inode);
 
         if (inode.kind != .Directory) return error.NotADirectory;
@@ -1096,6 +1014,7 @@ pub const FileSystem = struct {
         inode.* = .{}; // Reset the inode to the default free state
     }
 
+    /// Low-level read of an inode by index. Bypasses the inode cache.
     fn readInode(self: *const FileSystem, inode_index: InodeT) FsError!DiskInode {
         if (inode_index >= self.superblock.inode_count) return error.Corrupt;
 
@@ -1111,6 +1030,7 @@ pub const FileSystem = struct {
         return inode;
     }
 
+    /// Low-level write of an inode by index. Bypasses the inode cache.
     fn writeInode(self: *const FileSystem, inode_index: InodeT, inode: *const DiskInode) FsError!void {
         if (inode_index >= self.superblock.inode_count) return error.Corrupt;
 
@@ -1165,17 +1085,6 @@ pub const FileSystem = struct {
         }
         if (inode.double_indirect_block != BLOCK_POINTER_NONE) {
             try self.validateDataBlockIndex(inode.double_indirect_block);
-        }
-    }
-
-    /// Collects the data block indices for all logical blocks used by an inode into dest.
-    fn collectInodeDataBlocks(self: *const FileSystem, inode: *const DiskInode, dest: []u32) FsError!void {
-        const block_count = fileBlocksForSize(inode.size_bytes);
-        if (dest.len < block_count) return error.Corrupt;
-
-        var block_index: usize = 0;
-        while (block_index < block_count) : (block_index += 1) {
-            dest[block_index] = try self.getInodeDataBlock(inode, @intCast(block_index));
         }
     }
 

@@ -1,5 +1,6 @@
 const abi = @import("abi");
 const fs = @import("kernel/fs/zodfs.zig");
+const fs_util = @import("kernel/fs/util.zig");
 const block_device = @import("kernel/block_device.zig");
 const file_block_device = @import("file_block_device.zig");
 const std = @import("std");
@@ -84,7 +85,7 @@ fn importDirectory(
                 defer init.gpa.free(file_data);
                 _ = try input_file.readPositionalAll(init.io, file_data, 0);
 
-                try disk_fs.writeFileAt(fs_dir_inode, entry.name, file_data);
+                try fs_util.writeFileAt(disk_fs, fs_dir_inode, entry.name, file_data);
 
                 counts.files += 1;
             },
@@ -135,14 +136,14 @@ fn processLinksManifest(
             return CompileError.InvalidLinkEntry;
         }
 
-        const source_inode = disk_fs.getInodeAtPath(source_path) catch |err| {
+        const source_inode = fs_util.getInodeAtPath(disk_fs, source_path) catch |err| {
             try stdout.print("  Error: link source not found: {s} ({s})\n", .{ source_path, @errorName(err) });
             return err;
         };
         defer disk_fs.drop(source_inode);
 
         const split = vfs.splitPath(target_path);
-        const dir_inode = disk_fs.getInodeAtPath(split.dir) catch |err| {
+        const dir_inode = fs_util.getInodeAtPath(disk_fs, split.dir) catch |err| {
             try stdout.print("  Error: link target directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;
         };
@@ -216,7 +217,7 @@ fn processSpecialManifest(
             return CompileError.InvalidSpecialEntry;
         } orelse continue;
         const split = vfs.splitPath(entry.target_path);
-        const dir_inode = disk_fs.getInodeAtPath(split.dir) catch |err| {
+        const dir_inode = fs_util.getInodeAtPath(disk_fs, split.dir) catch |err| {
             try stdout.print("  Error: special-file directory not found: {s} ({s})\n", .{ split.dir, @errorName(err) });
             return err;
         };

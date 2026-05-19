@@ -70,11 +70,6 @@ pub fn splitPath(path: []const u8) struct { dir: []const u8, name: []const u8 } 
     }
 }
 
-/// Returns stat-like metadata for a filesystem path; can optionally follow a final symlink.
-pub fn stat(path: []const u8, follow_final: bool) FsError!Stat {
-    return statAt("/", path, follow_final);
-}
-
 /// Returns stat-like metadata for a filesystem path resolved against `cwd`.
 pub fn statAt(cwd: []const u8, path: []const u8, follow_final: bool) FsError!Stat {
     const inode = try resolvePathInodeAt(cwd, path, follow_final);
