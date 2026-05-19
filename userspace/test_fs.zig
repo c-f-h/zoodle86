@@ -948,11 +948,16 @@ fn testCwd() !void {
     try expectContains(ls_output, "hard.txt");
     try expectContains(ls_output, "nested");
 
-    const inherited_cwd_pid = try expectSyscall(sys.spawn("/bin/stat", &.{"renamed.txt"}), "testCwd: spawn inherited cwd stat", @src());
+    // avoid stat output on the terminal by redirecting to /dev/null
+    const dev_null = try sys.open("/dev/null", .{ .open_mode = .WriteOnly });
+    defer sys.close(dev_null) catch {};
+    const to_null = [_]sys.FdRemap{.{ .dst = sys.STDOUT, .src = dev_null }};
+
+    const inherited_cwd_pid = try expectSyscall(sys.spawnOpts("/bin/stat", &.{"renamed.txt"}, &to_null), "testCwd: spawn inherited cwd stat", @src());
     try expectOffset(try expectSyscall(sys.waitpid(inherited_cwd_pid), "testCwd: wait inherited cwd stat", @src()), 0);
 
     _ = try expectSyscall(sys.chdir("/bin"), "testCwd: chdir bin", @src());
-    const relative_exec_pid = try expectSyscall(sys.spawn("./stat", &.{cwd_renamed_file}), "testCwd: spawn relative executable", @src());
+    const relative_exec_pid = try expectSyscall(sys.spawnOpts("./stat", &.{cwd_renamed_file}, &to_null), "testCwd: spawn relative executable", @src());
     try expectOffset(try expectSyscall(sys.waitpid(relative_exec_pid), "testCwd: wait relative executable", @src()), 0);
 
     _ = try expectSyscall(sys.chdir(cwd_dir), "testCwd: chdir cwd dir again", @src());
