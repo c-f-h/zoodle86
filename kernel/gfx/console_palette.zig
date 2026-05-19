@@ -23,3 +23,5 @@ pub const background: u4 = 0;
 pub const border: u4 = 8;
 pub const title_bg: u4 = 4;
 pub const title_fg: u4 = 15;
+
+pub const default_attr: u8 = 0x0F;

@@ -425,7 +425,7 @@ fn kernel_enter() !noreturn {
         // Secondary console occupies the right half of the screen.
         const sec_ts = try vconsole.preferredTextSize(half_w, full_h);
         try secondary_vconsole.init(alloc, half_w, 0, half_w, full_h, sec_ts.cols, sec_ts.rows, "userspace programs");
-        try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows);
+        try secondary_console.initFramebuf(alloc, sec_ts.cols, sec_ts.rows, secondary_vconsole.defaultAttr());
         secondary_console.vconsole_instance = &secondary_vconsole;
         try secondary_tty.init(alloc, &secondary_console, 1);
         foreground_tty = &secondary_tty;

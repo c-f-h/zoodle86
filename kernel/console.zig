@@ -31,7 +31,7 @@ pub const Console = struct {
     height: u32 = VGA_TEXT_HEIGHT,
     row: u32 = 0,
     col: u32 = 0,
-    attr: u8 = 0x07,
+    attr: u8 = undefined,
     default_attr: u8 = 0x07,
     serial_mirror_enabled: bool = false,
     cursor_visible: bool = true,
@@ -321,11 +321,11 @@ pub const Console = struct {
     }
 
     /// Initialise as a fresh framebuffer-backed console
-    pub fn initFramebuf(self: *Console, allocator: std.mem.Allocator, text_width: u32, text_height: u32) !void {
+    pub fn initFramebuf(self: *Console, allocator: std.mem.Allocator, text_width: u32, text_height: u32, default_attr: u8) !void {
         if (text_width == 0 or text_height == 0) @panic("framebuffer console must be at least 1x1");
         const new_cell_count = text_width * text_height;
         self.cell_buffer = try allocator.alloc(Cell, new_cell_count);
-        @memset(self.cell_buffer, makeCell(' ', self.attr));
+        @memset(self.cell_buffer, makeCell(' ', default_attr));
         self.backend = .framebuf;
         self.width = text_width;
         self.height = text_height;
@@ -336,7 +336,8 @@ pub const Console = struct {
         self.saved_row = 0;
         self.saved_col = 0;
         self.cursor_visible = false;
-        self.default_attr = self.attr;
+        self.default_attr = default_attr;
+        self.attr = default_attr;
         self.resetAnsiParser();
     }
 

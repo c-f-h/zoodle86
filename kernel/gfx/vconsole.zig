@@ -159,6 +159,10 @@ pub const VConsole = struct {
         );
     }
 
+    pub fn defaultAttr(_: *const VConsole) u8 {
+        return console_palette.default_attr;
+    }
+
     /// Redraw this window's chrome using the active font.
     pub fn drawFrame(self: *VConsole) void {
         self.win.drawFrame(&active_font);
