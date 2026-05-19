@@ -46,7 +46,8 @@ Complete listing of every source file and its role.
 ## Storage & Filesystem
 
 - `kernel/block_device.zig`: vtable-based block device abstraction. Block size is fixed at 512 bytes.
-- `kernel/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` operations, including optional seekable byte-offset support.
+- `kernel/dev/char_device.zig`: vtable-based character-device abstraction carrying device IDs plus generic `read`/`write`/`ioctl`/`stat` operations, including optional seekable byte-offset support.
+- `kernel/dev/mem_devices.zig`: memory device implementations; currently only the null device for `/dev/null`.
 - `kernel/fs/vfs.zig`: virtual filesystem layer providing a unified interface to filesystem operations. Mounts the root filesystem on IDE and forwards operations to the underlying filesystem implementation. Exports public API for cwd-aware path canonicalization (`.` / `..`, redundant slashes), file I/O, directory manipulation, and special-file handling without exposing filesystem-specific details.
 - `kernel/fs/zodfs.zig`: inode-based filesystem implementation using block-bitmap allocation. Uses `BlockDevice` abstraction. Implements the ZOD2 format with superblock, block bitmap, inode table, and data region.
 - `kernel/elf32.zig`: ELF32 binary format structures (headers, program headers), segment type/flag constants, image extent computation.

@@ -149,6 +149,7 @@ pub const STAT_FLAG_SYNTHETIC: u8 = 1 << 3;
 
 pub const DeviceMajor = enum(u8) {
     Unnamed = 0,
+    Memory = 1,
     Ide = 3,
     Tty = 4,
     FrameBuffer = 29,

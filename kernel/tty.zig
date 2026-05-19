@@ -1,5 +1,5 @@
 const abi = @import("abi");
-const char_device = @import("char_device.zig");
+const char_device = @import("dev/char_device.zig");
 const console = @import("console.zig");
 const kernel = @import("kernel.zig");
 const keyboard = @import("keyboard.zig");

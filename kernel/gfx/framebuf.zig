@@ -1,6 +1,6 @@
 const mem = @import("../mem.zig");
 const paging = @import("../paging.zig");
-const char_device = @import("../char_device.zig");
+const char_device = @import("../dev/char_device.zig");
 const task = @import("../task.zig");
 const psf = @import("psf.zig");
 const abi = @import("abi");

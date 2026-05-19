@@ -61,6 +61,7 @@ FS_SPECIAL_FILES = [
     ("/dev/fb0",  0, "0x1d", 0),
     ("/dev/tty0", 0, "0x04", 0),
     ("/dev/tty1", 0, "0x04", 1),
+    ("/dev/null", 0, "0x01", 3),
 ]
 BOCHSRC = ROOT / "bochsrc.txt"
 BOCHSOUT = ROOT / "bochsout.txt"

@@ -23,6 +23,7 @@ const ImportCounts = struct {
 fn parseDeviceMajor(raw_major: u8) ?abi.DeviceMajor {
     return switch (raw_major) {
         @intFromEnum(abi.DeviceMajor.Unnamed) => .Unnamed,
+        @intFromEnum(abi.DeviceMajor.Memory) => .Memory,
         @intFromEnum(abi.DeviceMajor.Ide) => .Ide,
         @intFromEnum(abi.DeviceMajor.Tty) => .Tty,
         @intFromEnum(abi.DeviceMajor.FrameBuffer) => .FrameBuffer,

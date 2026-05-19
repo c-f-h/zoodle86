@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const console = @import("console.zig");
-const char_device = @import("char_device.zig");
+const char_device = @import("dev/char_device.zig");
+const mem_devices = @import("dev/mem_devices.zig");
 const vfs = @import("fs/vfs.zig");
 const framebuf = @import("gfx/framebuf.zig");
 const task = @import("task.zig");
@@ -252,14 +253,18 @@ pub fn openFileDesc(cwd: []const u8, path: []const u8, flags: u32) vfs.FsError!F
     return FileDesc{ .file = try vfs.createOpenFileEntryAt(cwd, path, flags) };
 }
 
+fn fileDescFromCharDevice(dev: *char_device.CharDevice, access_mode: u32) FileDesc {
+    return .{ .char_device = .{
+        .handle = dev,
+        .readable = access_mode != O_WRONLY,
+        .writable = access_mode != O_RDONLY,
+        .offset = 0,
+    } };
+}
+
 fn openTty(index: u8, access_mode: u32) ?FileDesc {
     if (kernel.getTty(index)) |ptty| {
-        return .{ .char_device = .{
-            .handle = ptty.charDevice(),
-            .readable = access_mode != O_WRONLY,
-            .writable = access_mode != O_RDONLY,
-            .offset = 0,
-        } };
+        return fileDescFromCharDevice(ptty.charDevice(), access_mode);
     }
     return null;
 }
@@ -267,12 +272,7 @@ fn openTty(index: u8, access_mode: u32) ?FileDesc {
 fn openFramebuf(minor: u8, access_mode: u32) vfs.FsError!?FileDesc {
     if (minor != 0) return error.FileNotFound;
     const dev = framebuf.getCharDevice() orelse return error.NoDevice;
-    return .{ .char_device = .{
-        .handle = dev,
-        .readable = access_mode != O_WRONLY,
-        .writable = access_mode != O_RDONLY,
-        .offset = 0,
-    } };
+    return fileDescFromCharDevice(dev, access_mode);
 }
 
 /// Open a special device inode and map it to a device descriptor.
@@ -287,6 +287,7 @@ fn tryOpenSpecialInode(cwd: []const u8, path: []const u8, flags: u32) vfs.FsErro
 
     return switch (st.kind) {
         .CharDevice => switch (st.device.major) {
+            .Memory => fileDescFromCharDevice(try mem_devices.getMemoryDevice(st.device.minor), access_mode),
             .Tty => openTty(st.device.minor, access_mode) orelse error.FileNotFound,
             .FrameBuffer => try openFramebuf(st.device.minor, access_mode),
             else => error.NoDevice,
