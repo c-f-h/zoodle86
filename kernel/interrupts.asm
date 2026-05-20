@@ -11,9 +11,7 @@ extern kernel_reschedule
 
 global return_to_userspace
 
-VECTOR_TIMER      equ 0xE8
-VECTOR_KEYBOARD   equ 0xD8
-VECTOR_SYSCALL    equ 0x80
+%include "vectors.asm"
 
 KERNEL_DATA_SELECTOR equ (2 << 3)
 

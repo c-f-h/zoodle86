@@ -1,6 +1,7 @@
 import math
 import os
 import pathlib
+import re
 import shutil
 import struct
 import subprocess
@@ -134,6 +135,7 @@ def get_autoexec_script():
 
 BOOT_BIN = build_artifact(BOOT_ASM, ".bin")
 INTERRUPTS_OBJ = build_artifact(INTERRUPTS_ASM, ".o")
+VECTORS_ASM = ROOT / "kernel" / "vectors.asm"
 STAGE2_INIT_OBJ = build_artifact(STAGE2_INIT_ASM, ".o")
 STAGE2_EXE = BUILD_DIR / "stage2.elf"
 STAGE2_BIN = build_artifact(STAGE2_EXE, ".bin")
@@ -184,10 +186,29 @@ def write_bochsrc(target, source, env):
 
 def assemble_interrupts(target, source, env):
     ensure_parent(INTERRUPTS_OBJ)
-    run([str(NASM_EXE), "-f", "elf32", str(INTERRUPTS_ASM), "-o", str(INTERRUPTS_OBJ)])
+    run([str(NASM_EXE), "-f", "elf32", "-I", str(ROOT/"kernel"), str(INTERRUPTS_ASM), "-o", str(INTERRUPTS_OBJ)])
     if not INTERRUPTS_OBJ.exists():
         raise RuntimeError("NASM did not produce interrupts.o.")
 
+
+def generate_vectors_asm(target, source, env):
+    """Extract VECTOR_* constants from kernel.zig and emit a NASM include file.
+
+    This keeps interrupt vector numbers defined only on the Zig side,
+    eliminating duplication with interrupts.asm.
+    """
+    src = pathlib.Path(str(source[0])).read_text(encoding="utf-8")
+    lines = []
+    for m in re.finditer(r"^pub const (VECTOR_\w+) = (0x[0-9A-Fa-f]+);", src, re.MULTILINE):
+        lines.append(f"{m.group(1):26s} equ {m.group(2)}\n")
+    dst = pathlib.Path(str(target[0]))
+    ensure_parent(dst)
+    dst.write_text(
+        "; Generated from kernel.zig -- do not edit.\n"
+        + "\n"
+        + "".join(lines),
+        encoding="ascii",
+    )
 
 def assemble_stage2_init(target, source, env):
     ensure_parent(STAGE2_INIT_OBJ)
@@ -505,7 +526,8 @@ def run_qemu(target, source, env):
 env = Environment(ENV=os.environ)
 
 bochsrc = env.Command(str(BOCHSRC_PATH), [], Action(write_bochsrc, "Generating $TARGET"))
-interrupts_obj = env.Command(str(INTERRUPTS_OBJ), str(INTERRUPTS_ASM), Action(assemble_interrupts, "Assembling $TARGET"))
+vectors_asm = env.Command(str(VECTORS_ASM), str(KERNEL_SRC), Action(generate_vectors_asm, "Generating $TARGET"))
+interrupts_obj = env.Command(str(INTERRUPTS_OBJ), [str(INTERRUPTS_ASM), vectors_asm], Action(assemble_interrupts, "Assembling $TARGET"))
 stage2_init_obj = env.Command(str(STAGE2_INIT_OBJ), str(STAGE2_INIT_ASM), Action(assemble_stage2_init, "Assembling $TARGET"))
 # Always rebuild: zig imports are not tracked by scons, let zig handle caching.
 stage2_exe = AlwaysBuild(env.Command(str(STAGE2_EXE), [str(ZIG_STAGE2_SRC), stage2_init_obj, STAGE2_LINKER_SCRIPT], Action(build_stage2, "Compiling and linking $TARGET")))
