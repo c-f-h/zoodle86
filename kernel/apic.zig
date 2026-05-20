@@ -2,6 +2,7 @@ const io = @import("io.zig");
 const acpi = @import("acpi.zig");
 const console = @import("console.zig");
 const paging = @import("paging.zig");
+const std = @import("std");
 
 // Virtual addresses where we will map the Local APIC and I/O APIC MMIO regions.
 const lapic_va = 0xFEE0_0000;
@@ -229,14 +230,14 @@ const TIMER_MODE_PERIODIC: u32 = 1 << 17;
 const TIMER_MASKED: u32 = 1 << 16;
 
 pub const Divider = enum(u8) {
-    div1 = 0x00,
-    div2 = 0x01,
-    div4 = 0x02,
+    div2 = 0x00,
+    div4 = 0x01,
+    div8 = 0x02,
     div16 = 0x03,
     div32 = 0x08,
     div64 = 0x09,
     div128 = 0x0A,
-    div256 = 0x0B,
+    div1 = 0x0B,
 };
 
 /// Initialize the APIC timer with the specified interrupt vector.
@@ -296,4 +297,69 @@ pub fn initApic() void {
 
     disablePic();
     enableLocalApic(lapic_va);
+}
+
+/// Calibrate the APIC timer using the ACPI PM timer.
+///
+/// Uses one-shot mode and direct current-count measurement.
+///
+/// Returns the initial-count value that produces a timer interrupt frequency
+/// of 100 Hz with the given divider.
+pub fn calibrateApicTimer(vector: u8, divider: Divider) u32 {
+    if (acpi.pm_timer_port == 0) {
+        @panic("No ACPI PM timer found for APIC timer calibration");
+    }
+
+    // Map divider enum to actual integer divisor (Intel SDM vol.3 §10.5.4).
+    const div_value: u32 = switch (divider) {
+        .div1 => 1,
+        .div2 => 2,
+        .div4 => 4,
+        .div8 => 8,
+        .div16 => 16,
+        .div32 => 32,
+        .div64 => 64,
+        .div128 => 128,
+    };
+
+    // Stop any running timer and switch to one-shot mode (bit 17 = 0).
+    lapicWrite(lapic_va, LAPIC_LVT_TIMER, TIMER_MASKED | vector);
+    lapicWrite(lapic_va, LAPIC_TIMER_INITIAL, 0);
+
+    // Start a one-shot countdown from the maximum value.
+    lapicWrite(lapic_va, LAPIC_TIMER_INITIAL, 0xFFFFFFFF);
+
+    const pm_start = acpi.readPmTimer();
+    const apic_start = lapicRead(lapic_va, LAPIC_TIMER_CURRENT);
+
+    // Wait for ~100 ms of PM timer ticks (3.579545 MHz → 357954 ticks).
+    const target_pm_ticks: u32 = 357_954;
+    var pm_elapsed: u32 = 0;
+    while (pm_elapsed < target_pm_ticks) {
+        const pm_now = acpi.readPmTimer();
+        pm_elapsed = if (pm_now >= pm_start) pm_now - pm_start else (acpi.pm_timer_mask - pm_start + pm_now + 1);
+    }
+
+    const apic_end = lapicRead(lapic_va, LAPIC_TIMER_CURRENT);
+    const counts_elapsed = apic_start - apic_end; // timer counts down
+
+    // APIC timer frequency after divider (use 64-bit to avoid overflow).
+    const freq_after_div = @as(u32, @intCast(@as(u64, counts_elapsed) * 3579545 / @as(u64, pm_elapsed)));
+    const bus_freq = @as(u32, @intCast(@as(u64, freq_after_div) * div_value));
+
+    // Initial count for a 100 Hz periodic interrupt rate.
+    const counter_for_100hz = freq_after_div / 100;
+
+    var buf: [120]u8 = undefined;
+    console.primary.puts(std.fmt.bufPrint(
+        &buf,
+        "APIC timer calibrated: {} Hz (bus {} Hz), {} initial count for 100 Hz\n",
+        .{ freq_after_div, bus_freq, counter_for_100hz },
+    ) catch "");
+
+    // Restore periodic mode for normal operation.
+    lapicWrite(lapic_va, LAPIC_LVT_TIMER, TIMER_MASKED | TIMER_MODE_PERIODIC | vector);
+    lapicWrite(lapic_va, LAPIC_TIMER_INITIAL, 0);
+
+    return counter_for_100hz;
 }

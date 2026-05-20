@@ -86,8 +86,8 @@ var foreground_tty: ?*tty.Tty = null;
 fn timerIrqHandler(frame: *const interrupt_frame.InterruptFrame) void {
     timer_ticks += 1;
     kprof.onTimerTick(frame.eip);
-    //const attr: u8 = if ((timer_ticks & 0x100) != 0) 0x70 else 0x07;
-    //console.putCharAt(0, 79, @truncate(timer_ticks & 0xFF), attr);
+    //const attr: u8 = if ((timer_ticks / 100) % 2 != 0) 0x70 else 0x07;
+    //console.primary.putCharAt(0, 79, '!', attr);
 }
 
 /// Install the global keyboard event handler.  Only one handler may be active at a time.
@@ -362,6 +362,7 @@ fn kernel_enter() !noreturn {
     }
 
     kernel_console.init(VGA_ATTR);
+    //kernel_console.setSerialMirrorEnabled(true);
     if (video_info_phys_addr != 0) {
         graphical = true;
         kernel_console.enableBufferedBackend();
@@ -392,15 +393,12 @@ fn kernel_enter() !noreturn {
     acpi.init();
     pci.scan(kernel_console);
 
-    //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: timer
+    //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: PIT timer (unused)
     apic.assignInterruptVector(0, 1, VECTOR_KEYBOARD); // IRQ1: keyboard
 
-    // The APIC timer frequency should be calibrated, e.g., from PIT.
-    // This appears to be inconsistent on emulators. For now I'm using a hardcoded value
-    // that seems to produce a timer frequency in the ballpark of 100 Hz on Bochs and QEMU.
     apic.initTimer(VECTOR_TIMER, apic.Divider.div16);
-    apic.startTimer(100000);
-    asm volatile ("sti");
+    const counter_100hz = apic.calibrateApicTimer(VECTOR_TIMER, apic.Divider.div16);
+    apic.startTimer(counter_100hz);
 
     try vfs.mountRootFs();
     try primary_tty.init(alloc, &console.primary, 0);
@@ -438,6 +436,7 @@ fn kernel_enter() !noreturn {
         kernel_console.refresh();
         secondary_console.refresh();
     }
+    asm volatile ("sti");
     enterKernelShell();
 }
 
@@ -598,6 +597,8 @@ pub fn exitCurrentTask(exit_code: u32) noreturn {
 /// Loads an ELF file into a fresh task with an isolated user address space.
 /// Returns with the kernel page directory reloaded so the caller can decide when to run it.
 pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task {
+    const verbose = false;
+
     const kernel_console = &console.primary;
     // Task initialization clones the currently active page directory, so start
     // from the kernel-only page tables instead of whatever user task was most
@@ -614,7 +615,7 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
         ptask.terminate();
     }
 
-    kernel_console.put(.{ "Loading ", fname, "...\n" });
+    if (verbose) kernel_console.put(.{ "Loading ", fname, "...\n" });
     const elf_data = try vfs.getFileContents(alloc, fname);
     defer alloc.free(elf_data);
 
@@ -638,10 +639,12 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
     ptask.stack_bottom = USER_STACK_BOTTOM;
     _ = ptask.stack_mem.allocate(ptask.stack_top - paging.PAGE, ptask.stack_top, true, true);
 
-    kernel_console.put(.{
-        "CODE:  ",   code_start,         " - ", code_end,        ", DATA: ",   data_start,           " - ", data_end,        "; entry: 0x", ehdr.e_entry,
-        "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, " (mapped: ", ptask.stack_mem.base, " - ", ptask.stack_top, ")\n",
-    });
+    if (verbose) {
+        kernel_console.put(.{
+            "CODE:  ",   code_start,         " - ", code_end,        ", DATA: ",   data_start,           " - ", data_end,        "; entry: 0x", ehdr.e_entry,
+            "\nStack: ", ptask.stack_bottom, " - ", ptask.stack_top, " (mapped: ", ptask.stack_mem.base, " - ", ptask.stack_top, ")\n",
+        });
+    }
 
     var i: u32 = 0;
 
@@ -659,18 +662,20 @@ pub fn loadUserspaceElf(fname: []const u8, args: []const []const u8) !*task.Task
         @memcpy(dest[0..filesz], file_start[0..filesz]);
         @memset(dest[filesz..memsz], 0);
 
-        if (phdr.p_flags & elf32.P_X != 0) {
-            kernel_console.puts("Loaded code segment: ");
-        } else {
-            kernel_console.puts("Loaded data segment: ");
+        if (verbose) {
+            if (phdr.p_flags & elf32.P_X != 0) {
+                kernel_console.puts("Loaded code segment: ");
+            } else {
+                kernel_console.puts("Loaded data segment: ");
+            }
+            kernel_console.putHexU32(phdr.p_vaddr);
+            kernel_console.puts(" (");
+            kernel_console.putDecU32(filesz);
+            kernel_console.puts(" + ");
+            kernel_console.putDecU32(memsz - filesz);
+            kernel_console.puts(" bss bytes)");
+            kernel_console.newline();
         }
-        kernel_console.putHexU32(phdr.p_vaddr);
-        kernel_console.puts(" (");
-        kernel_console.putDecU32(filesz);
-        kernel_console.puts(" + ");
-        kernel_console.putDecU32(memsz - filesz);
-        kernel_console.puts(" bss bytes)");
-        kernel_console.newline();
     }
 
     // mark code segment read-only after initialization

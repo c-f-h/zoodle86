@@ -1,6 +1,7 @@
 const console = @import("console.zig");
 const paging = @import("paging.zig");
 const apic = @import("apic.zig");
+const io = @import("io.zig");
 
 const std = @import("std");
 
@@ -31,8 +32,93 @@ pub const MADT = extern struct {
     // followed by variable-length entries
 };
 
+pub const AddressSpace = enum(u8) {
+    SystemMemory = 0,
+    SystemIO = 1,
+    PCIConfigurationSpace = 2,
+    EmbeddedController = 3,
+    SMBus = 4,
+    SystemCMOS = 5,
+    PCIDeviceBarTarget = 6,
+};
+
+pub const GenericAddressStructure = extern struct {
+    address_space: AddressSpace,
+    bit_width: u8,
+    bit_offset: u8,
+    access_size: u8,
+    address: u64,
+};
+
+/// Fixed ACPI Description Table (FADT)
+pub const FADT = extern struct {
+    header: SDTHeader,
+
+    firmware_ctrl: u32,
+    dsdt: u32,
+
+    reserved: u8,
+    preferred_pm_profile: u8,
+    sci_interrupt: u16,
+    smi_command_port: u32,
+    acpi_enable: u8,
+    acpi_disable: u8,
+    s4bios_req: u8,
+    pstate_control: u8,
+    pm1a_event_block: u32,
+    pm1b_event_block: u32,
+    pm1a_control_block: u32,
+    pm1b_control_block: u32,
+    pm2_control_block: u32,
+    pm_timer_block: u32,
+    gpe0_block: u32,
+    gpe1_block: u32,
+    pm1_event_length: u8,
+    pm1_control_length: u8,
+    pm2_control_length: u8,
+    pm_timer_length: u8,
+    gpe0_block_length: u8,
+    gpe1_block_length: u8,
+    gpe1_base: u8,
+    c_state_control: u8,
+    worst_c2_latency: u16,
+    worst_c3_latency: u16,
+    flush_size: u16,
+    flush_stride: u16,
+    duty_offset: u8,
+    duty_width: u8,
+    day_alarm: u8,
+    month_alarm: u8,
+    century: u8,
+
+    boot_architecture_flags: u16,
+    reserved2: u8,
+
+    flags: u32,
+
+    reset_reg: GenericAddressStructure,
+    reset_value: u8,
+    reserved3: [3]u8,
+
+    x_firmware_control: u64,
+    x_dsdt: u64,
+
+    x_pm1a_event_block: GenericAddressStructure,
+    x_pm1b_event_block: GenericAddressStructure,
+    x_pm1a_control_block: GenericAddressStructure,
+    x_pm1b_control_block: GenericAddressStructure,
+    x_pm2_control_block: GenericAddressStructure,
+    x_pm_timer_block: GenericAddressStructure,
+    x_gpe0_block: GenericAddressStructure,
+    x_gpe1_block: GenericAddressStructure,
+};
+
 var rsdt: *const SDTHeader = undefined;
 var madt: ?*const MADT = null;
+var fadt: ?*const FADT = null;
+
+pub var pm_timer_port: u16 = 0;
+pub var pm_timer_mask: u32 = 0;
 
 fn scanRange(start: usize, end: usize) ?*const RSDP {
     const kernel_console = &console.primary;
@@ -125,6 +211,58 @@ fn verifyChecksum(header: *const SDTHeader) void {
     }
 }
 
+fn printGAS(gas: GenericAddressStructure) void {
+    const kernel_console = &console.primary;
+    kernel_console.put(.{
+        "space=",        @tagName(gas.address_space),
+        " bit_width=",   gas.bit_width,
+        " bit_offset=",  gas.bit_offset,
+        " access_size=", gas.access_size,
+        " address=0x",   gas.address,
+        "\n",
+    });
+}
+
+fn parseFadt(table: *const FADT) void {
+    const kernel_console = &console.primary;
+    kernel_console.put(.{ "    FADT found: DSDT: ", table.dsdt, " FACS: ", table.firmware_ctrl, "\n" });
+    kernel_console.put(.{ "      SCI irq: ", table.sci_interrupt, " SMI port: 0x", table.smi_command_port, "\n" });
+    kernel_console.put(.{ "      ACPI enable: 0x", table.acpi_enable, " disable: 0x", table.acpi_disable, "\n" });
+    kernel_console.put(.{ "      PM1a event block: 0x", table.pm1a_event_block, " PM1a cntl block: 0x", table.pm1a_control_block, "\n" });
+    kernel_console.put(.{ "      PM timer block: 0x", table.pm_timer_block, " length: ", table.pm_timer_length, "\n" });
+    kernel_console.put(.{ "      GPE0 block: 0x", table.gpe0_block, " len: ", table.gpe0_block_length, "\n" });
+
+    if (table.pm_timer_block != 0 and table.pm_timer_length == 4) {
+        pm_timer_port = @truncate(table.pm_timer_block);
+        pm_timer_mask = 0x00FFFFFF; // 24 bit by default
+    }
+
+    if (table.header.revision >= 2) {
+        kernel_console.put(.{ "      flags: 0x", table.flags, " boot arch: 0x", table.boot_architecture_flags, "\n" });
+        kernel_console.put(.{ "      reset reg: addr=0x", table.reset_reg.address, " value=0x", table.reset_value, "\n" });
+        kernel_console.put(.{ "      preferred PM profile: ", table.preferred_pm_profile, "\n" });
+
+        kernel_console.puts("      pm1a event GAS:   ");
+        printGAS(table.x_pm1a_event_block);
+        kernel_console.puts("      pm1a control GAS: ");
+        printGAS(table.x_pm1a_control_block);
+        kernel_console.puts("      pm timer GAS:     ");
+        printGAS(table.x_pm_timer_block);
+
+        if (pm_timer_port != 0 and table.flags & 0x100 != 0) {
+            // 32 bit flag set for the timer?
+            pm_timer_mask = 0xFFFFFFFF;
+        }
+    }
+}
+
+pub fn readPmTimer() u32 {
+    if (pm_timer_port == 0) {
+        @panic("No ACPI PM timer found");
+    }
+    return io.inl(pm_timer_port) & pm_timer_mask;
+}
+
 pub fn init() void {
     const kernel_console = &console.primary;
     kernel_console.puts("Scanning ACPI tables...\n");
@@ -149,7 +287,10 @@ pub fn init() void {
     for (rsdt_entries[0..num_entries]) |entry_phys_ptr| {
         const entry_header = mapTable(entry_phys_ptr);
         kernel_console.put(.{ "  Entry: ", &entry_header.signature, " OEMID: ", &entry_header.oemid, " length: ", entry_header.length, " revision: ", entry_header.revision, "\n" });
-        if (std.mem.eql(u8, entry_header.signature[0..4], "APIC")) {
+        if (std.mem.eql(u8, entry_header.signature[0..4], "FACP")) {
+            fadt = @ptrCast(entry_header);
+            parseFadt(fadt.?);
+        } else if (std.mem.eql(u8, entry_header.signature[0..4], "APIC")) {
             madt = @ptrCast(entry_header);
             kernel_console.put(.{ "    MADT found: local APIC address: ", madt.?.local_apic_address, " flags: ", madt.?.flags, "\n" });
             apic.parseApicEntries(madt.?);
