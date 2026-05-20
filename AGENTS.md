@@ -46,5 +46,6 @@ Files and directories from `static/` are copied into the filesystem image during
 - `scons` keeps `build/kernel.full.elf`, writes `build/kernel.disasm`, and strips `build/kernel.elf` before baking it into the filesystem image. `zig build` mirrors only the kernel ELF pair.
 - `scons --rebuild-fs` forces a rebuild of `build/fsimage.img`.
 - To run shell commands on startup, use `scons run AUTOEXEC="..."` / `scons debug AUTOEXEC="..."`. Do **not** use an environment variable for this. End scripts with `shutdown` to terminate cleanly.
+- A single, non-interactive userspace shell command can be triggered using the syntax `run shell cat /tmp/foo.txt > /dev/null`.
 - Serial output is captured to `build/serial.txt`. Use `serial on` on the shell to mirror console output there.
 - To profile code, use the shell commands `profile start\n...\nprofile stop` and inspect the serial output.

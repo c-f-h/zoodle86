@@ -175,8 +175,14 @@ const BuiltinResult = enum {
 };
 
 /// Runs an interactive userspace shell with pipelines and file redirections.
-pub fn main(_: []const []const u8) !void {
+pub fn main(argv: []const []const u8) !void {
     const alloc = heap.getAllocator();
+
+    // If arguments are passed, run them as a single command line and exit.
+    if (argv.len > 1) {
+        try runCommandLine(alloc, argv[1..]);
+        sys.exit(0);
+    }
 
     var rl: readline.Readline = .{};
     var history = ShellHistory.initEmpty();

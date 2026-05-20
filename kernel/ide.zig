@@ -231,10 +231,7 @@ pub fn identifyDrive(drive: Drive) IdeError!DriveInfo {
 
     try waitUntilDataRequest(PRIMARY);
 
-    var i: usize = 0;
-    while (i < words.len) : (i += 1) {
-        words[i] = io.inw(dataPort(PRIMARY));
-    }
+    io.repInsw(dataPort(PRIMARY), &words, words.len);
 
     return parseDriveInfo(&words);
 }
@@ -255,12 +252,7 @@ pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!vo
 
     try waitUntilDataRequest(PRIMARY);
 
-    var i: usize = 0;
-    while (i < 256) : (i += 1) {
-        const word = io.inw(dataPort(PRIMARY));
-        out_sector[i * 2] = @truncate(word);
-        out_sector[(i * 2) + 1] = @truncate(word >> 8);
-    }
+    io.repInsw(dataPort(PRIMARY), @ptrCast(@alignCast(out_sector)), 256);
 }
 
 /// Writes one 512-byte sector at `lba` using ATA PIO LBA28 mode.
@@ -279,12 +271,7 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
 
     try waitUntilDataRequest(PRIMARY);
 
-    var i: usize = 0;
-    while (i < 256) : (i += 1) {
-        const lo = @as(u16, in_sector[i * 2]);
-        const hi = @as(u16, in_sector[(i * 2) + 1]) << 8;
-        io.outw(dataPort(PRIMARY), hi | lo);
-    }
+    io.repOutsw(dataPort(PRIMARY), @ptrCast(@alignCast(in_sector)), 256);
 
     io.outb(ioPort(PRIMARY, REG_COMMAND), CMD_CACHE_FLUSH);
     try waitUntilReady(PRIMARY);

@@ -42,3 +42,25 @@ pub inline fn inl(port: u16) u32 {
         : [port] "N{dx}" (port),
     );
 }
+
+pub inline fn repInsw(port: u16, buf: [*]u16, count: u32) void {
+    asm volatile (
+        \\cld
+        \\rep insw
+        :
+        : [port] "N{dx}" (port),
+          [count] "{ecx}" (count),
+          [buf] "{edi}" (buf),
+        : .{ .memory = true });
+}
+
+pub inline fn repOutsw(port: u16, buf: [*]const u16, count: u32) void {
+    asm volatile (
+        \\cld
+        \\rep outsw
+        :
+        : [port] "N{dx}" (port),
+          [count] "{ecx}" (count),
+          [buf] "{esi}" (buf),
+        : .{ .memory = true });
+}
