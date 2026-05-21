@@ -379,7 +379,7 @@ fn kernel_enter() !noreturn {
 
     kernel_allocator.init();
     alloc = kernel_allocator.getAllocator();
-    kprof.init(alloc);
+    kprof.init();
     taskman.init();
 
     kernel_console.put(.{

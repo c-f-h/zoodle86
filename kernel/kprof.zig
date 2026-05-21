@@ -13,7 +13,6 @@ const CountEntry = struct {
     count: u32,
 };
 
-var alloc: std.mem.Allocator = undefined;
 var initialized = false;
 var enabled = false;
 
@@ -32,8 +31,12 @@ pub const ProfilerError = error{
 };
 
 /// Initialize kernel profiler state with the kernel allocator.
-pub fn init(kernel_alloc: std.mem.Allocator) void {
-    alloc = kernel_alloc;
+pub fn init() void {
+    // Pre-allocate the page table for the profiler's VA range so the PDE
+    // is present in every task's page directory (copied from the kernel PD).
+    // This avoids a page fault when the timer interrupt fires in a user
+    // task context and onTimerTick tries to write to the profiler buffer.
+    paging.ensurePageTablesAt(@intCast(SAMPLE_BASE_VA), 1, false);
     initialized = true;
 }
 
@@ -57,7 +60,7 @@ pub fn start() ProfilerError!void {
 }
 
 /// Stop sampling, aggregate counts by EIP, and write a descending histogram to serial.
-pub fn stop() ProfilerError!void {
+pub fn stop(alloc: std.mem.Allocator) ProfilerError!void {
     if (!initialized) return error.NotInitialized;
 
     var snapshot_page_count: usize = 0;
@@ -186,7 +189,7 @@ fn resetStateLocked() void {
     var i: usize = 0;
     while (i < page_count) : (i += 1) {
         const page_va: u32 = @intCast(SAMPLE_BASE_VA + i * paging.PAGE);
-        paging.unmapPagesAt(page_va, 1);
+        paging.unmapPagesAtKeepTables(page_va, 1);
         page_phys[i] = 0;
     }
 

@@ -363,7 +363,7 @@ fn cmdProfile(shell: *Shell, args: *ArgsIterator) !void {
     }
 
     if (std.mem.eql(u8, action, "stop")) {
-        kprof.stop() catch |err| {
+        kprof.stop(shell.alloc) catch |err| {
             switch (err) {
                 error.NotRunning => shell.console.puts("Profiler is not running.\n"),
                 error.NotInitialized => shell.console.puts("Profiler not initialized.\n"),
