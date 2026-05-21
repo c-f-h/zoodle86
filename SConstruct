@@ -204,10 +204,9 @@ def generate_vectors_asm(target, source, env):
     dst = pathlib.Path(str(target[0]))
     ensure_parent(dst)
     dst.write_text(
-        "; Generated from kernel.zig -- do not edit.\n"
-        + "\n"
+        "; Generated from kernel.zig -- do not edit.\n\n"
         + "".join(lines),
-        encoding="ascii",
+        encoding="ascii", newline=''   # always use LF line endings
     )
 
 def assemble_stage2_init(target, source, env):
@@ -302,7 +301,6 @@ def build_kernel(target, source, env):
             str(ZIG_EXE),
             "build-exe",
             *COMMON_ZIG_OPTS,
-            *zig_module_args(source_path),
             "-ofmt=elf",
             "-fentry=kernel_init",
             #"-fno-compiler-rt",        # TODO: remove rt once we have 32bit hash table
@@ -310,6 +308,7 @@ def build_kernel(target, source, env):
             "-T", linker_script,
             f"-femit-bin={output_path.as_posix()}",
             str(INTERRUPTS_OBJ),
+            *zig_module_args(source_path),
         ]
     )
     if not output_path.exists():
