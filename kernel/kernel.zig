@@ -43,16 +43,20 @@ pub const user_code_selector: u16 = (3 << 3) | 3;
 pub const user_data_selector: u16 = (4 << 3) | 3;
 pub const tss_selector_cpu0: u16 = 5 << 3;
 
-// interrupt vectors
+// exception vectors
 pub const VECTOR_DOUBLE_FAULT = 0x08;
 pub const VECTOR_INVALID_TSS = 0x0A;
 pub const VECTOR_NOSEGMENT = 0x0B; // Segment Not Present
 pub const VECTOR_SS_FAULT = 0x0C; // Stack Segment Fault
 pub const VECTOR_GPF = 0x0D; // General Protection Fault
 pub const VECTOR_PAGEFAULT = 0x0E; // Page Fault
-pub const VECTOR_TIMER = 0xE8;
-pub const VECTOR_KEYBOARD = 0xD8;
+
+// interrupt vectors
 pub const VECTOR_SYSCALL = 0x80;
+pub const VECTOR_KEYBOARD = 0xA8;
+pub const VECTOR_IDE_PRIMARY = 0xD0;
+pub const VECTOR_IDE_SECONDARY = 0xD1;
+pub const VECTOR_TIMER = 0xE8;
 pub const VECTOR_SPURIOUS = 0xFF;
 
 // Interrupt handler addresses from interrupts.asm
@@ -62,10 +66,13 @@ extern fn exception_isr_int0B() void;
 extern fn exception_isr_int0C() void;
 extern fn exception_isr_int0D() void;
 extern fn page_fault_isr() void;
-extern fn timer_isr() void;
-extern fn keyboard_isr() void;
-extern fn syscall_isr() void;
 extern fn spurious_isr() void;
+
+extern fn SYSCALL_isr() void;
+extern fn TIMER_isr() void;
+extern fn KEYBOARD_isr() void;
+extern fn IDE_PRIMARY_isr() void;
+extern fn IDE_SECONDARY_isr() void;
 
 extern fn kernel_yield_trampoline() u32;
 
@@ -180,8 +187,9 @@ fn initGdt() void {
 
 /// Single entry point into the kernel from IRQs/exceptions/syscalls.
 export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c) void {
-    if (frame.vector == VECTOR_KEYBOARD or frame.vector == VECTOR_TIMER) {
-        // Acknowledge EOI on LAPIC interrups
+    const is_exception = frame.vector < 0x20;
+    if (!is_exception and frame.vector != VECTOR_SPURIOUS and frame.vector != VECTOR_SYSCALL) {
+        // Acknowledge EOI on LAPIC interrupts
         apic.lapic_eoi();
     }
 
@@ -193,6 +201,7 @@ export fn interrupt_dispatch(frame: *interrupt_frame.InterruptFrame) callconv(.c
         },
         VECTOR_KEYBOARD => keyboard.keyboard_dispatch(frame),
         VECTOR_SYSCALL => syscall.syscall_dispatch(@ptrCast(frame)),
+        VECTOR_IDE_PRIMARY, VECTOR_IDE_SECONDARY => ide.ide_dispatch(frame),
         VECTOR_DOUBLE_FAULT, VECTOR_INVALID_TSS, VECTOR_NOSEGMENT, VECTOR_SS_FAULT, VECTOR_GPF => exception_handler(frame),
         VECTOR_PAGEFAULT => page_fault_handler(frame),
         else => @panic("Unknown interrupt vector"),
@@ -301,9 +310,9 @@ pub fn getErrorDesc(err: anyerror) []const u8 {
         error.BufferTooSmall => "Buffer too small",
         error.InvalidElf => "Invalid ELF executable",
         error.BrokenPipe => "Broken pipe",
-        ide.IdeError.Timeout => "IDE timeout",
-        ide.IdeError.DeviceFault => "IDE device fault",
-        ide.IdeError.ControllerError => "IDE controller error",
+        error.Timeout => "IDE timeout",
+        error.DeviceFault => "IDE device fault",
+        error.ControllerError => "IDE controller error",
 
         else => @errorName(err),
     };
@@ -354,10 +363,15 @@ fn kernel_enter() !noreturn {
         idt.set(VECTOR_GPF, idt.GateType.TrapGate32, @intFromPtr(&exception_isr_int0D), cs, 0);
         idt.set(VECTOR_PAGEFAULT, idt.GateType.TrapGate32, @intFromPtr(&page_fault_isr), cs, 0);
 
-        idt.set(VECTOR_TIMER, idt.GateType.InterruptGate32, @intFromPtr(&timer_isr), cs, 0);
-        idt.set(VECTOR_KEYBOARD, idt.GateType.InterruptGate32, @intFromPtr(&keyboard_isr), cs, 0);
-        idt.set(VECTOR_SYSCALL, idt.GateType.InterruptGate32, @intFromPtr(&syscall_isr), cs, 3);
-        idt.set(VECTOR_SPURIOUS, idt.GateType.InterruptGate32, @intFromPtr(&spurious_isr), cs, 0);
+        // interrupt handlers
+        const ig32 = idt.GateType.InterruptGate32;
+        idt.set(VECTOR_SYSCALL, ig32, @intFromPtr(&SYSCALL_isr), cs, 3);
+        idt.set(VECTOR_TIMER, ig32, @intFromPtr(&TIMER_isr), cs, 0);
+        idt.set(VECTOR_KEYBOARD, ig32, @intFromPtr(&KEYBOARD_isr), cs, 0);
+        idt.set(VECTOR_IDE_PRIMARY, ig32, @intFromPtr(&IDE_PRIMARY_isr), cs, 0);
+        idt.set(VECTOR_IDE_SECONDARY, ig32, @intFromPtr(&IDE_SECONDARY_isr), cs, 0);
+
+        idt.set(VECTOR_SPURIOUS, ig32, @intFromPtr(&spurious_isr), cs, 0);
         idt.load();
     }
 
@@ -395,10 +409,16 @@ fn kernel_enter() !noreturn {
 
     //apic.assignInterruptVector(0, 0, VECTOR_TIMER); // IRQ0: PIT timer (unused)
     apic.assignInterruptVector(0, 1, VECTOR_KEYBOARD); // IRQ1: keyboard
+    apic.assignInterruptVector(0, ide.Primary.irq, VECTOR_IDE_PRIMARY);
+    apic.assignInterruptVector(0, ide.Secondary.irq, VECTOR_IDE_SECONDARY);
 
     apic.initTimer(VECTOR_TIMER, apic.Divider.div16);
     const counter_100hz = apic.calibrateApicTimer(VECTOR_TIMER, apic.Divider.div16);
     apic.startTimer(counter_100hz);
+
+    try ide.initDmaBusmastering();
+
+    asm volatile ("sti");
 
     try vfs.mountRootFs();
     try primary_tty.init(alloc, &console.primary, 0);
@@ -436,7 +456,6 @@ fn kernel_enter() !noreturn {
         kernel_console.refresh();
         secondary_console.refresh();
     }
-    asm volatile ("sti");
     enterKernelShell();
 }
 

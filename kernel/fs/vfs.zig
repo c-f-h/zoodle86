@@ -43,13 +43,13 @@ pub fn mountRootFs() !void {
     ide.selectDrive(drive);
 
     const drive_info = try ide.identifyDrive(drive);
-    kernel_console.puts("Drive model:     ");
-    kernel_console.puts(&drive_info.model);
-    kernel_console.puts("\nDrive serial:    ");
-    kernel_console.puts(&drive_info.serial);
-    kernel_console.puts("\nSectors (LBA28): ");
-    kernel_console.putDecU32(drive_info.max_lba28);
-    kernel_console.newline();
+    kernel_console.put(.{
+        "Drive model:     ",    &drive_info.model,
+        "\nDrive serial:    ",  &drive_info.serial,
+        "\nSectors (LBA28): ",  drive_info.max_lba28,
+        "h\nCapabilities:    ", drive_info.capabilities,
+        "h\n",
+    });
 
     root_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
     root_fs = try zodfs.FileSystem.mount(&root_block_device.block_dev, kernel.getAllocator());

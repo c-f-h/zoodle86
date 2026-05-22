@@ -211,6 +211,7 @@ fn ioapicSetRedir(ioapic_base: usize, gsi: u32, vector: u8, lapic_id: u8) void {
     ioapicWrite(ioapic_base, reg + 0, low);
 }
 
+/// Assign an ISA-style edge-triggered interrupt (keyboard, timer, etc.).
 pub fn assignInterruptVector(bus: u8, irq: u8, vector: u8) void {
     const ioapic_base = ioapic_va; // TODO: support multiple I/O APICs
     const gsi: u32 = getRemappedGSI(bus, irq);

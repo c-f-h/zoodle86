@@ -27,11 +27,9 @@ _kernel_yield_trampoline_return:
     popad           ; restore other task's registers
     ret
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-global keyboard_isr
-keyboard_isr:
-    push dword 0                 ; error_code
-    push dword VECTOR_KEYBOARD   ; vector
+global generic_handler:
 generic_handler:
     push ds
     push es
@@ -51,17 +49,24 @@ return_to_userspace:        ; esp -> InterruptFrame
     add esp, 8              ; drop vector + error code
     iretd
 
-global timer_isr
-timer_isr:
-    push dword 0                ; error_code
-    push dword VECTOR_TIMER     ; vector
-    jmp generic_handler
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-global syscall_isr
-syscall_isr:
+; macro for ISRs which should push a dummy zero error code and the interrupt vector
+%macro interrupt_isr 1
+global %1_isr
+%1_isr:
     push dword 0                ; error_code
-    push dword VECTOR_SYSCALL   ; vector
+    push dword VECTOR_%1        ; vector
     jmp generic_handler
+%endmacro
+
+interrupt_isr SYSCALL
+interrupt_isr TIMER
+interrupt_isr KEYBOARD
+interrupt_isr IDE_PRIMARY
+interrupt_isr IDE_SECONDARY
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; macro for exception IRQs which already push an error code onto the stack
 %macro exception_isr 1
@@ -93,6 +98,8 @@ spurious_isr:
     pop ds
     ; LAPIC spurious interrupts do not require EOI.
     iretd
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 global cpuid_query
 cpuid_query:
