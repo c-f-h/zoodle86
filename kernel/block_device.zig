@@ -71,13 +71,15 @@ pub const BlockDevice = struct {
     }
 
     fn writeBlockCached(self: *BlockDevice, lba: u32, buf: *const [BLOCK_SIZE]u8) BlockError!void {
+        try self.vtable.writeBlock(self, lba, buf);
+
+        // Update cache only after write succeeded to avoid cache consistency issues
         const has_i = self.cache.find(lba);
         if (has_i) |i| {
             // Note that writing also increases the use flag
             @memcpy(self.cache.cachedData(i), buf);
         }
         // We don't create a cache entry if none exists to avoid streaming writes flooding the cache
-        return self.vtable.writeBlock(self, lba, buf);
     }
 };
 
