@@ -52,6 +52,8 @@ pub fn mountRootFs() !void {
     });
 
     root_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
+    try root_block_device.block_dev.initCache(kernel.getAllocator());
+    // TODO: deinit cache on unmount
     root_fs = try zodfs.FileSystem.mount(&root_block_device.block_dev, kernel.getAllocator());
 }
 

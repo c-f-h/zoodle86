@@ -21,6 +21,7 @@ The kernel provides an interactive shell with the following commands:
 | **ps** | (none) | List all active tasks with their PID, state, and parent PID. |
 | **shutdown** | (none) | Power off Bochs/QEMU. |
 | **break** | (none) | Invoke a Bochs magic breakpoint. |
+| **blockcache** | (none) | Log block cache state of the root FS block device. |
 
 ## Startup Script
 

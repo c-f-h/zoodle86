@@ -165,7 +165,7 @@ pub fn initDmaBusmastering() !void {
         const alloc = kernel.getAllocator();
         dma_buf = try alloc.alloc(u8, paging.PAGE);
         dma_buf_phys = paging.virtualToPhysical(dma_buf.ptr);
-        kernel.log("IDE DMA buffer: {x} virtual, {x} physical\n", .{ @intFromPtr(dma_buf.ptr), dma_buf_phys });
+        kernel.log("IDE DMA buffer: {x} virtual, {x} physical", .{ @intFromPtr(dma_buf.ptr), dma_buf_phys });
     }
 }
 
@@ -408,7 +408,7 @@ fn transferSectorLba28Dma(drive: Drive, lba: u32, write: bool, sector: *[512]u8)
         if (timeout >= 1000) {
             dma_done = false;
             dma_error = false;
-            kernel.log("DMA timeout waiting for IRQ on LBA {d}\n", .{lba});
+            kernel.log("DMA timeout waiting for IRQ on LBA {d}", .{lba});
             return error.Timeout;
         }
         asm volatile ("hlt" ::: .{ .memory = true });

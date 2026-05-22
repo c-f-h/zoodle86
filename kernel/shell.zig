@@ -54,6 +54,7 @@ const commands = [_]Command{
     .{ .name = "ps", .description = "List all active tasks and their status.", .handler = cmdPs },
     .{ .name = "shutdown", .description = "Power off Bochs/QEMU.", .handler = cmdShutdown },
     .{ .name = "break", .description = "Invoke a Bochs magic breakpoint.", .handler = cmdDebugBreak },
+    .{ .name = "blockcache", .description = "Log block cache entries of the root fs block device.", .handler = cmdBlockcache },
 };
 
 /// Execute a shell command with the given shell instance.
@@ -597,6 +598,37 @@ fn cmdDebugBreak(shell: *Shell, args: *ArgsIterator) !void {
     kernel.bochsDebugBreak();
 }
 
+fn cmdBlockcache(shell: *Shell, args: *ArgsIterator) !void {
+    if (args.next() != null) {
+        printUsage(shell, "blockcache");
+        return;
+    }
+
+    const bd = vfs.getRootFs().block_dev;
+    const cache = &bd.cache;
+
+    if (!cache.inited) {
+        shell.console.puts("Block cache not initialized.\n");
+        return;
+    }
+
+    shell.console.put(.{ "Block device: ", bd.block_count, " blocks\n" });
+
+    shell.console.puts("Cache slots:\n");
+    for (cache.info, 0..) |entry, i| {
+        const slot: u8 = @truncate(i);
+        if (entry.lba == 0xFFFF_FFFF) {
+            shell.console.put(.{ "  [", slot, "] empty\n" });
+        } else {
+            shell.console.put(.{ "  [", slot, "] LBA=", entry.lba, " used=", entry.used, "\n" });
+        }
+    }
+
+    shell.console.put(.{ "Hits:   ", cache.cache_hits, "\n" });
+    shell.console.put(.{ "Misses: ", cache.cache_misses, "\n" });
+    shell.console.put(.{ "Clock hand: ", cache.clock_hand, "\n" });
+}
+
 fn parseNumericArg(raw: []const u8) !u32 {
     if (std.mem.startsWith(u8, raw, "0x") or std.mem.startsWith(u8, raw, "0X")) {
         return try std.fmt.parseInt(u32, raw[2..], 16);
@@ -631,6 +663,8 @@ fn printUsage(shell: *Shell, name: []const u8) void {
             shell.console.puts(" <on|off>");
         } else if (std.mem.eql(u8, command.name, "run")) {
             shell.console.puts(" <executable> [<arg> ...]");
+        } else if (std.mem.eql(u8, command.name, "blockcache")) {
+            shell.console.puts(" (no arguments)");
         }
         shell.console.puts("\n");
     }
