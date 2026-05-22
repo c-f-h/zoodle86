@@ -363,14 +363,16 @@ pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!vo
     io.repInsw(dataPort(Primary), @ptrCast(@alignCast(out_sector)), 256);
 }
 
-/// Reads one 512-byte sector at `lba` using ATA DMA LBA28 mode.
-pub fn readSectorLba28Dma(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!void {
+/// Reads or writes one 512-byte sector at `lba` using ATA DMA LBA28 mode.
+fn transferSectorLba28Dma(drive: Drive, lba: u32, write: bool, sector: *[512]u8) IdeError!void {
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
-
-    if (dma_buf_phys == 0) return readSectorLba28(drive, lba, out_sector);
 
     dma_done = false;
     dma_error = false;
+
+    if (write) { // copy write data from input buffer (might cross page boundary) to DMA buffer
+        @memcpy(dma_buf[0..512], sector);
+    }
 
     const prdt: [*]PrdtEntry = @ptrCast(@alignCast(dma_buf.ptr + 512));
     prdt[0] = .{
@@ -388,13 +390,13 @@ pub fn readSectorLba28Dma(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError
     // Write PRDT physical address (PRDT lives after the 512-byte data region)
     io.outl(bus.busmaster_base + BM_REG_PRDT, dma_buf_phys + 512);
     // Set READ direction; don't start yet
-    bus.writeBmCommand(false, false);
+    bus.writeBmCommand(write, false);
     // Program LBA and number of sectors
     try writeAtaTaskFile(drive, lba, 1);
     // Send DMA read command
-    bus.writeIdeCommand(CMD_READ_DMA);
+    bus.writeIdeCommand(if (write) CMD_WRITE_DMA else CMD_READ_DMA);
     // Start DMA engine
-    bus.writeBmCommand(false, true);
+    bus.writeBmCommand(write, true);
 
     // When this is called from an interrupt handler (in particular a syscall),
     // the interrupt flag is off here and the hlt loop will hang.
@@ -417,8 +419,9 @@ pub fn readSectorLba28Dma(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError
     dma_error = false;
     if (err) return error.ControllerError;
 
-    // copy read data from DMA buffer to output buffer
-    @memcpy(out_sector, dma_buf[0..512]);
+    if (!write) { // copy read data from DMA buffer to output buffer
+        @memcpy(sector, dma_buf[0..512]);
+    }
 }
 
 /// Writes one 512-byte sector at `lba` using ATA PIO LBA28 mode.
@@ -445,7 +448,7 @@ pub const IdeBlockDevice = struct {
 
     const vtable = BlockDevice.VTable{
         .readBlock = readBlockDma,
-        .writeBlock = writeBlock,
+        .writeBlock = writeBlockDma,
     };
 
     const vtable_readOnly = BlockDevice.VTable{
@@ -486,13 +489,19 @@ pub const IdeBlockDevice = struct {
     }
 
     fn readBlockDma(bd: *BlockDevice, lba: u32, buf: *[block_device.BLOCK_SIZE]u8) BlockError!void {
-        //if (comptime should_log) root.log("IdeBlockDevice read: LBA {d}", .{lba});
+        //if (comptime should_log) root.log("IdeBlockDevice read DMA: LBA {d}", .{lba});
         const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
-        readSectorLba28Dma(self.drive, lba, buf) catch return error.ReadError;
+        transferSectorLba28Dma(self.drive, lba, false, buf) catch return error.ReadError;
     }
 
     fn writeBlock(bd: *BlockDevice, lba: u32, buf: *const [block_device.BLOCK_SIZE]u8) BlockError!void {
         const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
         writeSectorLba28(self.drive, lba, buf) catch return error.WriteError;
+    }
+
+    fn writeBlockDma(bd: *BlockDevice, lba: u32, buf: *const [block_device.BLOCK_SIZE]u8) BlockError!void {
+        //if (comptime should_log) root.log("IdeBlockDevice write DMA: LBA {d}", .{lba});
+        const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
+        transferSectorLba28Dma(self.drive, lba, true, @constCast(buf)) catch return error.WriteError;
     }
 };
