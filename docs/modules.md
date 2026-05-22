@@ -71,6 +71,7 @@ Complete listing of every source file and its role.
 - `flatten_elf.zig`: converts the linked ELF stage-2 image into a flat binary plus metadata.
 - `file_block_device.zig`: host-side `BlockDevice` implementation backed by a `std.fs.File`. Provides the storage layer for `extract_fs.zig` and `compile_fs.zig` so they can drive `zodfs.zig` directly.
 - `extract_fs.zig`: host tool that mounts an existing filesystem image (via `fs.FileSystem.mount()`), extracts regular files/directories to a host directory, and skips non-extracted inode kinds it does not materialize on the host (currently device nodes and symlinks).
+- `block_locate.zig`: host diagnostic tool that loads a filesystem image and classifies a user-specified LBA block number.
 - `compile_fs.zig`: host tool that formats a fresh filesystem image, mounts it, writes a directory tree of input files into it, and consumes optional root `_special`/`_links` manifests to create device nodes and hard links.
 
 ## Userspace
