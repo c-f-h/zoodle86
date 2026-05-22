@@ -17,8 +17,20 @@ pub const Bus = struct {
     // Base I/O port for busmaster IDE DMA registers.
     busmaster_base: u16 = 0,
 
+    // Cached value of REG_DRIVE_HEAD - avoid 400ns wait if not necessary
+    last_drive_head: u8 = 0,
+
     pub inline fn writeIdeCommand(self: *const Bus, cmd: u8) void {
-        io.outb(ioPort(self.*, REG_COMMAND), cmd);
+        io.outb(self.io_base + REG_COMMAND, cmd);
+    }
+
+    inline fn setDriveAndHead(self: *Bus, drive: Drive, lba_high4: u4) void {
+        const value = hdDevSel(drive, lba_high4);
+        if (value != self.last_drive_head) {
+            io.outb(self.io_base + REG_DRIVE_HEAD, value);
+            ata400nsDelay(self.*);
+            self.last_drive_head = value;
+        }
     }
 
     pub inline fn writeBmCommandRaw(self: *const Bus, cmd: u8) void {
@@ -59,13 +71,18 @@ pub const Drive = enum(u8) {
 };
 
 pub const DriveInfo = struct {
-    device_type: u16,
+    device_type: u16, // 0 = ATA, 1 = ATAPI
     cylinders: u16,
     heads: u16,
     sectors_per_track: u16,
     serial: [20]u8,
     model: [40]u8,
-    capabilities: u16, // if 0x200 is set, drive supports LBA
+    // Capability flags:
+    //  0x100: DMA supported
+    //  0x200: LBA supported
+    //  0x400: IORDY disabled
+    //  0x800: IORDY supported
+    capabilities: u16,
     field_validity: u16,
     command_sets: u32,
     max_lba28: u32,
@@ -308,12 +325,11 @@ fn waitUntilDataRequest(bus: Bus) IdeError!void {
 
 /// Selects an ATA drive on the primary IDE channel.
 pub fn selectDrive(drive: Drive) void {
-    io.outb(ioPort(Primary, REG_DRIVE_HEAD), hdDevSel(drive, 0));
-    ata400nsDelay(Primary);
+    Primary.setDriveAndHead(drive, 0);
     writeDeviceControlRegister(Primary, 0);
 }
 
-/// Identifies an ATA drive and returns parsed IDENTIFY data.
+/// Identifies an ATA drive (ATA IDENTIFY_DRIVE 0xEC) and returns parsed IDENTIFY data.
 pub fn identifyDrive(drive: Drive) IdeError!DriveInfo {
     var words: [256]u16 = undefined;
 
@@ -343,8 +359,7 @@ pub fn identifyDrive(drive: Drive) IdeError!DriveInfo {
 }
 
 fn writeAtaTaskFile(drive: Drive, lba: u32, sectors: u8) !void {
-    io.outb(ioPort(Primary, REG_DRIVE_HEAD), hdDevSel(drive, @truncate(lba >> 24)));
-    ata400nsDelay(Primary);
+    Primary.setDriveAndHead(drive, @truncate(lba >> 24));
     try waitUntilReady(Primary);
     io.outb(ioPort(Primary, REG_SECTOR_COUNT), sectors);
     io.outb(ioPort(Primary, REG_LBA0), @truncate(lba));
