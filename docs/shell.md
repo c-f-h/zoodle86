@@ -40,10 +40,10 @@ End scripts with `shutdown` for a clean exit.
 The `/bin/shell` userspace program provides an interactive prompt built on the userspace readline library. It displays the current working directory as `<cwd>$ `, resolves bare program names through `/bin`, and parses non-empty lines as a pipeline of one or more command stages. Path arguments may be absolute or relative to the shell's current working directory, with `.` and `..` handled in the usual way. Each stage supports shell-style left-to-right redirections with `<`, `>`, and `>>`.
 
 - `hello 4` runs `/bin/hello 4`.
-- `ls /bin > /list.txt` redirects stdout to a file using spawn-time fd remapping.
-- `echo hello >> /log.txt` appends stdout to an existing file or creates it if needed.
-- `cat < /log.txt | cat > /copy.txt` combines input redirection, a pipe, and output redirection in one command line.
-- `echo one > /out.txt >> /log.txt` follows shell-style left-to-right semantics: both redirections are opened in order, and the later one becomes the command's final stdout target.
+- `ls bin > list.txt` redirects stdout to a file using spawn-time fd remapping.
+- `echo hello >> log.txt` appends stdout to an existing file or creates it if needed.
+- `cat < log.txt | cat > copy.txt` combines input redirection, a pipe, and output redirection in one command line.
+- `echo one > out.txt >> log.txt` follows shell-style left-to-right semantics: both redirections are opened in order, and the later one becomes the command's final stdout target.
 - `cd /tmp` changes the shell's current working directory.
 
 Special built-ins:
