@@ -327,63 +327,63 @@ fn waitUntilDataRequest(bus: Bus) IdeError!void {
     return error.Timeout;
 }
 
-/// Selects an ATA drive on the primary IDE channel.
-pub fn selectDrive(drive: Drive) void {
-    Primary.setDriveAndHead(drive, 0);
-    writeDeviceControlRegister(Primary, 0);
+/// Selects an ATA drive on the given IDE bus.
+pub fn selectDrive(bus: *Bus, drive: Drive) void {
+    bus.setDriveAndHead(drive, 0);
+    writeDeviceControlRegister(bus.*, 0);
 }
 
 /// Identifies an ATA drive (ATA IDENTIFY_DRIVE 0xEC) and returns parsed IDENTIFY data.
-pub fn identifyDrive(drive: Drive) IdeError!DriveInfo {
+pub fn identifyDrive(bus: *Bus, drive: Drive) IdeError!DriveInfo {
     var words: [256]u16 = undefined;
 
-    selectDrive(drive);
+    selectDrive(bus, drive);
 
-    io.outb(ioPort(Primary, REG_SECTOR_COUNT), 0);
-    io.outb(ioPort(Primary, REG_LBA0), 0);
-    io.outb(ioPort(Primary, REG_LBA1), 0);
-    io.outb(ioPort(Primary, REG_LBA2), 0);
-    io.outb(ioPort(Primary, REG_COMMAND), CMD_IDENTIFY);
+    io.outb(ioPort(bus.*, REG_SECTOR_COUNT), 0);
+    io.outb(ioPort(bus.*, REG_LBA0), 0);
+    io.outb(ioPort(bus.*, REG_LBA1), 0);
+    io.outb(ioPort(bus.*, REG_LBA2), 0);
+    io.outb(ioPort(bus.*, REG_COMMAND), CMD_IDENTIFY);
 
-    try waitUntilReady(Primary);
+    try waitUntilReady(bus.*);
 
-    if (readStatus(Primary) == 0) {
+    if (readStatus(bus.*) == 0) {
         return error.NoDevice;
     }
 
-    if (io.inb(ioPort(Primary, REG_LBA1)) != 0 or io.inb(ioPort(Primary, REG_LBA2)) != 0) {
+    if (io.inb(ioPort(bus.*, REG_LBA1)) != 0 or io.inb(ioPort(bus.*, REG_LBA2)) != 0) {
         return error.NotAtaDevice;
     }
 
-    try waitUntilDataRequest(Primary);
+    try waitUntilDataRequest(bus.*);
 
-    io.repInsw(dataPort(Primary), &words, words.len);
+    io.repInsw(dataPort(bus.*), &words, words.len);
 
     return parseDriveInfo(&words);
 }
 
-fn writeAtaTaskFile(drive: Drive, lba: u32, sectors: u8) !void {
-    Primary.setDriveAndHead(drive, @truncate(lba >> 24));
-    try waitUntilReady(Primary);
-    io.outb(ioPort(Primary, REG_SECTOR_COUNT), sectors);
-    io.outb(ioPort(Primary, REG_LBA0), @truncate(lba));
-    io.outb(ioPort(Primary, REG_LBA1), @truncate(lba >> 8));
-    io.outb(ioPort(Primary, REG_LBA2), @truncate(lba >> 16));
+fn writeAtaTaskFile(bus: *Bus, drive: Drive, lba: u32, sectors: u8) !void {
+    bus.setDriveAndHead(drive, @truncate(lba >> 24));
+    try waitUntilReady(bus.*);
+    io.outb(ioPort(bus.*, REG_SECTOR_COUNT), sectors);
+    io.outb(ioPort(bus.*, REG_LBA0), @truncate(lba));
+    io.outb(ioPort(bus.*, REG_LBA1), @truncate(lba >> 8));
+    io.outb(ioPort(bus.*, REG_LBA2), @truncate(lba >> 16));
 }
 
 /// Reads one 512-byte sector at `lba` using ATA PIO LBA28 mode.
-pub fn readSectorLba28(drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!void {
+pub fn readSectorLba28(bus: *Bus, drive: Drive, lba: u32, out_sector: *[512]u8) IdeError!void {
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
-    try writeAtaTaskFile(drive, lba, 1);
-    io.outb(ioPort(Primary, REG_COMMAND), CMD_READ_SECTORS);
+    try writeAtaTaskFile(bus, drive, lba, 1);
+    io.outb(ioPort(bus.*, REG_COMMAND), CMD_READ_SECTORS);
 
-    try waitUntilDataRequest(Primary);
-    io.repInsw(dataPort(Primary), @ptrCast(@alignCast(out_sector)), 256);
+    try waitUntilDataRequest(bus.*);
+    io.repInsw(dataPort(bus.*), @ptrCast(@alignCast(out_sector)), 256);
 }
 
 /// Reads or writes one 512-byte sector at `lba` using ATA DMA LBA28 mode.
-fn transferSectorLba28Dma(drive: Drive, lba: u32, write: bool, sector: *[512]u8) IdeError!void {
+fn transferSectorLba28Dma(bus: *Bus, drive: Drive, lba: u32, write: bool, sector: *[512]u8) IdeError!void {
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
     dma_done = false;
@@ -400,8 +400,6 @@ fn transferSectorLba28Dma(drive: Drive, lba: u32, write: bool, sector: *[512]u8)
         .flags = 0x8000, // end of table
     };
 
-    const bus = Primary;
-
     // Stop DMA engine
     bus.writeBmCommandRaw(0);
     // Reset error and interrupt bits
@@ -411,7 +409,7 @@ fn transferSectorLba28Dma(drive: Drive, lba: u32, write: bool, sector: *[512]u8)
     // Set READ direction; don't start yet
     bus.writeBmCommand(write, false);
     // Program LBA and number of sectors
-    try writeAtaTaskFile(drive, lba, 1);
+    try writeAtaTaskFile(bus, drive, lba, 1);
     // Send DMA read command
     bus.writeIdeCommand(if (write) CMD_WRITE_DMA else CMD_READ_DMA);
     // Start DMA engine
@@ -444,17 +442,17 @@ fn transferSectorLba28Dma(drive: Drive, lba: u32, write: bool, sector: *[512]u8)
 }
 
 /// Writes one 512-byte sector at `lba` using ATA PIO LBA28 mode.
-pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeError!void {
+pub fn writeSectorLba28(bus: *Bus, drive: Drive, lba: u32, in_sector: *const [512]u8) IdeError!void {
     if ((lba & 0xF0000000) != 0) return error.InvalidLba;
 
-    try writeAtaTaskFile(drive, lba, 1);
-    io.outb(ioPort(Primary, REG_COMMAND), CMD_WRITE_SECTORS);
+    try writeAtaTaskFile(bus, drive, lba, 1);
+    io.outb(ioPort(bus.*, REG_COMMAND), CMD_WRITE_SECTORS);
 
-    try waitUntilDataRequest(Primary);
-    io.repOutsw(dataPort(Primary), @ptrCast(@alignCast(in_sector)), 256);
+    try waitUntilDataRequest(bus.*);
+    io.repOutsw(dataPort(bus.*), @ptrCast(@alignCast(in_sector)), 256);
 
-    io.outb(ioPort(Primary, REG_COMMAND), CMD_CACHE_FLUSH);
-    try waitUntilReady(Primary);
+    io.outb(ioPort(bus.*, REG_COMMAND), CMD_CACHE_FLUSH);
+    try waitUntilReady(bus.*);
 }
 
 /// Concrete BlockDevice implementation backed by an ATA IDE drive.
@@ -463,6 +461,7 @@ pub fn writeSectorLba28(drive: Drive, lba: u32, in_sector: *const [512]u8) IdeEr
 /// recover the outer struct via `@fieldParentPtr("block_dev", ptr)`.
 pub const IdeBlockDevice = struct {
     block_dev: BlockDevice,
+    bus: *Bus,
     drive: Drive,
 
     const vtable = BlockDevice.VTable{
@@ -476,24 +475,26 @@ pub const IdeBlockDevice = struct {
     };
 
     /// Initializes an IdeBlockDevice for `drive` with `sector_count` total blocks.
-    pub fn init(drive: Drive, sector_count: u32) IdeBlockDevice {
+    pub fn init(bus: *Bus, drive: Drive, sector_count: u32) IdeBlockDevice {
         return .{
             .block_dev = .{
                 .vtable = &vtable,
                 .block_count = sector_count,
                 .device = .{ .major = abi.DeviceMajor.Ide, .minor = if (drive == .master) 0 else 1 },
             },
+            .bus = bus,
             .drive = drive,
         };
     }
 
-    pub fn initReadOnly(drive: Drive, sector_count: u32) IdeBlockDevice {
+    pub fn initReadOnly(bus: *Bus, drive: Drive, sector_count: u32) IdeBlockDevice {
         return .{
             .block_dev = .{
                 .vtable = &vtable_readOnly,
                 .block_count = sector_count,
                 .device = .{ .major = abi.DeviceMajor.Ide, .minor = if (drive == .master) 0 else 1 },
             },
+            .bus = bus,
             .drive = drive,
         };
     }
@@ -504,23 +505,23 @@ pub const IdeBlockDevice = struct {
     fn readBlock(bd: *BlockDevice, lba: u32, buf: *[block_device.BLOCK_SIZE]u8) BlockError!void {
         //if (comptime should_log) root.log("IdeBlockDevice read: LBA {d}", .{lba});
         const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
-        readSectorLba28(self.drive, lba, buf) catch return error.ReadError;
+        readSectorLba28(self.bus, self.drive, lba, buf) catch return error.ReadError;
     }
 
     fn readBlockDma(bd: *BlockDevice, lba: u32, buf: *[block_device.BLOCK_SIZE]u8) BlockError!void {
         //if (comptime should_log) root.log("IdeBlockDevice read DMA: LBA {d}", .{lba});
         const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
-        transferSectorLba28Dma(self.drive, lba, false, buf) catch return error.ReadError;
+        transferSectorLba28Dma(self.bus, self.drive, lba, false, buf) catch return error.ReadError;
     }
 
     fn writeBlock(bd: *BlockDevice, lba: u32, buf: *const [block_device.BLOCK_SIZE]u8) BlockError!void {
         const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
-        writeSectorLba28(self.drive, lba, buf) catch return error.WriteError;
+        writeSectorLba28(self.bus, self.drive, lba, buf) catch return error.WriteError;
     }
 
     fn writeBlockDma(bd: *BlockDevice, lba: u32, buf: *const [block_device.BLOCK_SIZE]u8) BlockError!void {
         //if (comptime should_log) root.log("IdeBlockDevice write DMA: LBA {d}", .{lba});
         const self: *IdeBlockDevice = @fieldParentPtr("block_dev", bd);
-        transferSectorLba28Dma(self.drive, lba, true, @constCast(buf)) catch return error.WriteError;
+        transferSectorLba28Dma(self.bus, self.drive, lba, true, @constCast(buf)) catch return error.WriteError;
     }
 };

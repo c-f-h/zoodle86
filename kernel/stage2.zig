@@ -126,9 +126,9 @@ fn loadKernelElfAndJump() noreturn {
 
 fn mountFs() !void {
     const drive = ide.Drive.master;
-    ide.selectDrive(drive);
-    const drive_info = try ide.identifyDrive(drive);
-    disk_block_device = ide.IdeBlockDevice.initReadOnly(drive, drive_info.max_lba28);
+    ide.selectDrive(&ide.Primary, drive);
+    const drive_info = try ide.identifyDrive(&ide.Primary, drive);
+    disk_block_device = ide.IdeBlockDevice.initReadOnly(&ide.Primary, drive, drive_info.max_lba28);
     disk_fs = try fs.FileSystem.mountReadOnly(&disk_block_device.block_dev);
 }
 

@@ -39,10 +39,12 @@ var root_block_device: ide.IdeBlockDevice = undefined;
 
 pub fn mountRootFs() !void {
     const kernel_console = &console.primary;
-    const drive = ide.Drive.master;
-    ide.selectDrive(drive);
 
-    const drive_info = try ide.identifyDrive(drive);
+    const bus = &ide.Primary;
+    const drive = ide.Drive.master;
+    ide.selectDrive(bus, drive);
+
+    const drive_info = try ide.identifyDrive(bus, drive);
     kernel_console.put(.{
         "Drive model:     ",    &drive_info.model,
         "\nDrive serial:    ",  &drive_info.serial,
@@ -51,7 +53,7 @@ pub fn mountRootFs() !void {
         "h\n",
     });
 
-    root_block_device = ide.IdeBlockDevice.init(drive, drive_info.max_lba28);
+    root_block_device = ide.IdeBlockDevice.init(bus, drive, drive_info.max_lba28);
     try root_block_device.block_dev.initCache(kernel.getAllocator());
     // TODO: deinit cache on unmount
     root_fs = try zodfs.FileSystem.mount(&root_block_device.block_dev, kernel.getAllocator());
