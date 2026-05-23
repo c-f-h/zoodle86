@@ -71,7 +71,7 @@ pub const Drive = enum(u8) {
 };
 
 pub const DriveInfo = struct {
-    device_type: u16, // 0 = ATA, 1 = ATAPI
+    device_type: u16,
     cylinders: u16,
     heads: u16,
     sectors_per_track: u16,
@@ -112,6 +112,7 @@ const REG_STATUS: u16 = 7; // read - see STATUS_xxx bits below
 const REG_COMMAND: u16 = 7; // write - command to send to the drive (CMD_xxx)
 
 // Commands to be sent to port REG_COMMAND
+const CMD_TRIM: u8 = 0x06; // DATA SET MANAGEMENT
 const CMD_IDENTIFY: u8 = 0xEC;
 const CMD_READ_SECTORS: u8 = 0x20;
 const CMD_WRITE_SECTORS: u8 = 0x30;
@@ -140,18 +141,25 @@ const ERR_ABRT: u8 = 0x04; // Command aborted
 const ERR_TK0NF: u8 = 0x02; // Track 0 not found
 const ERR_AMNF: u8 = 0x01; // No address mark
 
-// Offsets within the 256 word IDENTIFY buffer
+// Word indices within the 256 word IDENTIFY buffer
 const IDENT_DEVICETYPE: u16 = 0;
-const IDENT_CYLINDERS: u16 = 2;
-const IDENT_HEADS: u16 = 6;
-const IDENT_SECTORS: u16 = 12;
-const IDENT_SERIAL: u16 = 20;
-const IDENT_MODEL: u16 = 54;
-const IDENT_CAPABILITIES: u16 = 98;
-const IDENT_FIELDVALID: u16 = 106;
-const IDENT_MAX_LBA: u16 = 120;
-const IDENT_COMMANDSETS: u16 = 164;
-const IDENT_MAX_LBA_EXT: u16 = 200;
+const IDENT_CYLINDERS: u16 = 1;
+const IDENT_HEADS: u16 = 3;
+const IDENT_SECTORS: u16 = 6; // logical sectors per track
+const IDENT_SERIAL: u16 = 10; // 10-19 (string)
+const IDENT_MODEL: u16 = 27; // 27-46 (string)
+const IDENT_CAPABILITIES: u16 = 49; // capability bit flags
+const IDENT_FIELDVALID: u16 = 53; // field validity bit flags
+const IDENT_MAX_LBA: u16 = 60; // total number of addressable sectors (LBA28)
+const IDENT_VERSION_MAJOR: u16 = 80;
+const IDENT_VERSION_MINOR: u16 = 81;
+const IDENT_COMMANDSETS: u16 = 82; // 82-87 contain bit flags for various features
+const IDENT_UDMA_MODES: u16 = 88;
+const IDENT_MAX_LBA_EXT: u16 = 100; // (qword) number of addressable sectors
+const IDENT_MAX_DSM_BLOCKS: u16 = 105; // maximum number of blocks for DATA SET MANAGEMENT (TRIM) command
+const IDENT_SECTOR_SIZE: u16 = 117; // (dword)
+const IDENT_TRIM_SUPPORT: u16 = 169; // if bit 0 is set, device supports DATA SET MANAGEMENT (TRIM)
+
 const COMMANDSET_LBA48: u32 = 1 << 26;
 
 const POLL_TIMEOUT: u32 = 1_000_000;
@@ -247,31 +255,27 @@ fn hdDevSel(drive: Drive, lba_high4: u8) u8 {
     return 0xE0 | drive_bit | (lba_high4 & 0x0F);
 }
 
-fn identifyWordAt(words: *const [256]u16, byte_offset: u16) u16 {
-    return words[byte_offset / 2];
-}
-
-fn identifyU32At(words: *const [256]u16, byte_offset: u16) u32 {
-    const lo = @as(u32, identifyWordAt(words, byte_offset));
-    const hi = @as(u32, identifyWordAt(words, byte_offset + 2));
+fn identifyU32At(words: *const [256]u16, word: u16) u32 {
+    const lo = @as(u32, words[word]);
+    const hi = @as(u32, words[word + 1]);
     return lo | (hi << 16);
 }
 
-fn identifyU64At(words: *const [256]u16, byte_offset: u16) u64 {
-    const w0 = @as(u64, identifyWordAt(words, byte_offset));
-    const w1 = @as(u64, identifyWordAt(words, byte_offset + 2));
-    const w2 = @as(u64, identifyWordAt(words, byte_offset + 4));
-    const w3 = @as(u64, identifyWordAt(words, byte_offset + 6));
+fn identifyU64At(words: *const [256]u16, word: u16) u64 {
+    const w0 = @as(u64, words[word]);
+    const w1 = @as(u64, words[word + 1]);
+    const w2 = @as(u64, words[word + 2]);
+    const w3 = @as(u64, words[word + 3]);
     return w0 | (w1 << 16) | (w2 << 32) | (w3 << 48);
 }
 
-fn identifyStringAt(comptime len: usize, words: *const [256]u16, byte_offset: u16) [len]u8 {
+fn identifyStringAt(comptime len: usize, words: *const [256]u16, word: u16) [len]u8 {
     var out: [len]u8 = undefined;
-    var i: usize = 0;
+    var i: u16 = 0;
     while (i < len / 2) : (i += 1) {
-        const word = identifyWordAt(words, byte_offset + @as(u16, @intCast(i * 2)));
-        out[i * 2] = @truncate(word >> 8);
-        out[(i * 2) + 1] = @truncate(word);
+        const data = words[word + i];
+        out[i * 2] = @truncate(data >> 8);
+        out[(i * 2) + 1] = @truncate(data);
     }
     return out;
 }
@@ -283,14 +287,14 @@ fn parseDriveInfo(words: *const [256]u16) DriveInfo {
     const size_in_sectors = if ((command_sets & COMMANDSET_LBA48) != 0) max_lba48 else max_lba28;
 
     return .{
-        .device_type = identifyWordAt(words, IDENT_DEVICETYPE),
-        .cylinders = identifyWordAt(words, IDENT_CYLINDERS),
-        .heads = identifyWordAt(words, IDENT_HEADS),
-        .sectors_per_track = identifyWordAt(words, IDENT_SECTORS),
+        .device_type = words[IDENT_DEVICETYPE],
+        .cylinders = words[IDENT_CYLINDERS],
+        .heads = words[IDENT_HEADS],
+        .sectors_per_track = words[IDENT_SECTORS],
         .serial = identifyStringAt(20, words, IDENT_SERIAL),
         .model = identifyStringAt(40, words, IDENT_MODEL),
-        .capabilities = identifyWordAt(words, IDENT_CAPABILITIES),
-        .field_validity = identifyWordAt(words, IDENT_FIELDVALID),
+        .capabilities = words[IDENT_CAPABILITIES],
+        .field_validity = words[IDENT_FIELDVALID],
         .command_sets = command_sets,
         .max_lba28 = max_lba28,
         .max_lba48 = max_lba48,
