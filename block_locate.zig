@@ -208,11 +208,11 @@ fn printInodeTableInfo(ctx: *const Context, lba: u32, stdout: anytype) !void {
         try stdout.print("    Inode {}: ", .{inode_idx});
         switch (inode.kind) {
             .Free => try stdout.print("free\n", .{}),
-            .Regular => try stdout.print("regular file, size={}B, links={}\n", .{ inode.size_bytes, inode.link_count }),
+            .Regular => try stdout.print("regular file, size={}, links={}\n", .{ inode.size_bytes, inode.link_count }),
             .Directory => try stdout.print("directory, links={}\n", .{inode.link_count}),
             .CharDevice => try stdout.print("char device {}.{}\n", .{ @intFromEnum(inode.device.major), inode.device.minor }),
             .BlockDevice => try stdout.print("block device {}.{}\n", .{ @intFromEnum(inode.device.major), inode.device.minor }),
-            .Symlink => try stdout.print("symlink, size={}B\n", .{inode.size_bytes}),
+            .Symlink => try stdout.print("symlink, size={}\n", .{inode.size_bytes}),
             else => try stdout.print("unknown (kind={})\n", .{@intFromEnum(inode.kind)}),
         }
     }
