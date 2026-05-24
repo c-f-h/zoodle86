@@ -11,12 +11,6 @@ pub const title_padding_y: u32 = 3;
 pub const title_padding_x: u32 = 10;
 pub const window_margin: u32 = 20;
 
-/// A character-grid size in columns and rows.
-pub const TextSize = struct {
-    cols: u32,
-    rows: u32,
-};
-
 /// Fill the entire framebuffer with the desktop background colour. Call once before drawing any windows.
 pub fn drawBackground() void {
     const bg = framebuf.packRgb(.{ 8, 14, 23 });
@@ -38,58 +32,47 @@ pub const Window = struct {
     shadow_data: []align(16) u16 = &.{},
     shadow_pitch: usize = 0, // bytes per pixel row
     shadow_rows: usize = 0, // total pixel rows in shadow buffer
-    glyph_w: u32 = 0,
-    glyph_h: u32 = 0,
     title: []const u8 = "", // must outlive the Window
-    ready: bool = false,
 
-    /// Returns true if the window has been successfully initialized.
-    pub fn isReady(self: *const Window) bool {
-        return self.ready;
-    }
-
-    /// Set up the framed window and backing shadow buffer for a text_cols×text_rows character grid
-    /// within the available area starting at (avail_x, avail_y) with dimensions avail_w×avail_h.
+    /// Set up the framed window and backing shadow buffer for a text_cols x text_rows character grid
+    /// within the available area starting at (x, y) with dimensions (width, height).
     pub fn init(
         self: *Window,
         allocator: std.mem.Allocator,
-        avail_x: u32,
-        avail_y: u32,
-        avail_w: u32,
-        avail_h: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
         text_cols: u32,
         text_rows: u32,
         glyph_width: u32,
         glyph_height: u32,
         title: []const u8,
     ) !void {
-        const pixel_w: usize = @as(usize, text_cols) * @as(usize, glyph_width);
-        const pixel_h: usize = @as(usize, text_rows) * @as(usize, glyph_height);
-        const title_text_w: u32 = @intCast(title.len * glyph_width);
+        const client_w = text_cols * glyph_width;
+        const client_h = text_rows * glyph_height;
+        const title_text_w = title.len * glyph_width;
         const title_h_val = glyph_height + title_padding_y * 2;
         const min_inner_w = @max(
-            @as(u32, @intCast(pixel_w)) + panel_padding_x * 2,
+            client_w + panel_padding_x * 2,
             title_text_w + title_padding_x * 2,
         );
         const panel_w_val = min_inner_w + panel_border * 2;
-        const panel_h_val = @as(u32, @intCast(pixel_h)) + title_h_val + panel_padding_y * 2 + panel_border * 2;
-        if (panel_w_val > avail_w or panel_h_val > avail_h) return error.WindowTooLarge;
+        const panel_h_val = client_h + title_h_val + panel_padding_y * 2 + panel_border * 2;
+        if (panel_w_val > width or panel_h_val > height) return error.WindowTooLarge;
 
         self.title = title;
         self.title_h = title_h_val;
         self.panel_w = panel_w_val;
         self.panel_h = panel_h_val;
-        self.panel_x = avail_x + window_margin;
-        self.panel_y = avail_y + window_margin;
+        self.panel_x = x + window_margin;
+        self.panel_y = y + window_margin;
         self.origin_x = self.panel_x + panel_border + panel_padding_x;
         self.origin_y = self.panel_y + panel_border + title_h_val + panel_padding_y;
-        self.glyph_w = glyph_width;
-        self.glyph_h = glyph_height;
-        self.shadow_pitch = pixel_w * framebuf.bytesPerPixel();
-        self.shadow_rows = pixel_h;
-        self.shadow_data = try allocator.alignedAlloc(u16, std.mem.Alignment.@"16", pixel_w * pixel_h);
+        self.shadow_pitch = client_w * framebuf.bytesPerPixel();
+        self.shadow_rows = client_h;
+        self.shadow_data = try allocator.alignedAlloc(u16, std.mem.Alignment.@"16", client_w * client_h);
         @memset(self.shadow_data, 0);
-        self.ready = true;
     }
 
     /// Free the shadow buffer.
@@ -97,14 +80,11 @@ pub const Window = struct {
         if (self.shadow_data.len > 0) {
             allocator.free(self.shadow_data);
             self.shadow_data = &.{};
-            self.ready = false;
         }
     }
 
     /// Redraw the window chrome: border, panel fill, and title bar. Call drawBackground() first.
     pub fn drawFrame(self: *Window, font: *const psf.PSFFont) void {
-        if (!self.ready) return;
-
         const panel = framebuf.packRgb(console_palette.ansi[console_palette.background]);
         const border = framebuf.packRgb(console_palette.ansi[console_palette.border]);
         const title_bg = framebuf.packRgb(console_palette.ansi[console_palette.title_bg]);

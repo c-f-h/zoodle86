@@ -4,6 +4,7 @@ const char_device = @import("../dev/char_device.zig");
 const task = @import("../task.zig");
 const psf = @import("psf.zig");
 const abi = @import("abi");
+const kernel = @import("../kernel.zig");
 
 const boot_video_info_magic: u32 = 0x3044_4956; // "VID0"
 const fb_demo_va: u32 = 0xD000_0000;
@@ -75,7 +76,7 @@ const FrameBufferCharDevice = struct {
     }
 
     fn ioctl(_: *CharDevice, command: u32, arg: u32) char_device.CharDeviceError!u32 {
-        if ((command >> 24) != @as(u32, @intFromEnum(abi.DeviceMajor.FrameBuffer))) {
+        if ((command >> 24) != @intFromEnum(abi.DeviceMajor.FrameBuffer)) {
             return error.InvalidArgument;
         }
 
@@ -211,6 +212,8 @@ pub fn init(boot_video_info_phys: usize) !void {
     const fb_offset = info.phys_base_ptr - fb_phys_start;
     fb_base = @ptrFromInt(fb_demo_va + fb_offset);
     initialized = true;
+
+    kernel.log("Initialized framebuffer for video mode: {}x{}, {} bpp", .{ info.width, info.height, info.bpp });
 }
 
 /// Return the mapped framebuffer width in pixels.
@@ -224,18 +227,18 @@ pub fn height() u32 {
 }
 
 /// Return the number of bytes between adjacent framebuffer scanlines.
-pub fn pitchBytes() usize {
-    return @as(usize, info.pitch_bytes);
+pub fn pitchBytes() u32 {
+    return info.pitch_bytes;
 }
 
 /// Return the number of bytes used by each framebuffer pixel.
-pub fn bytesPerPixel() usize {
-    return @as(usize, bytes_per_pixel);
+pub fn bytesPerPixel() u32 {
+    return bytes_per_pixel;
 }
 
 /// Return a pointer to the framebuffer pixel at the given coordinates.
 pub fn pixelPtr(x: u32, y: u32) [*]u8 {
-    return fb_base + @as(usize, y) * @as(usize, info.pitch_bytes) + @as(usize, x) * @as(usize, bytes_per_pixel);
+    return fb_base + y * info.pitch_bytes + x * bytes_per_pixel;
 }
 
 /// Returns the framebuffer character-device interface when graphics mode is active.

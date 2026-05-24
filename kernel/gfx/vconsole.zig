@@ -76,12 +76,12 @@ fn drawGlyphCellAt(
     }
 }
 
-fn consoleCellWidthBytes() usize {
-    return @as(usize, @intCast(active_font.glyph_width)) * framebuf.bytesPerPixel();
+fn cellWidthBytes() u32 {
+    return active_font.glyph_width * framebuf.bytesPerPixel();
 }
 
-fn consoleCellHeightRows() usize {
-    return @intCast(active_font.glyph_height);
+fn lineHeight() u32 {
+    return active_font.glyph_height;
 }
 
 /// Load a PSF font file from the root filesystem and make it the active framebuffer-console font.
@@ -96,7 +96,15 @@ pub fn loadFont(allocator: std.mem.Allocator, path: []const u8) !void {
     active_font_label = path;
 }
 
-pub const TextSize = window.TextSize;
+pub fn getFont() *const psf.PSFFont {
+    return &active_font;
+}
+
+/// A character-grid size in columns and rows.
+const TextSize = struct {
+    cols: u32,
+    rows: u32,
+};
 
 /// Return a text grid size that fits inside a framed framebuffer console window within the given area.
 pub fn preferredTextSize(avail_w: u32, avail_h: u32) !TextSize {
@@ -112,7 +120,7 @@ fn preferredTextSizeForFont(avail_w: u32, avail_h: u32, glyph_width: u32, glyph_
     const cols = text_area_w / glyph_width;
     const rows = text_area_h / glyph_height;
     if (cols == 0 or rows == 0) return error.WindowTooLarge;
-    return .{ .cols = @min(100, cols), .rows = @min(50, rows) };
+    return .{ .cols = @min(100, cols), .rows = @min(80, rows) };
 }
 
 /// Framebuffer-backed virtual console: owns a Window and tracks cursor/grid state.
@@ -129,10 +137,10 @@ pub const VConsole = struct {
     pub fn init(
         self: *VConsole,
         allocator: std.mem.Allocator,
-        avail_x: u32,
-        avail_y: u32,
-        avail_w: u32,
-        avail_h: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
         cols: u32,
         rows: u32,
         title: []const u8,
@@ -147,10 +155,10 @@ pub const VConsole = struct {
         self.cursor_visible = false;
         try self.win.init(
             allocator,
-            avail_x,
-            avail_y,
-            avail_w,
-            avail_h,
+            x,
+            y,
+            width,
+            height,
             cols,
             rows,
             active_font.glyph_width,
@@ -173,25 +181,23 @@ pub const VConsole = struct {
         self.win.deinit(allocator);
     }
 
-    fn cellIndex(self: *const VConsole, row: u32, col: u32) usize {
-        return @as(usize, row) * @as(usize, self.cols) + @as(usize, col);
+    fn cellIndex(self: *const VConsole, row: u32, col: u32) u32 {
+        return row * self.cols + col;
     }
 
     fn drawConsoleCellRaw(self: *const VConsole, cell: u16, row: u32, col: u32, highlight: bool) void {
-        if (!self.win.isReady()) return;
-
         const font = &active_font;
         const ch: u8 = @truncate(cell & 0x00FF);
         const attr: u8 = @truncate(cell >> 8);
-        const pix_ptr = self.win.shadowRowPtr(@as(usize, row) * @as(usize, font.glyph_height)) +
-            @as(usize, col) * @as(usize, font.glyph_width) * framebuf.bytesPerPixel();
+        const pix_ptr = self.win.shadowRowPtr(row * font.glyph_height) +
+            col * font.glyph_width * framebuf.bytesPerPixel();
         const effective_attr = if (highlight) swapAttr(attr) else attr;
         drawGlyphCellAt(pix_ptr, self.win.pitchBytes(), font, if (ch == 0) ' ' else ch, effective_attr);
     }
 
     fn drawConsoleRowAt(self: *const VConsole, cells: [*]const u16, row_ptr: [*]u8, row_pitch_bytes: usize) void {
         const font = &active_font;
-        const cell_width_bytes = consoleCellWidthBytes();
+        const cell_width_bytes = cellWidthBytes();
         var cell_ptr = cells;
         var cell_pix_ptr = row_ptr;
         var col: u32 = 0;
@@ -211,11 +217,9 @@ pub const VConsole = struct {
 
     /// Redraw the full console grid into the framebuffer-backed virtual console.
     pub fn render(self: *VConsole, cells: [*]const u16, cursor_row: u32, cursor_col: u32, show_cursor: bool) void {
-        if (!self.win.isReady()) return;
-
         const text_rows = self.rows;
         const text_cols = self.cols;
-        const row_height_bytes = self.win.pitchBytes() * consoleCellHeightRows();
+        const row_height_bytes = self.win.pitchBytes() * lineHeight();
         var shadow_text_row_ptr = self.win.shadowRowPtr(0);
         var cell_row_ptr: [*]const u16 = cells;
         var row: u32 = 0;
@@ -237,10 +241,8 @@ pub const VConsole = struct {
 
     /// Scroll the virtual console up by one text row and redraw the newly exposed bottom row.
     pub fn scroll(self: *VConsole, cells: [*]const u16) void {
-        if (!self.win.isReady()) return;
-
         const text_rows = self.rows;
-        const cell_h = consoleCellHeightRows();
+        const cell_h = lineHeight();
         const scrolled_bytes = (self.win.pixelRows() - cell_h) * self.win.pitchBytes();
         const scroll_src_offset = cell_h * self.win.pitchBytes();
         const shadow_start = self.win.shadowRowPtr(0);
@@ -254,7 +256,6 @@ pub const VConsole = struct {
 
     /// Redraw a single console cell in the framebuffer-backed virtual console.
     pub fn renderCell(self: *VConsole, cells: [*]const u16, row: u32, col: u32) void {
-        if (!self.win.isReady()) return;
         if (row >= self.rows or col >= self.cols) return;
 
         const highlight = self.cursor_visible and row == self.cursor_row and col == self.cursor_col;
@@ -264,8 +265,6 @@ pub const VConsole = struct {
 
     /// Update the highlighted cursor cell in the framebuffer-backed virtual console.
     pub fn updateCursor(self: *VConsole, cells: [*]const u16, row: u32, col: u32, visible: bool) void {
-        if (!self.win.isReady()) return;
-
         const old_row = self.cursor_row;
         const old_col = self.cursor_col;
         const old_visible = self.cursor_visible;
@@ -292,13 +291,13 @@ pub const VConsole = struct {
     /// Copy a single character cell from the shadow buffer into the framebuffer.
     pub fn blitShadowCellToFramebuffer(self: *const VConsole, row: u32, col: u32) void {
         const win = &self.win;
-        const start_pixel_row = row * win.glyph_h;
-        const cell_w_bytes = win.glyph_w * framebuf.bytesPerPixel();
-        const pixel_col_offset: usize = col * win.glyph_w * framebuf.bytesPerPixel();
+        const start_pixel_row = row * active_font.glyph_height;
+        const cell_w_bytes = active_font.glyph_width * framebuf.bytesPerPixel();
+        const pixel_col_offset: usize = col * active_font.glyph_width * framebuf.bytesPerPixel();
         var src = win.shadowRowPtr(start_pixel_row) + pixel_col_offset;
         var dst = win.fbRowPtr(start_pixel_row) + pixel_col_offset;
         var pixel_row: usize = 0;
-        while (pixel_row < win.glyph_h) : (pixel_row += 1) {
+        while (pixel_row < active_font.glyph_height) : (pixel_row += 1) {
             mem.copyBytesForward(dst, src, cell_w_bytes);
             src += win.shadow_pitch;
             dst += framebuf.pitchBytes();
