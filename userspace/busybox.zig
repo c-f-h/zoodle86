@@ -80,17 +80,69 @@ fn catWriteIsDirectoryError(path: []const u8) void {
     sys.writeAll(sys.STDERR, msg) catch {};
 }
 
+fn catCopyNumberedFd(fd: u32, line_counter: *u32) bool {
+    var io_buf: [128]u8 = undefined;
+    var writer_buf: [128]u8 = undefined;
+    var reader = sys.Reader.init(fd, &io_buf);
+    var writer = sys.Writer.init(sys.STDOUT, &writer_buf);
+
+    while (true) {
+        const line = reader.interface.takeDelimiter('\n') catch |err| {
+            if (err == error.StreamTooLong) {
+                _ = reader.interface.discardDelimiterInclusive('\n') catch |discard_err| {
+                    if (discard_err == error.EndOfStream) {
+                        line_counter.* += 1;
+                        writer.interface.print("{d:>6}\t\n", .{line_counter.*}) catch return false;
+                        break;
+                    }
+                    return false;
+                };
+                line_counter.* += 1;
+                writer.interface.print("{d:>6}\t\n", .{line_counter.*}) catch return false;
+                continue;
+            }
+            return false;
+        } orelse break;
+
+        line_counter.* += 1;
+        writer.interface.print("{d:>6}\t", .{line_counter.*}) catch return false;
+        writer.interface.writeAll(line) catch return false;
+        writer.interface.writeByte('\n') catch return false;
+    }
+
+    writer.flush() catch return false;
+    return true;
+}
+
 /// Copies stdin when no filenames are provided, or prints each named file to stdout.
+/// Supports --number / -n to prepend line numbers.
 fn catMain(argv: []const []const u8) noreturn {
-    if (argv.len <= 1) {
-        if (!catCopyFd(sys.STDIN)) {
-            err_toolFailedTo("cat", "read from", "stdin");
-            sys.exit(1);
+    var numbered = false;
+    const first_file = parseOpts(argv, &.{
+        .{ .short = 'n', .long = "number", .result = .{ .Bool = &numbered } },
+    }) catch {
+        sys.writeAll(sys.STDERR, "Usage: cat [--number|-n] <file> ...\n") catch {};
+        sys.exit(1);
+    };
+
+    if (first_file >= argv.len) {
+        if (numbered) {
+            var n: u32 = 0;
+            if (!catCopyNumberedFd(sys.STDIN, &n)) {
+                err_toolFailedTo("cat", "read from", "stdin");
+                sys.exit(1);
+            }
+        } else {
+            if (!catCopyFd(sys.STDIN)) {
+                err_toolFailedTo("cat", "read from", "stdin");
+                sys.exit(1);
+            }
         }
         sys.exit(0);
     }
 
-    for (argv[1..]) |path| {
+    var n: u32 = 0;
+    for (argv[first_file..]) |path| {
         const fd = sys.open(path, .{}) catch |err| {
             if (err == error.EISDIR) {
                 catWriteIsDirectoryError(path);
@@ -100,19 +152,36 @@ fn catMain(argv: []const []const u8) noreturn {
             sys.exit(1);
         };
 
-        if (!catCopyFd(fd)) {
-            var st: sys.Stat = undefined;
-            if (sys.fstat(fd, &st)) |_| {
-                if (st.kind == .Directory) {
-                    catWriteIsDirectoryError(path);
-                } else {
+        if (numbered) {
+            if (!catCopyNumberedFd(fd, &n)) {
+                var st: sys.Stat = undefined;
+                if (sys.fstat(fd, &st)) |_| {
+                    if (st.kind == .Directory) {
+                        catWriteIsDirectoryError(path);
+                    } else {
+                        err_toolFailedTo("cat", "read", path);
+                    }
+                } else |_| {
                     err_toolFailedTo("cat", "read", path);
                 }
-            } else |_| {
-                err_toolFailedTo("cat", "read", path);
+                sys.close(fd) catch {};
+                sys.exit(1);
             }
-            sys.close(fd) catch {};
-            sys.exit(1);
+        } else {
+            if (!catCopyFd(fd)) {
+                var st: sys.Stat = undefined;
+                if (sys.fstat(fd, &st)) |_| {
+                    if (st.kind == .Directory) {
+                        catWriteIsDirectoryError(path);
+                    } else {
+                        err_toolFailedTo("cat", "read", path);
+                    }
+                } else |_| {
+                    err_toolFailedTo("cat", "read", path);
+                }
+                sys.close(fd) catch {};
+                sys.exit(1);
+            }
         }
 
         sys.close(fd) catch {};
