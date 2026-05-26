@@ -257,6 +257,26 @@ pub fn keyboard_dispatch(frame: *const interrupt_frame.InterruptFrame) void {
     }
 }
 
+/// Process any pending scancodes in the ISR ring buffer without halting.
+/// Returns true if at least one scancode was decoded.
+pub fn processScancodes() bool {
+    var processed = false;
+    asm volatile ("cli");
+    while (keyboard_scancode_head != keyboard_scancode_tail) {
+        processed = true;
+        const scancode = keyboard_scancode_buffer[keyboard_scancode_tail];
+        keyboard_scancode_tail = (keyboard_scancode_tail + 1) & 0x0F;
+        asm volatile ("sti");
+        var event: KeyEvent = undefined;
+        if (decodeScancode(scancode, &event) != 0) {
+            kernel.consumeKeyEvent(&event);
+        }
+        asm volatile ("cli");
+    }
+    asm volatile ("sti");
+    return processed;
+}
+
 /// Poll the ringbuffer of scancodes filled by the keyboard ISR, decode key events, and send them to the event sink.
 pub export fn pollingLoop() void {
     // Disable interrupts

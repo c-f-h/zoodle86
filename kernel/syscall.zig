@@ -1,6 +1,7 @@
 const filedesc = @import("filedesc.zig");
 const interrupt_frame = @import("interrupt_frame.zig");
 const kernel = @import("kernel.zig");
+const keyboard = @import("keyboard.zig");
 const paging = @import("paging.zig");
 const shell = @import("shell.zig");
 const task = @import("task.zig");
@@ -379,6 +380,7 @@ fn sys_ioctl(fd: u32, command: u32, arg: u32) !u32 {
 
 fn sys_poll(fds_abi_ptr: u32, timeout: u32) !u32 {
     if (timeout != 0) return error.InvalidArgument;
+    _ = keyboard.processScancodes();
     const current_task = task.getCurrentTask();
     const fds = try current_task.readUserSlice(abi.PollFd, fds_abi_ptr);
     var ready_count: u32 = 0;

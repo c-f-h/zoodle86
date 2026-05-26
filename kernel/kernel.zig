@@ -147,11 +147,8 @@ pub fn consumeKeyEvent(event: *const keyboard.KeyEvent) void {
         _ = handler.handler(handler.ctx, event);
         return;
     }
-    if (event.pressed != 0) {
-        if (foreground_tty) |focused| {
-            focused.handleKeyEvent(event);
-            return;
-        }
+    if (foreground_tty) |focused| {
+        focused.handleKeyEvent(event);
     }
 }
 
