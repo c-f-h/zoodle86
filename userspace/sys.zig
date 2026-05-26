@@ -75,6 +75,9 @@ pub const IOCTL_FRAMEBUF_GET_INFO = abi.IOCTL_FRAMEBUF_GET_INFO;
 pub const TTY_MODE_CANONICAL = abi.TTY_MODE_CANONICAL;
 pub const TTY_MODE_RAW = abi.TTY_MODE_RAW;
 pub const KEY_RELEASED = abi.KEY_RELEASED;
+pub const PollFd = abi.PollFd;
+pub const POLLIN = abi.POLLIN;
+pub const POLLOUT = abi.POLLOUT;
 
 pub const SyscallError = error{
     ENOENT,
@@ -414,6 +417,13 @@ pub fn getFrameBufInfo(fd: u32, out: *FrameBufInfo) SyscallError!void {
 /// Applies a device-specific ioctl request to an open file descriptor.
 pub fn ioctl(fd: u32, command: u32, arg: u32) SyscallError!u32 {
     return syscall(.Ioctl, fd, command, arg);
+}
+
+/// Check which of the requested I/O events are ready on a set of file descriptors.
+/// timeout must be 0 (non-blocking check only).
+pub fn poll(fds: []PollFd, timeout: u32) SyscallError!u32 {
+    const fds_abi = AbiSlice.fromSlice(PollFd, fds);
+    return syscall(.Poll, @intFromPtr(&fds_abi), timeout, 0);
 }
 
 /// Reads one key event from stdin, temporarily switching the controlling tty to raw mode.

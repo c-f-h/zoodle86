@@ -32,6 +32,7 @@ pub const Syscall = enum(u32) {
     Close = 3,
     Stat = 4,
     Fstat = 5,
+    Poll = 7,
     Lseek = 8,
     Brk = 12,
     Pipe = 22,
@@ -146,6 +147,17 @@ pub const STAT_FLAG_READABLE: u8 = 1 << 0;
 pub const STAT_FLAG_WRITABLE: u8 = 1 << 1;
 pub const STAT_FLAG_APPEND: u8 = 1 << 2;
 pub const STAT_FLAG_SYNTHETIC: u8 = 1 << 3;
+
+/// poll() event flags.
+pub const POLLIN: u16 = 0x01;
+pub const POLLOUT: u16 = 0x04;
+
+/// pollfd structure passed to the poll() syscall.
+pub const PollFd = extern struct {
+    fd: i32,
+    events: u16,
+    revents: u16,
+};
 
 pub const DeviceMajor = enum(u8) {
     Unnamed = 0,
@@ -298,6 +310,7 @@ comptime {
     std.debug.assert(@sizeOf(KeyEvent) == 4);
     std.debug.assert(@sizeOf(DirEntry) == 32);
     std.debug.assert(@sizeOf(FrameBufInfo) == 32);
+    std.debug.assert(@sizeOf(PollFd) == 8);
 }
 
 /// A (dst, src) fd-index pair used to remap descriptors during spawn.

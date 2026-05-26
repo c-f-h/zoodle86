@@ -24,6 +24,7 @@ pub const CharDevice = struct {
         bufferSize: *const fn (self: *const CharDevice) usize,
         size: *const fn (self: *const CharDevice) u32,
         seekable: *const fn (self: *const CharDevice) bool,
+        poll: *const fn (self: *CharDevice, events: u16) u16,
     };
 
     /// Read bytes from the device into `dest`.
@@ -54,5 +55,10 @@ pub const CharDevice = struct {
     /// Return whether this device supports descriptor-local seek offsets.
     pub fn seekable(self: *const CharDevice) bool {
         return self.vtable.seekable(self);
+    }
+
+    /// Query which of the requested I/O events are ready on this device.
+    pub fn poll(self: *CharDevice, events: u16) u16 {
+        return self.vtable.poll(self, events);
     }
 };

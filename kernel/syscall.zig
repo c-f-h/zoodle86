@@ -377,6 +377,25 @@ fn sys_ioctl(fd: u32, command: u32, arg: u32) !u32 {
     return try filedesc.ioctlFd(task.getCurrentTask(), fd, command, arg);
 }
 
+fn sys_poll(fds_abi_ptr: u32, timeout: u32) !u32 {
+    if (timeout != 0) return error.InvalidArgument;
+    const current_task = task.getCurrentTask();
+    const fds = try current_task.readUserSlice(abi.PollFd, fds_abi_ptr);
+    var ready_count: u32 = 0;
+    for (fds) |*pfd| {
+        if (pfd.fd < 0) {
+            pfd.revents = 0;
+            continue;
+        }
+        const fd: u32 = @intCast(pfd.fd);
+        pfd.revents = try filedesc.pollFd(current_task, fd, pfd.events);
+        if (pfd.revents != 0) {
+            ready_count += 1;
+        }
+    }
+    return ready_count;
+}
+
 fn sys_yield() u32 {
     _ = kernel.kernel_yield();
     return 0;
@@ -418,6 +437,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .KShell => sys_kshell(arg1),
         .GetCursor => sys_getcursor(),
         .Ioctl => sys_ioctl(arg1, arg2, arg3),
+        .Poll => sys_poll(arg1, arg2),
         else => error.InvalidArgument,
     }) catch |err| {
         frame.setSyscallResult(0, @intFromEnum(mapError(err)));

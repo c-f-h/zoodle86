@@ -51,6 +51,7 @@ const FrameBufferCharDevice = struct {
         .bufferSize = bufferSize,
         .size = size,
         .seekable = seekable,
+        .poll = poll,
     };
 
     fn read(_: *CharDevice, offset: u32, dest: []u8) char_device.CharDeviceError!usize {
@@ -101,6 +102,11 @@ const FrameBufferCharDevice = struct {
 
     fn seekable(_: *const CharDevice) bool {
         return true;
+    }
+
+    fn poll(_: *CharDevice, events: u16) u16 {
+        if (!initialized) return 0;
+        return events & (abi.POLLIN | abi.POLLOUT);
     }
 };
 

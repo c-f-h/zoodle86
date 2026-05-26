@@ -206,6 +206,34 @@ pub const FileDesc = union(enum) {
             else => error.InvalidArgument,
         };
     }
+
+    /// Query which of the requested I/O events are ready on this descriptor.
+    pub fn poll(self: *FileDesc, events: u16) u16 {
+        return switch (self.*) {
+            .file => events & (abi.POLLIN | abi.POLLOUT),
+            .pipe => |pipe_info| {
+                var revents: u16 = 0;
+                if (events & abi.POLLIN != 0) {
+                    if (!pipe_info.handle.empty() or pipe_info.handle.num_writers == 0) {
+                        revents |= abi.POLLIN;
+                    }
+                }
+                if (events & abi.POLLOUT != 0) {
+                    if (!pipe_info.handle.full()) {
+                        revents |= abi.POLLOUT;
+                    }
+                }
+                return revents;
+            },
+            .char_device => |char_info| {
+                var allowed: u16 = 0;
+                if (char_info.readable) allowed |= abi.POLLIN;
+                if (char_info.writable) allowed |= abi.POLLOUT;
+                return char_info.handle.poll(events) & allowed;
+            },
+            else => 0,
+        };
+    }
 };
 
 /// Creates a fresh pipe and returns descriptors for its read and write ends.
@@ -347,6 +375,12 @@ pub fn writeToFd(ptask: *task.Task, fd: u32, src: []const u8) WriteError!usize {
 pub fn ioctlFd(ptask: *task.Task, fd: u32, command: u32, arg: u32) FiledescError!u32 {
     const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
     return slot.ioctl(command, arg);
+}
+
+/// Query which of the requested I/O events are ready on a task-owned descriptor.
+pub fn pollFd(ptask: *task.Task, fd: u32, events: u16) FiledescError!u16 {
+    const slot = ptask.getFdSlot(fd) orelse return error.BadFd;
+    return slot.poll(events);
 }
 
 /// Repositions a task-owned file descriptor and returns the resulting byte offset.

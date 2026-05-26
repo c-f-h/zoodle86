@@ -28,6 +28,7 @@ const NullDevice = struct {
         .bufferSize = &bufferSize,
         .size = &size,
         .seekable = &seekable,
+        .poll = &poll,
     };
 
     fn read(_: *char_device.CharDevice, _: u32, _: []u8) char_device.CharDeviceError!usize {
@@ -52,5 +53,9 @@ const NullDevice = struct {
 
     fn seekable(_: *const char_device.CharDevice) bool {
         return false;
+    }
+
+    fn poll(_: *char_device.CharDevice, events: u16) u16 {
+        return events & (abi.POLLIN | abi.POLLOUT);
     }
 };

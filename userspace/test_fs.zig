@@ -994,6 +994,98 @@ fn testCwd() !void {
     _ = try expectSyscall(sys.rmdir(cwd_dir), "testCwd: rmdir cwd dir", @src());
 }
 
+fn testPoll() !void {
+    {
+        var fds = [_]sys.PollFd{
+            .{ .fd = 0, .events = sys.POLLIN, .revents = 0 },
+        };
+        try syscallShouldFail(sys.poll(&fds, 1), "testPoll: non-zero timeout", @src());
+    }
+
+    {
+        const poll_test_file = tmpdir ++ "/poll_test.txt";
+        const fd = try expectSyscall(sys.open(poll_test_file, .{
+            .open_mode = .ReadWrite,
+            .create = true,
+            .truncate = true,
+        }), "testPoll: open file", @src());
+        defer sys.close(fd) catch {};
+        _ = try expectSyscall(sys.write(fd, "data"), "testPoll: write file", @src());
+        _ = try expectSyscall(sys.lseek(fd, 0, .Set), "testPoll: rewind file", @src());
+
+        var fds = [_]sys.PollFd{
+            .{ .fd = @as(i32, @intCast(fd)), .events = sys.POLLIN | sys.POLLOUT, .revents = 0 },
+        };
+        const ready = try expectSyscall(sys.poll(&fds, 0), "testPoll: poll file", @src());
+        try expectOffset(ready, 1);
+        if (fds[0].revents & sys.POLLIN == 0) return error.PollMissingPollIn;
+        if (fds[0].revents & sys.POLLOUT == 0) return error.PollMissingPollOut;
+        _ = try expectSyscall(sys.unlink(poll_test_file), "testPoll: unlink file", @src());
+    }
+
+    {
+        var fds = [_]sys.PollFd{
+            .{ .fd = 1, .events = sys.POLLOUT, .revents = 0 },
+        };
+        const ready = try expectSyscall(sys.poll(&fds, 0), "testPoll: poll stdout", @src());
+        try expectOffset(ready, 1);
+        if (fds[0].revents & sys.POLLOUT == 0) return error.PollMissingPollOut;
+    }
+
+    {
+        var fds = [_]sys.PollFd{
+            .{ .fd = 99, .events = sys.POLLIN, .revents = 0 },
+        };
+        try syscallShouldFail(sys.poll(&fds, 0), "testPoll: poll bad fd", @src());
+    }
+
+    {
+        var fds = [_]sys.PollFd{
+            .{ .fd = -1, .events = sys.POLLIN, .revents = 0 },
+            .{ .fd = -1, .events = sys.POLLOUT, .revents = 0 },
+        };
+        const ready = try expectSyscall(sys.poll(&fds, 0), "testPoll: poll skip -1", @src());
+        try expectOffset(ready, 0);
+        if (fds[0].revents != 0) return error.PollUnexpectedRevents;
+        if (fds[1].revents != 0) return error.PollUnexpectedRevents;
+    }
+
+    {
+        const read_fd, const write_fd = try checkSyscall(sys.pipe(), "testPoll: create pipe", @src());
+
+        var fds = [_]sys.PollFd{
+            .{ .fd = @as(i32, @intCast(read_fd)), .events = sys.POLLIN, .revents = 0 },
+            .{ .fd = @as(i32, @intCast(write_fd)), .events = sys.POLLOUT, .revents = 0 },
+        };
+        _ = try expectSyscall(sys.poll(&fds, 0), "testPoll: poll empty pipe", @src());
+        if (fds[0].revents & sys.POLLIN != 0) return error.PollUnexpectedPollIn;
+
+        _ = try expectSyscall(sys.write(write_fd, "hello"), "testPoll: write pipe", @src());
+        fds[0].revents = 0;
+        fds[1].revents = 0;
+        _ = try expectSyscall(sys.poll(&fds, 0), "testPoll: poll pipe after write", @src());
+        if (fds[0].revents & sys.POLLIN == 0) return error.PollMissingPollIn;
+
+        _ = try expectSyscall(sys.close(read_fd), "testPoll: close pipe read", @src());
+        _ = try expectSyscall(sys.close(write_fd), "testPoll: close pipe write", @src());
+    }
+
+    {
+        const read_fd, const write_fd = try checkSyscall(sys.pipe(), "testPoll: create events pipe", @src());
+        _ = try expectSyscall(sys.write(write_fd, "data"), "testPoll: write events pipe", @src());
+
+        var fds = [_]sys.PollFd{
+            .{ .fd = @as(i32, @intCast(read_fd)), .events = 0, .revents = 0 },
+        };
+        const ready = try expectSyscall(sys.poll(&fds, 0), "testPoll: poll with 0 events", @src());
+        try expectOffset(ready, 0);
+        if (fds[0].revents != 0) return error.PollUnexpectedRevents;
+
+        _ = try expectSyscall(sys.close(read_fd), "testPoll: close events pipe read", @src());
+        _ = try expectSyscall(sys.close(write_fd), "testPoll: close events pipe write", @src());
+    }
+}
+
 /// Exercises filesystem syscalls with alternating writes, seeks, and unlinks.
 pub fn main(argv: []const []const u8) !void {
     _ = argv;
@@ -1061,6 +1153,7 @@ pub fn main(argv: []const []const u8) !void {
     try testCwd();
     try testPipeSpawn();
     try testPipeSpawnWriterCloseWakeup();
+    try testPoll();
 
     _ = try expectSyscall(sys.close(sys.STDIN), "main: close stdin", @src());
     _ = try expectSyscall(sys.close(sys.STDERR), "main: close stderr", @src());

@@ -47,6 +47,7 @@ pub const Tty = struct {
         .bufferSize = charDeviceBufferSize,
         .size = charDeviceSize,
         .seekable = charDeviceSeekable,
+        .poll = charDevicePoll,
     };
 
     /// Initialize a tty for the given console.
@@ -104,6 +105,20 @@ pub const Tty = struct {
     /// Return the cooked-buffer capacity used for stat metadata.
     pub fn bufferSize(self: *const Tty) usize {
         return self.cooked.buf.len;
+    }
+
+    /// Query which of the requested I/O events are ready without blocking.
+    pub fn poll(self: *Tty, events: u16) u16 {
+        var revents: u16 = 0;
+        if (events & abi.POLLIN != 0) {
+            if (!self.cooked.empty() or self.eof_pending) {
+                revents |= abi.POLLIN;
+            }
+        }
+        if (events & abi.POLLOUT != 0) {
+            revents |= abi.POLLOUT;
+        }
+        return revents;
     }
 
     /// Returns the generic character-device interface for this tty.
@@ -214,6 +229,11 @@ pub const Tty = struct {
 
     fn charDeviceSeekable(_: *const CharDevice) bool {
         return false;
+    }
+
+    fn charDevicePoll(dev: *CharDevice, events: u16) u16 {
+        const self: *Tty = @fieldParentPtr("char_dev", dev);
+        return self.poll(events);
     }
 
     fn handlePrintable(self: *Tty, ch: u8) void {
