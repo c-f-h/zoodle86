@@ -74,6 +74,7 @@ pub const IOCTL_TTY_SET_MODE = abi.IOCTL_TTY_SET_MODE;
 pub const IOCTL_FRAMEBUF_GET_INFO = abi.IOCTL_FRAMEBUF_GET_INFO;
 pub const TTY_MODE_CANONICAL = abi.TTY_MODE_CANONICAL;
 pub const TTY_MODE_RAW = abi.TTY_MODE_RAW;
+pub const KEY_RELEASED = abi.KEY_RELEASED;
 
 pub const SyscallError = error{
     ENOENT,

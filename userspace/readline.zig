@@ -73,6 +73,7 @@ pub const Readline = struct {
 
     // Processes a single key event, returns non-null when a line is committed.
     fn handleKey(self: *Readline, ev: sys.KeyEvent) error{EOF}!?[]const u8 {
+        if ((ev.modifiers & sys.KEY_RELEASED) != 0) return null;
         const kc = ev.keycode;
         const ctrl = (ev.modifiers & sys.MOD_CTRL) != 0;
 

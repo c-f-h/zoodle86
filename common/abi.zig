@@ -291,6 +291,9 @@ pub const MOD_SHIFT: u8 = 0x01;
 pub const MOD_ALT: u8 = 0x02;
 pub const MOD_CTRL: u8 = 0x04;
 
+/// Flag set in KeyEvent.modifiers for key-release events in raw tty mode.
+pub const KEY_RELEASED: u8 = 0x80;
+
 comptime {
     std.debug.assert(@sizeOf(KeyEvent) == 4);
     std.debug.assert(@sizeOf(DirEntry) == 32);

@@ -115,10 +115,9 @@ pub const Tty = struct {
     pub fn handleKeyEvent(self: *Tty, ev: *const keyboard.KeyEvent) void {
         switch (self.mode) {
             .raw => {
-                if (ev.pressed == 0) return;
                 const key_event = abi.KeyEvent{
                     .keycode = ev.keycode,
-                    .modifiers = ev.modifiers,
+                    .modifiers = if (ev.pressed != 0) ev.modifiers else ev.modifiers | abi.KEY_RELEASED,
                     .ascii = ev.ascii,
                 };
                 if (self.cooked.bytesFree() < @sizeOf(abi.KeyEvent)) return;
