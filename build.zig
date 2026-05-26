@@ -66,6 +66,39 @@ pub fn build(b: *std.Build) void {
     const write_kernel = b.addUpdateSourceFiles();
     write_kernel.addCopyFileToSource(kernel, "build/kernel.elf");
 
+    // Build PureDOOM as a userspace ELF (PureDOOM engine + Zig entry point).
+    const doom_module = b.createModule(.{
+        .root_source_file = b.path("userspace/doom_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    doom_module.addCSourceFile(.{
+        .file = b.path("opt/PureDOOM/doom_entry.c"),
+        .flags = &.{
+            "-std=c99",
+            "-Wno-parentheses",
+            "-Wno-enum-compare",
+            "-Wno-deprecated-non-prototype",
+        },
+    });
+    doom_module.addIncludePath(b.path("opt/PureDOOM"));
+    doom_module.addImport("abi", abi_module);
+
+    const doom_exe = b.addExecutable(.{
+        .name = "doom.elf",
+        .root_module = doom_module,
+    });
+    doom_exe.setLinkerScript(b.path("userspace.ld"));
+    doom_exe.entry = .{ .symbol_name = "_start" };
+    doom_exe.bundle_compiler_rt = false;
+
+    const write_doom = b.addUpdateSourceFiles();
+    write_doom.addCopyFileToSource(doom_exe.getEmittedBin(), "build/doom.elf");
+    write_doom.addCopyFileToSource(doom_exe.getEmittedBin(), "static/doom");
+
+    const doom_step = b.step("doom", "Build PureDOOM userspace ELF");
+    doom_step.dependOn(&write_doom.step);
+
     const kernel_step = b.step("kernel", "Build build/kernel.elf and build/kernel.full.elf");
     kernel_step.dependOn(&write_kernel_full.step);
     kernel_step.dependOn(&write_kernel.step);
