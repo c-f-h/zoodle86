@@ -256,6 +256,8 @@ fn parseFadt(table: *const FADT) void {
     }
 }
 
+/// Read the ACPI Power Management timer; a global timer which runs at a fixed 3.579545 MHz
+/// and has a counter register which is either 24 or 32 bits wide (see pm_timer_mask).
 pub fn readPmTimer() u32 {
     if (pm_timer_port == 0) {
         @panic("No ACPI PM timer found");

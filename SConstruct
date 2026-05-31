@@ -163,6 +163,7 @@ def write_bochsrc(target, source, env):
     target_path.write_text(
         "\n".join(
             [
+                "cpu: count=1, ips=200000000"
                 "megs: 32",
                 f'romimage: file="{BOCHS_DIR / "BIOS-bochs-latest"}", options=fastboot',
                 f'vgaromimage: file="{BOCHS_DIR / "VGABIOS-lgpl-latest.bin"}"',

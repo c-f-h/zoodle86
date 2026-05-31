@@ -27,6 +27,7 @@ const pit = @import("pit.zig");
 const tty = @import("tty.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
+const clock = @import("clock.zig");
 const pci = @import("pci.zig");
 const waitqueue = @import("waitqueue.zig");
 
@@ -92,6 +93,7 @@ var foreground_tty: ?*tty.Tty = null;
 
 fn timerIrqHandler(frame: *const interrupt_frame.InterruptFrame) void {
     timer_ticks += 1;
+    clock.updateClock();
     kprof.onTimerTick(frame.eip);
     //const attr: u8 = if ((timer_ticks / 100) % 2 != 0) 0x70 else 0x07;
     //console.primary.putCharAt(0, 79, '!', attr);
@@ -412,6 +414,7 @@ fn kernel_enter() !noreturn {
     apic.initTimer(VECTOR_TIMER, apic.Divider.div16);
     const counter_100hz = apic.calibrateApicTimer(VECTOR_TIMER, apic.Divider.div16);
     apic.startTimer(counter_100hz);
+    clock.initClock();
 
     try ide.initDmaBusmastering();
 
