@@ -158,25 +158,36 @@ fn doom_getenv(_: [*:0]const u8) callconv(.c) ?[*:0]u8 {
 const doom_w = 320;
 const doom_h = 200;
 
-fn blitFrame(fd: u32, info: *const sys.FrameBufInfo, src: [*]const u8) void {
+fn blitFrame(fd: u32, info: *const sys.FrameBufInfo, doom_fb: [*]const u8) void {
     const bpp = info.bytes_per_pixel;
-    const row_len = doom_w * bpp;
-    const src_row = doom_w * 4;
-    var row_buf: [doom_w * 4]u8 = undefined;
+    if (bpp != 2) @panic("Only 16 bit blitting implemented!");
+
+    const scale = @max(1, @min(info.width / doom_w, info.height / doom_h));
+    const out_row_len = doom_w * scale * bpp;
+    var row_buf: [4096]u8 align(2) = undefined;
+    if (doom_w * scale * bpp > row_buf.len) @panic("Scaling factor too high for row buffer!");
+
+    var src = doom_fb;
 
     var y: u32 = 0;
     while (y < doom_h) : (y += 1) {
-        var x: u32 = 0;
-        while (x < doom_w) : (x += 1) {
-            const si = y * src_row + x * 4;
-            const pixel = info.packRgb(src[si], src[si + 1], src[si + 2]);
+        var src_x: u32 = 0;
+        var dst: [*]u16 = @ptrCast(&row_buf);
+        while (src_x < doom_w) : (src_x += 1) {
+            const pixel: u16 = @truncate(info.packRgb(src[0], src[1], src[2]));
+            src += 3;
+
             var i: u32 = 0;
-            while (i < bpp) : (i += 1) {
-                row_buf[x * bpp + i] = @truncate(pixel >> @as(u5, @intCast(i * 8)));
+            while (i < scale) : (i += 1) {
+                dst[0] = pixel;
+                dst += 1;
             }
         }
-        _ = sys.lseek(fd, @intCast(y * info.pitch_bytes), .Set) catch return;
-        _ = sys.write(fd, row_buf[0..row_len]) catch return;
+        var rep: u32 = 0;
+        while (rep < scale) : (rep += 1) {
+            _ = sys.lseek(fd, @intCast((y * scale + rep) * info.pitch_bytes), .Set) catch return;
+            _ = sys.write(fd, row_buf[0..out_row_len]) catch return;
+        }
     }
 }
 
@@ -284,17 +295,9 @@ pub fn main(_: []const []const u8) !void {
     doom_set_default_int("key_use", vkToDoomKey(sys.VK_E));
 
     // --- Open framebuffer ---
-    var fb_fd: ?u32 = null;
     var fb_info: sys.FrameBufInfo = .{};
-    if (sys.open("/dev/fb0", .{ .open_mode = .ReadWrite })) |fd| {
-        if (sys.getFrameBufInfo(fd, &fb_info)) {
-            fb_fd = fd;
-        } else |_| {
-            sys.close(fd) catch {};
-        }
-    } else |_| {}
-
-    var last_blit: u64 = 0;
+    const fb_fd = try sys.open("/dev/fb0", .{ .open_mode = .ReadWrite });
+    try sys.getFrameBufInfo(fb_fd, &fb_info);
 
     // --- Switch stdin to raw mode for keyboard events ---
     const original_tty_mode = try sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_RAW);
@@ -327,15 +330,7 @@ pub fn main(_: []const []const u8) !void {
         }
 
         doom_update();
-
-        // Throttle blit to ~35 FPS so the animation matches the original
-        // DOOM tic rate.
-        const now = sys.getClock(.Monotonic) catch unreachable;
-        const now_ns = now.secs *% 1_000_000_000 +% now.nsecs;
-        if (now_ns -% last_blit >= 28_571_428) {
-            if (fb_fd) |fd| blitFrame(fd, &fb_info, doom_get_framebuffer(4));
-            last_blit = now_ns;
-        }
+        blitFrame(fb_fd, &fb_info, doom_get_framebuffer(3));
     }
 }
 
