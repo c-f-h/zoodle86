@@ -67,15 +67,20 @@ pub fn build(b: *std.Build) void {
     write_kernel.addCopyFileToSource(kernel, "build/kernel.elf");
 
     // Build PureDOOM as a userspace ELF (PureDOOM engine + Zig entry point).
+    // Use a generated .c copy (Zig treats .h build targets as PCH).
+    const doom_c_gen = b.addWriteFiles();
+    const doom_c_path = doom_c_gen.addCopyFile(b.path("opt/PureDOOM/PureDOOM.h"), "doom_impl.c");
+
     const doom_module = b.createModule(.{
         .root_source_file = b.path("userspace/doom_main.zig"),
         .target = target,
         .optimize = optimize,
     });
     doom_module.addCSourceFile(.{
-        .file = b.path("opt/PureDOOM/doom_entry.c"),
+        .file = doom_c_path,
         .flags = &.{
             "-std=c99",
+            "-DDOOM_IMPLEMENTATION",
             "-Wno-parentheses",
             "-Wno-enum-compare",
             "-Wno-deprecated-non-prototype",
