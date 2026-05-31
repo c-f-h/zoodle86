@@ -1,4 +1,5 @@
 const acpi = @import("acpi.zig");
+const abi = @import("abi");
 
 var last_pm_timer: u32 = undefined;
 var clock_count: u64 = undefined;
@@ -6,10 +7,7 @@ var clock_count: u64 = undefined;
 const TICKS_PER_SEC = 3579545;
 const NSECS_PER_TICK = 1_000_000_000 / TICKS_PER_SEC;
 
-pub const Clock = struct {
-    secs: u64,
-    nsecs: u32,
-};
+pub const Clock = abi.Clock;
 
 pub fn initClock() void {
     last_pm_timer = acpi.readPmTimer();

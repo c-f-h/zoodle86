@@ -52,11 +52,24 @@ pub const Syscall = enum(u32) {
     Ftruncate = 93,
     GetCwd = 183,
     Ioctl = 156,
+    GetClock = 227,
     Spawn = 1001,
     SetChildReap = 1002,
     KShell = 1003,
     GetCursor = 1004,
     _,
+};
+
+/// Selects the clock source for the GetClock syscall.
+pub const ClockType = enum(u32) {
+    /// Monotonic clock counting seconds and nanoseconds since boot.
+    Monotonic = 0,
+};
+
+/// Stable clock value returned by the GetClock syscall.
+pub const Clock = extern struct {
+    secs: u64,
+    nsecs: u32,
 };
 
 fn mkIoctlRequest(major: DeviceMajor, command: u24) u32 {

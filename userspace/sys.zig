@@ -16,6 +16,8 @@ pub const SeekWhence = abi.SeekWhence;
 pub const InodeKind = abi.InodeKind;
 pub const DirEntry = abi.DirEntry;
 pub const FrameBufInfo = abi.FrameBufInfo;
+pub const ClockType = abi.ClockType;
+pub const Clock = abi.Clock;
 pub const STAT_FLAG_READABLE = abi.STAT_FLAG_READABLE;
 pub const STAT_FLAG_WRITABLE = abi.STAT_FLAG_WRITABLE;
 pub const STAT_FLAG_APPEND = abi.STAT_FLAG_APPEND;
@@ -397,6 +399,13 @@ pub fn unlink(path: []const u8) SyscallError!void {
 /// Returns the current process identifier.
 pub fn getpid() u32 {
     return syscall(.GetPid, 0, 0, 0) catch unreachable;
+}
+
+/// Reads the current monotonic clock value from the kernel.
+pub fn getClock(clock_type: ClockType) !Clock {
+    var result: Clock = undefined;
+    _ = try syscall(.GetClock, @intFromEnum(clock_type), @intFromPtr(&result), 0);
+    return result;
 }
 
 /// Returns the stdout console cursor position packed as (row << 16) | col (both 0-indexed).

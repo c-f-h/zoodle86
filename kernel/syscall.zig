@@ -6,6 +6,7 @@ const paging = @import("paging.zig");
 const shell = @import("shell.zig");
 const task = @import("task.zig");
 const taskman = @import("taskman.zig");
+const clock = @import("clock.zig");
 const console = @import("console.zig");
 const vfs = @import("fs/vfs.zig");
 const abi = @import("abi");
@@ -368,6 +369,20 @@ fn sys_kshell(cmdline_slice_va: u32) !u32 {
     return 0;
 }
 
+/// Writes the current kernel clock value into a user-space Clock struct.
+fn sys_getclock(clock_type: u32, clock_ofs: u32) !u32 {
+    switch (clock_type) {
+        @intFromEnum(abi.ClockType.Monotonic) => {
+            const current_task = task.getCurrentTask();
+            const out = try current_task.getUserMem(clock_ofs, @sizeOf(abi.Clock));
+            const val = clock.getClock();
+            @memcpy(out, std.mem.asBytes(&val));
+            return 0;
+        },
+        else => return error.InvalidArgument,
+    }
+}
+
 /// Returns the console cursor position of the calling task packed as (row<<16)|col.
 fn sys_getcursor() u32 {
     const con = task.getCurrentTask().getConsole() orelse &console.primary;
@@ -433,6 +448,7 @@ pub fn syscall_dispatch(frame: *interrupt_frame.UserInterruptFrame) void {
         .Rmdir => sys_rmdir(arg1),
         .Link => sys_link(arg1, arg2),
         .Symlink => sys_symlink(arg1, arg2),
+        .GetClock => sys_getclock(arg1, arg2),
         .GetCwd => sys_getcwd(arg1, arg2),
         .Spawn => sys_spawn(arg1, arg2),
         .SetChildReap => sys_set_child_reap(),

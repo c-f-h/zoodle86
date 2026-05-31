@@ -180,12 +180,10 @@ fn blitFrame(fd: u32, info: *const sys.FrameBufInfo, src: [*]const u8) void {
     }
 }
 
-var doom_time_sec: c_int = 0;
-var doom_time_usec: c_int = 0;
-
 fn doom_gettime(sec: [*]c_int, usec: [*]c_int) callconv(.c) void {
-    sec[0] = doom_time_sec;
-    usec[0] = doom_time_usec;
+    const clock = sys.getClock(.Monotonic) catch unreachable;
+    sec[0] = @intCast(clock.secs);
+    usec[0] = @intCast(clock.nsecs / 1000);
 }
 
 /// Map a zoodle86 VK scancode to a DOOM key code (physical-key based, ignoring shift).
@@ -296,6 +294,8 @@ pub fn main(_: []const []const u8) !void {
         }
     } else |_| {}
 
+    var last_blit: u64 = 0;
+
     // --- Switch stdin to raw mode for keyboard events ---
     const original_tty_mode = try sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_RAW);
     defer _ = sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, original_tty_mode) catch {};
@@ -327,11 +327,14 @@ pub fn main(_: []const []const u8) !void {
         }
 
         doom_update();
-        if (fb_fd) |fd| blitFrame(fd, &fb_info, doom_get_framebuffer(4));
-        doom_time_usec += 28572; // advance ~1/35 sec (1 DOOM tic) per frame
-        if (doom_time_usec >= 1000000) {
-            doom_time_usec -= 1000000;
-            doom_time_sec += 1;
+
+        // Throttle blit to ~35 FPS so the animation matches the original
+        // DOOM tic rate.
+        const now = sys.getClock(.Monotonic) catch unreachable;
+        const now_ns = now.secs *% 1_000_000_000 +% now.nsecs;
+        if (now_ns -% last_blit >= 28_571_428) {
+            if (fb_fd) |fd| blitFrame(fd, &fb_info, doom_get_framebuffer(4));
+            last_blit = now_ns;
         }
     }
 }
