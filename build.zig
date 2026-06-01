@@ -99,7 +99,7 @@ pub fn build(b: *std.Build) void {
 
     const write_doom = b.addUpdateSourceFiles();
     write_doom.addCopyFileToSource(doom_exe.getEmittedBin(), "build/doom.elf");
-    write_doom.addCopyFileToSource(doom_exe.getEmittedBin(), "static/doom");
+    write_doom.addCopyFileToSource(doom_exe.getEmittedBin(), "static/bin/doom");
 
     const doom_step = b.step("doom", "Build PureDOOM userspace ELF");
     doom_step.dependOn(&write_doom.step);

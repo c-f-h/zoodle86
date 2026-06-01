@@ -150,10 +150,9 @@ fn doom_exit(code: c_int) callconv(.c) noreturn {
 
 // --- getenv ---
 
-var env_root = [_]u8{ '/', 0 };
-
 fn doom_getenv(_: [*:0]const u8) callconv(.c) ?[*:0]u8 {
-    return @ptrCast(&env_root);
+    // PureDOOM calls this with "HOME" and "DOOMWADDIR"; hardcode both to /opt/doom
+    return @constCast("/opt/doom");
 }
 
 const doom_w = 320;
