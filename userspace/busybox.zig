@@ -1,5 +1,6 @@
 const std = @import("std");
 const sys = @import("sys.zig");
+const opts = @import("opts.zig");
 
 const ansi = sys.ansi;
 
@@ -20,44 +21,6 @@ fn err_toolFailedTo(tool: []const u8, action: []const u8, path: []const u8) void
     const msg = std.fmt.bufPrint(&buf, "{s}: failed to {s} {s}\n", .{ tool, action, path }) catch
         "failure\n";
     sys.writeAll(sys.STDERR, msg) catch {};
-}
-
-const OptResult = union(enum) {
-    Bool: *bool,
-};
-
-const OptSpec = struct {
-    short: ?u8 = null,
-    long: ?[]const u8 = null,
-    result: OptResult,
-};
-
-fn parseOpts(argv: []const []const u8, specs: []const OptSpec) error{InvalidArgs}!u32 {
-    var i: u32 = 1;
-    while (i < argv.len) {
-        const arg = argv[i];
-        if (arg.len < 2 or arg[0] != '-') break;
-
-        var matched = false;
-        for (specs) |spec| {
-            const is_match = (spec.short != null and arg.len == 2 and arg[1] == spec.short.?) or
-                (spec.long != null and
-                    arg.len > 2 and arg[0] == '-' and arg[1] == '-' and
-                    std.mem.eql(u8, arg[2..], spec.long.?));
-            if (is_match) {
-                switch (spec.result) {
-                    .Bool => |ptr| {
-                        ptr.* = true;
-                        matched = true;
-                    },
-                }
-            }
-        }
-
-        if (!matched) return error.InvalidArgs;
-        i += 1;
-    }
-    return i;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +81,7 @@ fn catCopyNumberedFd(fd: u32, line_counter: *u32) bool {
 /// Supports --number / -n to prepend line numbers.
 fn catMain(argv: []const []const u8) noreturn {
     var numbered = false;
-    const first_file = parseOpts(argv, &.{
+    const first_file = opts.parseOpts(argv, &.{
         .{ .short = 'n', .long = "number", .result = .{ .Bool = &numbered } },
     }) catch {
         sys.writeAll(sys.STDERR, "Usage: cat [--number|-n] <file> ...\n") catch {};
@@ -378,7 +341,7 @@ fn findMain(argv: []const []const u8) noreturn {
 /// Creates a hard link by default, or a symbolic link with -s/--symbolic.
 fn lnMain(argv: []const []const u8) noreturn {
     var symbolic = false;
-    const first_arg = parseOpts(argv, &.{
+    const first_arg = opts.parseOpts(argv, &.{
         .{ .short = 's', .long = "symbolic", .result = .{ .Bool = &symbolic } },
     }) catch {
         sys.writeAll(sys.STDERR, "Usage: ln [-s|--symbolic] <target-path> <link-path>\n") catch {};

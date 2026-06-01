@@ -1,6 +1,7 @@
 const std = @import("std");
 const sys = @import("sys.zig");
 const alloc = @import("allocator.zig");
+const opts = @import("opts.zig");
 
 // PureDOOM callback-setter externs
 extern fn doom_set_malloc(
@@ -158,11 +159,10 @@ fn doom_getenv(_: [*:0]const u8) callconv(.c) ?[*:0]u8 {
 const doom_w = 320;
 const doom_h = 200;
 
-fn blitFrame(fd: u32, info: *const sys.FrameBufInfo, doom_fb: [*]const u8) void {
+fn blitFrame(fd: u32, info: *const sys.FrameBufInfo, doom_fb: [*]const u8, scale: u32) void {
     const bpp = info.bytes_per_pixel;
     if (bpp != 2) @panic("Only 16 bit blitting implemented!");
 
-    const scale = @max(1, @min(info.width / doom_w, info.height / doom_h));
     const out_row_len = doom_w * scale * bpp;
     var row_buf: [4096]u8 align(2) = undefined;
     if (doom_w * scale * bpp > row_buf.len) @panic("Scaling factor too high for row buffer!");
@@ -279,13 +279,19 @@ fn vkToDoomKey(keycode: u16) c_int {
     };
 }
 
-pub fn main(_: []const []const u8) !void {
+pub fn main(argv: []const []const u8) !void {
     doom_set_malloc(doom_malloc, doom_free);
     doom_set_file_io(doom_open, doom_close, doom_read, doom_write, doom_seek, doom_tell, doom_eof);
     doom_set_print(doom_print);
     doom_set_exit(doom_exit);
     doom_set_getenv(doom_getenv);
     doom_set_gettime(doom_gettime);
+
+    // --- Parse options ---
+    var scale: u32 = 0;
+    _ = try opts.parseOpts(argv, &.{
+        .{ .long = "scale", .result = .{ .UInt32 = &scale } },
+    });
 
     // --- Set up default key bindings (modern WASD layout) ---
     doom_set_default_int("key_up", vkToDoomKey(sys.VK_W));
@@ -298,6 +304,11 @@ pub fn main(_: []const []const u8) !void {
     var fb_info: sys.FrameBufInfo = .{};
     const fb_fd = try sys.open("/dev/fb0", .{ .open_mode = .ReadWrite });
     try sys.getFrameBufInfo(fb_fd, &fb_info);
+
+    if (scale == 0) {
+        // Autoscale to size of framebuffer
+        scale = @max(1, @min(fb_info.width / doom_w, fb_info.height / doom_h));
+    }
 
     // --- Switch stdin to raw mode for keyboard events ---
     const original_tty_mode = try sys.ioctl(sys.STDIN, sys.IOCTL_TTY_SET_MODE, sys.TTY_MODE_RAW);
@@ -330,7 +341,7 @@ pub fn main(_: []const []const u8) !void {
         }
 
         doom_update();
-        blitFrame(fb_fd, &fb_info, doom_get_framebuffer(3));
+        blitFrame(fb_fd, &fb_info, doom_get_framebuffer(3), scale);
     }
 }
 

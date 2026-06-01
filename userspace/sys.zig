@@ -640,6 +640,14 @@ pub fn changeHeapSize(diff: i32) ![*]u8 {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+pub fn debugPrint(comptime fmt: []const u8, args: anytype) void {
+    var buf: [128]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch "<too long>\n";
+    writeAll(STDERR, msg) catch {};
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 const root = @import("root"); // import the program being compiled, which must define a `main` function
 
 /// Entry point for userspace processes.
